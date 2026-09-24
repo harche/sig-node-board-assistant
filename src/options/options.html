@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SIG Node Board Assistant</title>
+    <meta name="color-scheme" content="light dark" />
+    <style>
+      :root {
+        --accent: #326ce5;
+        --accent-ink: #1e4fb8;
+        --ok: #1a7f37;
+        --bad: #cf222e;
+        --bg: #ffffff;
+        --bg-2: #f6f8fa;
+        --fg: #1f2328;
+        --muted: #59636e;
+        --line: #d1d9e0;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --accent: #6ea0ff;
+          --accent-ink: #9cc0ff;
+          --ok: #3fb950;
+          --bad: #f85149;
+          --bg: #0d1117;
+          --bg-2: #161b22;
+          --fg: #e6edf3;
+          --muted: #9198a1;
+          --line: #30363d;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.55 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "Noto Sans",
+          Helvetica,
+          Arial,
+          sans-serif;
+      }
+      main {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 48px 20px 64px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 56px 1fr;
+        column-gap: 18px;
+        align-items: start;
+        margin-bottom: 36px;
+      }
+      .hero img {
+        width: 56px;
+        height: 56px;
+        border-radius: 13px;
+      }
+      h1 {
+        margin: 2px 0 6px;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
+        line-height: 1.2;
+      }
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 46ch;
+      }
+
+      form {
+        display: grid;
+        row-gap: 28px;
+      }
+      .group {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        column-gap: 24px;
+        row-gap: 10px;
+      }
+      .group > h2 {
+        grid-column: 1;
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .group > h2 small {
+        display: block;
+        font-weight: 400;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .group > div {
+        grid-column: 2;
+        display: grid;
+        row-gap: 10px;
+      }
+      label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font: inherit;
+      }
+      input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+        border-color: transparent;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin: 4px 0 0;
+        max-width: 56ch;
+      }
+      .hint a {
+        color: var(--accent-ink);
+      }
+      .check {
+        font-size: 12.5px;
+        min-height: 18px;
+        margin-top: 2px;
+      }
+      .check.ok {
+        color: var(--ok);
+      }
+      .check.bad {
+        color: var(--bad);
+      }
+      .advanced summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 13px;
+        list-style: none;
+      }
+      .advanced summary::-webkit-details-marker {
+        display: none;
+      }
+      .advanced summary::before {
+        content: "▸ ";
+      }
+      .advanced[open] summary::before {
+        content: "▾ ";
+      }
+      .advanced > div {
+        display: grid;
+        row-gap: 10px;
+        margin-top: 10px;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-top: 4px;
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+      button {
+        padding: 7px 14px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--bg-2);
+        color: var(--fg);
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      button:hover {
+        filter: brightness(0.97);
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: transparent;
+        color: #fff;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .status {
+        flex: 1;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .status.ok {
+        color: var(--ok);
+      }
+      .status.bad {
+        color: var(--bad);
+      }
+      .quiet {
+        margin-left: auto;
+        background: transparent;
+        border-color: transparent;
+        color: var(--muted);
+      }
+
+      .promise {
+        margin-top: 40px;
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        column-gap: 24px;
+      }
+      .promise h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .promise ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        row-gap: 6px;
+        color: var(--muted);
+      }
+      .promise li {
+        display: grid;
+        grid-template-columns: 18px 1fr;
+        column-gap: 8px;
+      }
+      .promise li svg {
+        margin-top: 3px;
+      }
+      .promise li.can svg {
+        color: var(--ok);
+      }
+      .promise li.cannot svg {
+        color: var(--bad);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="hero">
+        <img src="icons/icon128.png" alt="" />
+        <div>
+          <h1>SIG Node Board Assistant</h1>
+          <p>
+            Jev's read of every card in the Triage column, on the board itself. You decide what happens next.
+          </p>
+        </div>
+      </div>
+
+      <form id="form">
+        <div class="group">
+          <h2>GitHub <small>read-only token</small></h2>
+          <div>
+            <div>
+              <label for="githubToken">Fine-grained personal access token</label>
+              <input id="githubToken" type="password" autocomplete="off" spellcheck="false" />
+              <p class="hint">
+                Create one at
+                <a
+                  href="https://github.com/settings/personal-access-tokens/new"
+                  target="_blank"
+                  rel="noopener"
+                  >github.com/settings/personal-access-tokens</a
+                >
+                with resource owner <b>kubernetes</b>, organization permission <b>Projects: read</b> and
+                access to public repositories. The extension only sends GET requests, so a read-only token is
+                all it can use.
+              </p>
+              <div class="check" id="githubCheck"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <h2>TypeSafe <small>Jev decision model</small></h2>
+          <div>
+            <div>
+              <label for="typesafeApiKey">API key</label>
+              <input id="typesafeApiKey" type="password" autocomplete="off" spellcheck="false" />
+              <p class="hint">
+                From <a href="https://typesafe.ai" target="_blank" rel="noopener">typesafe.ai</a>. Judging one
+                card costs about $0.0002 and the answer is cached, so revisiting the board is free.
+              </p>
+              <div class="check" id="typesafeCheck"></div>
+            </div>
+            <details class="advanced">
+              <summary>Model</summary>
+              <div>
+                <div>
+                  <label for="typesafeModel">Model</label>
+                  <input id="typesafeModel" type="text" spellcheck="false" />
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="primary" id="save">Save</button>
+          <button type="button" id="test">Save and test</button>
+          <span class="status" id="status"></span>
+          <button type="button" class="quiet" id="clear" title="Forget cached board data and Jev answers">
+            Clear cache
+          </button>
+        </div>
+      </form>
+
+      <div class="promise">
+        <h2>What it does</h2>
+        <ul>
+          <li class="can">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
+              /></svg
+            ><span>Reads the Triage column, each item's thread and changed files</span>
+          </li>
+          <li class="can">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
+              /></svg
+            ><span>Asks Jev four calibrated questions and applies the board's written policy</span>
+          </li>
+          <li class="can">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
+              /></svg
+            ><span>Shows the verdict on the card and the evidence in a drawer</span>
+          </li>
+          <li class="cannot">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M2.343 13.657A8 8 0 1 1 13.658 2.343 8 8 0 0 1 2.343 13.657ZM6.03 4.97a.75.75 0 0 0-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 1 0 1.06 1.06L8 9.06l1.97 1.97a.75.75 0 1 0 1.06-1.06L9.06 8l1.97-1.97a.75.75 0 1 0-1.06-1.06L8 6.94Z"
+              /></svg
+            ><span>Never comments, labels, or moves a card. There is no write path in the code.</span>
+          </li>
+        </ul>
+      </div>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

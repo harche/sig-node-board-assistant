@@ -1,0 +1,4 @@
+dist
+node_modules
+tests/fixtures/*.json
+package-lock.json
