@@ -13,7 +13,6 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
-    "fixtures": "python3 scripts/parity_fixture.py",
     "judge": "esbuild scripts/judge.ts --bundle --platform=node --format=esm --outfile=dist/judge.mjs --log-level=warning && node dist/judge.mjs"
   },
   "devDependencies": {
@@ -31,5 +30,11 @@
   "engines": {
     "node": ">=20"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@octokit/core": "^7.0.8",
+    "@octokit/plugin-paginate-rest": "^15.0.0",
+    "@octokit/plugin-retry": "^8.1.1",
+    "@typesafe-ai/sdk": "^0.6.0"
+  }
 }

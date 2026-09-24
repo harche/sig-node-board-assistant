@@ -1,5 +1,9 @@
-/** GitHub REST client (no GraphQL: the hourly GraphQL point budget is never touched). Every method here is a
- *  GET. There is deliberately no write method on this class. */
+/** GitHub REST client on Octokit (no GraphQL: the hourly GraphQL point budget is never touched). Octokit adds
+ *  Link-header pagination and retries on transient failures; this class adds the cache and the board shapes.
+ *  Every method here is a GET today; writes (Status moves, Prow comments) will go through `octokit` too. */
+import { Octokit } from "@octokit/core";
+import { paginateRest } from "@octokit/plugin-paginate-rest";
+import { retry } from "@octokit/plugin-retry";
 import { DAY, MINUTE, type Cache } from "./cache";
 import type { BoardFields, BoardItem, BoardRef, ItemDetail, ItemKind, ReviewDecision } from "./types";
 
@@ -14,49 +18,41 @@ export class GitHubError extends Error {
   }
 }
 
-const API = "https://api.github.com";
+export const GITHUB_API_VERSION = "2026-03-10";
+
+const Client = Octokit.plugin(paginateRest, retry);
+type Params = Record<string, string | number>;
 
 export class GitHubClient {
-  constructor(
-    private token: string,
-    private cache: Cache,
-    private fetchFn: typeof fetch = fetch,
-  ) {}
+  readonly octokit: InstanceType<typeof Client>;
 
-  async api<T = unknown>(path: string, params: Record<string, string | number> = {}): Promise<T> {
-    const url = new URL(path, API);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
-    const r = await this.fetchFn(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-      },
+  constructor(
+    token: string,
+    private cache: Cache,
+    fetchFn: typeof fetch = (...a) => fetch(...a),
+  ) {
+    this.octokit = new Client({
+      auth: token || undefined,
+      userAgent: "sig-node-board-assistant",
+      request: { fetch: fetchFn },
+      headers: { "X-GitHub-Api-Version": GITHUB_API_VERSION },
     });
-    if (!r.ok) {
-      const reset = r.headers.get("x-ratelimit-reset");
-      const remaining = r.headers.get("x-ratelimit-remaining");
-      let msg = `GitHub ${r.status} for ${url.pathname}`;
-      try {
-        const j = (await r.json()) as { message?: string };
-        if (j.message) msg += `: ${j.message}`;
-      } catch {
-        /* no JSON body */
-      }
-      if (remaining === "0" && reset)
-        msg += ` (rate limit resets ${new Date(Number(reset) * 1000).toLocaleTimeString()})`;
-      throw new GitHubError(msg, r.status, reset ? new Date(Number(reset) * 1000) : undefined);
-    }
-    return (await r.json()) as T;
   }
 
-  async paged<T = unknown>(path: string, params: Record<string, string | number> = {}): Promise<T[]> {
-    const out: T[] = [];
-    for (let page = 1; ; page++) {
-      const batch = await this.api<T[]>(path, { ...params, per_page: 100, page });
-      out.push(...batch);
-      if (batch.length < 100) return out;
+  async api<T = unknown>(path: string, params: Params = {}): Promise<T> {
+    try {
+      return (await this.octokit.request(`GET ${path}`, params)).data as T;
+    } catch (e) {
+      throw toGitHubError(e, path);
+    }
+  }
+
+  /** Every page of a list endpoint, following the Link header (also covers projectsV2's cursor pagination). */
+  async paged<T = unknown>(path: string, params: Params = {}): Promise<T[]> {
+    try {
+      return (await this.octokit.paginate(`GET ${path}`, { ...params, per_page: 100 })) as T[];
+    } catch (e) {
+      throw toGitHubError(e, path);
     }
   }
 
@@ -191,6 +187,23 @@ export class GitHubClient {
       refresh,
     );
   }
+}
+
+/** Octokit's RequestError -> GitHubError, keeping the message format and the rate-limit reset time. */
+function toGitHubError(e: unknown, path: string): Error {
+  const err = e as {
+    status?: number;
+    response?: { headers?: Record<string, string | undefined>; data?: unknown };
+  };
+  if (typeof err?.status !== "number") return e instanceof Error ? e : new Error(String(e));
+  const h = err.response?.headers ?? {};
+  const reset = h["x-ratelimit-reset"];
+  const data = err.response?.data as { message?: string } | undefined;
+  let msg = `GitHub ${err.status} for ${path.split("?")[0]}`;
+  if (data?.message) msg += `: ${data.message}`;
+  if (h["x-ratelimit-remaining"] === "0" && reset)
+    msg += ` (rate limit resets ${new Date(Number(reset) * 1000).toLocaleTimeString()})`;
+  return new GitHubError(msg, err.status, reset ? new Date(Number(reset) * 1000) : undefined);
 }
 
 // REST payload shapes (only the fields read above)

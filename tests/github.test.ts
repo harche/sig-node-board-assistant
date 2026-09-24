@@ -10,9 +10,11 @@ function fakeFetch(
     const url = new URL(String(input));
     calls.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
     const hit = routes[url.pathname];
-    if (hit === undefined) return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    const headers = { "content-type": "application/json" };
+    if (hit === undefined)
+      return new Response(JSON.stringify({ message: "Not Found" }), { status: 404, headers });
     const body = typeof hit === "function" ? (hit as (u: URL) => unknown)(url) : hit;
-    return new Response(JSON.stringify(body), { status: 200 });
+    return new Response(JSON.stringify(body), { status: 200, headers });
   }) as typeof fetch & { calls: string[] };
   f.calls = calls;
   return f;
@@ -80,7 +82,7 @@ describe("GitHubClient", () => {
     expect(d.reviewDecision).toBe("CHANGES_REQUESTED"); // r1's latest review wins
     expect(d.files).toEqual([{ path: "test/e2e/x.go", additions: 1, deletions: 2 }]);
     expect(f.calls.every((c) => c.startsWith("GET "))).toBe(true);
-    expect(f.calls.some((c) => c.includes("q=status%3A%22Triage%22"))).toBe(true);
+    expect(f.calls.some((c) => /q=status(%3A|:)(%22|")Triage(%22|")/.test(c))).toBe(true);
   });
 
   it("surfaces GitHub errors with the message", async () => {

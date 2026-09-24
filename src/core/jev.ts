@@ -1,5 +1,7 @@
-/** TypeSafe Jev client. Jev answers calibrated yes/no (noul), multiple-choice and score questions about a JSON
- *  state; it never generates text and never acts. Answers are cached forever by hash(state + questions). */
+/** TypeSafe Jev client on the TypeSafe SDK. Jev answers calibrated yes/no (noul), multiple-choice and score
+ *  questions about a JSON state; it never generates text and never acts. The SDK owns transport, timeouts and
+ *  retries; this class adds the permanent answer cache (keyed by hash(state + questions)) and the cost ledger. */
+import { APIError, TypeSafeClient, type Questions, type RetryPolicy } from "@typesafe-ai/sdk";
 import type { Cache } from "./cache";
 import type { JevUsage } from "./types";
 
@@ -9,6 +11,8 @@ export interface JevConfig {
   model?: string;
   /** TypeSafe reports tokens, not dollars; list price of jev-latest input tokens keeps the ledger an estimate. */
   usdPerMtok?: number;
+  /** SDK retry overrides (tests set backoffInitialMs to 0). */
+  retry?: Partial<RetryPolicy>;
 }
 
 export interface JevResponse<A> {
@@ -17,6 +21,9 @@ export interface JevResponse<A> {
 }
 
 export const JEV_DEFAULTS = { baseUrl: "https://api.typesafe.ai", model: "jev-latest", usdPerMtok: 0.042 };
+
+/** Per attempt. The old hand-rolled client had none; kubelet-sized states take a few seconds. */
+const TIMEOUT_MS = 20_000;
 
 export class JevError extends Error {
   constructor(
@@ -29,46 +36,54 @@ export class JevError extends Error {
 }
 
 export class JevClient {
-  private baseUrl: string;
-  private model: string;
+  private client: TypeSafeClient;
   private usdPerMtok: number;
   readonly ledger = { calls: 0, cached: 0, input_tokens: 0, cost: 0 };
 
   constructor(
-    private config: JevConfig,
+    config: JevConfig,
     private cache: Cache,
-    private fetchFn: typeof fetch = fetch,
-    private sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    fetchFn: typeof fetch = (...a) => fetch(...a),
   ) {
     if (!config.apiKey) throw new JevError("no TypeSafe key: set it in the extension options");
-    this.baseUrl = (config.baseUrl || JEV_DEFAULTS.baseUrl).replace(/\/$/, "");
-    this.model = config.model || JEV_DEFAULTS.model;
     this.usdPerMtok = config.usdPerMtok ?? JEV_DEFAULTS.usdPerMtok;
+    this.client = new TypeSafeClient({
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl || JEV_DEFAULTS.baseUrl,
+      defaultModel: config.model || JEV_DEFAULTS.model,
+      // The key is the user's own, kept in extension storage and used only from the service worker.
+      dangerouslyAllowBrowser: true,
+      timeout: TIMEOUT_MS,
+      retry: { backoffInitialMs: 500, ...config.retry },
+      logLevel: "off",
+      // "/" is sent as the equivalent JSON escape "\/": Cloudflare in front of the API answers 403 to any body
+      // containing a path like /etc/hosts, which kubelet issues quote all the time. The server decodes it back.
+      fetch: (url, init) =>
+        fetchFn(
+          url,
+          typeof init?.body === "string" ? { ...init, body: init.body.replace(/\//g, "\\/") } : init,
+        ),
+    });
   }
 
-  async ask<A>(state: unknown, questions: Record<string, unknown>): Promise<JevResponse<A>> {
-    // "/" is sent as the equivalent JSON escape "\/": Cloudflare in front of the API answers 403 to any body
-    // containing a path like /etc/hosts, which kubelet issues quote all the time. The server decodes it back.
-    const body = JSON.stringify({ model: this.model, state, questions }).replace(/\//g, "\\/");
-    const r = await this.fetchFn(`${this.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.config.apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body,
-    });
-    const text = await r.text();
-    let j: { answers?: A; usage?: { input_tokens: number; output_tokens?: number }; error?: unknown };
+  /** One systemOne call. `retries` is the number of attempts; the default leaves retrying to askCached. */
+  async ask<A>(state: unknown, questions: Record<string, unknown>, retries = 1): Promise<JevResponse<A>> {
+    let j: { answers?: A; usage?: { input_tokens: number; output_tokens?: number } };
     try {
-      j = JSON.parse(text);
-    } catch {
-      // e.g. a Cloudflare challenge page: keep the start of the body so the user can see what answered
-      throw new JevError(`TypeSafe HTTP ${r.status}: ${text.slice(0, 200)}`, r.status);
+      j = (await this.client.systemOne(
+        { state: state as never, questions: questions as Questions },
+        { retry: { maxRetries: Math.max(0, retries - 1) } },
+      )) as unknown as typeof j;
+    } catch (e) {
+      if (e instanceof APIError) {
+        // e.g. a Cloudflare challenge page: keep the start of the body so the user can see what answered
+        const body = typeof e.body === "string" ? e.body : JSON.stringify(e.body ?? "");
+        throw new JevError(`TypeSafe HTTP ${e.status}: ${body.slice(0, 200)}`, e.status);
+      }
+      throw new JevError(`TypeSafe: ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (!j.answers || !j.usage)
-      throw new JevError(`TypeSafe HTTP ${r.status}: ${JSON.stringify(j).slice(0, 300)}`, r.status);
+    if (!j?.answers || !j.usage)
+      throw new JevError(`TypeSafe: malformed response ${JSON.stringify(j).slice(0, 300)}`);
     const usage: JevUsage = {
       input_tokens: j.usage.input_tokens,
       output_tokens: j.usage.output_tokens,
@@ -77,9 +92,9 @@ export class JevClient {
     return { answers: j.answers, usage };
   }
 
-  /** ask() with a permanent cache keyed by hash(state + questions) and exponential-backoff retries. `refresh`
-   *  skips the cached answer (the new one still replaces it). Backoff is 0.5s, 1s, 2s between attempts, never
-   *  after the last one: the extension's service worker is killed after ~30s without activity. */
+  /** ask() with a permanent cache keyed by hash(state + questions); the SDK retries 408, 429, 5xx and connection
+   *  errors with backoff from 0.5s (jittered, doubling, never after the last attempt). `refresh` skips the cached
+   *  answer (the new one still replaces it). */
   async askCached<A>(
     state: unknown,
     questions: Record<string, unknown>,
@@ -94,24 +109,28 @@ export class JevClient {
       this.ledger.input_tokens += hit.usage.input_tokens;
       return { answers: hit.answers, usage: { ...hit.usage, cached: true, cost: 0 } };
     }
-    let last: unknown;
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        const out = await this.ask<A>(state, questions);
-        await this.cache.set(key, out);
-        this.ledger.input_tokens += out.usage.input_tokens;
-        this.ledger.cost += out.usage.cost;
-        return out;
-      } catch (e) {
-        last = e;
-        if (e instanceof JevError && e.status && e.status >= 400 && e.status < 500 && e.status !== 429)
-          throw e;
-        if (attempt < retries - 1) await this.sleep(500 * 2 ** attempt);
-      }
+    let out: JevResponse<A>;
+    try {
+      out = await this.ask<A>(state, questions, retries);
+    } catch (e) {
+      if (
+        e instanceof JevError &&
+        e.status &&
+        e.status >= 400 &&
+        e.status < 500 &&
+        e.status !== 429 &&
+        e.status !== 408
+      )
+        throw e;
+      throw new JevError(
+        `Jev failed after ${retries} attempts: ${e instanceof Error ? e.message : String(e)}`,
+        (e as JevError).status,
+      );
     }
-    throw new JevError(
-      `Jev failed after ${retries} attempts: ${last instanceof Error ? last.message : String(last)}`,
-    );
+    await this.cache.set(key, out);
+    this.ledger.input_tokens += out.usage.input_tokens;
+    this.ledger.cost += out.usage.cost;
+    return out;
   }
 }
 

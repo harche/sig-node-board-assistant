@@ -6,8 +6,9 @@ use. Open the item the way you always do and the evidence is there, as one more 
 sidebar: what the model answered, what the written policy decided and why, and the exact commands a reviewer
 would run to act on it.
 
-**It is read-only.** The extension never comments, labels or moves a card. There is no write path in the
-code: every GitHub call is a GET (`tests/github.test.ts` asserts it).
+**It is read-only for now.** The extension never comments, labels or moves a card: every GitHub call it makes
+today is a GET (`tests/github.test.ts` asserts it). The GitHub client is Octokit, so the approve step on the
+roadmap can add writes without a new transport.
 
 | on the board                                         | in GitHub's item pane (issues)                                   | on the PR page (pull requests)                       |
 | ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
@@ -26,10 +27,12 @@ rendered into whichever sidebar you land in, built from that page's own section 
 - **The policy is written down.** `src/core/policy.ts` turns Jev's probabilities into KEEP, REMOVE or
   BORDERLINE with fixed thresholds and a tie-break for the grey zone, and says why in one sentence. The
   drawer draws that band so the decision explains itself.
-- **Same brain as the CLI.** This extension is a port of
-  [sig-node-ci-assistant](https://github.com/harche/sig-node-ci-assistant), the script-driven reference
-  implementation. `tests/fixtures/parity.json` is generated from the Python code and the TypeScript is tested
-  against it: same signals, same Jev state, same prompts, same verdicts, same commands.
+- **No backend.** Everything runs in the extension: GitHub through [Octokit.js](https://github.com/octokit/core.js)
+  (REST API version `2026-03-10`), Jev through the [TypeSafe SDK](https://github.com/typesafe-ai/typesafe-sdk-js).
+- **Started as a port of the CLI.** The logic was ported from
+  [sig-node-ci-assistant](https://github.com/harche/sig-node-ci-assistant). `tests/fixtures/parity.json` is a
+  frozen snapshot of that reference's outputs (signals, Jev state, prompts, verdicts, commands); the extension is
+  now the source of truth and the snapshot guards against unintended drift.
 
 ## Install
 
@@ -72,10 +75,9 @@ workflow.
 
 ```bash
 npm run watch        # rebuild dist/ on change; reload the extension in chrome://extensions
-npm test             # vitest: unit tests + parity against the Python reference
+npm test             # vitest: unit tests + parity against the frozen reference snapshot
 npm run lint         # eslint + prettier
 npm run typecheck
-npm run fixtures     # regenerate tests/fixtures/parity.json from ../sig-node-ci-assistant
 npm run zip          # dist/ -> sig-node-board-assistant-<version>.zip
 ```
 
@@ -87,7 +89,7 @@ src/background/  service worker: owns tokens and the cache, answers the content 
 src/content/     board page: badges, pane injection; the evidence block and its two sidebar adapters
 src/item/        issue and PR pages: the same evidence block in the page sidebar
 src/options/     settings page
-tests/           vitest; fixtures/parity.json is generated, do not edit by hand
+tests/           vitest; fixtures/parity.json is a frozen snapshot of the CLI's outputs
 docs/design.md   why it is shaped this way
 ```
 

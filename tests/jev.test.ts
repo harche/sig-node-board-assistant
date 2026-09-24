@@ -3,7 +3,11 @@ import { Cache, MemoryStore } from "../src/core/cache";
 import { JevClient, stableStringify } from "../src/core/jev";
 
 const okResponse = (answers: unknown) =>
-  new Response(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 5 } }), { status: 200 });
+  new Response(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 5 } }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+const noBackoff = { backoffInitialMs: 0, backoffMaxMs: 0 };
 
 describe("JevClient", () => {
   it("escapes slashes in the request body and prices usage", async () => {
@@ -40,7 +44,7 @@ describe("JevClient", () => {
       calls++;
       return new Response("boom", { status: 502 });
     }) as typeof fetch;
-    const jev = new JevClient({ apiKey: "k" }, new Cache(new MemoryStore()), fetchFn, async () => {});
+    const jev = new JevClient({ apiKey: "k", retry: noBackoff }, new Cache(new MemoryStore()), fetchFn);
     await expect(jev.askCached({}, { q: {} }, 3)).rejects.toThrow(/Jev failed after 3 attempts/);
     expect(calls).toBe(3);
   });
@@ -48,7 +52,7 @@ describe("JevClient", () => {
   it("keeps the body of a non-JSON error response", async () => {
     const fetchFn = (async () =>
       new Response("<html>Just a moment...</html>", { status: 403 })) as typeof fetch;
-    const jev = new JevClient({ apiKey: "k" }, new Cache(new MemoryStore()), fetchFn, async () => {});
+    const jev = new JevClient({ apiKey: "k", retry: noBackoff }, new Cache(new MemoryStore()), fetchFn);
     await expect(jev.ask({}, { q: {} })).rejects.toThrow(/403: <html>Just a moment/);
   });
 
@@ -64,14 +68,17 @@ describe("JevClient", () => {
     expect(c.usage.cached).toBe(true);
   });
 
-  it("does not sleep after the last failed attempt", async () => {
-    let sleeps = 0;
-    const fetchFn = (async () => new Response("boom", { status: 502 })) as typeof fetch;
-    const jev = new JevClient({ apiKey: "k" }, new Cache(new MemoryStore()), fetchFn, async () => {
-      sleeps++;
-    });
-    await expect(jev.askCached({}, { q: {} }, 3)).rejects.toThrow();
-    expect(sleeps).toBe(2);
+  it("stops after the last failed attempt", async () => {
+    let calls = 0;
+    const fetchFn = (async () => {
+      calls++;
+      return new Response("boom", { status: 502 });
+    }) as typeof fetch;
+    const jev = new JevClient({ apiKey: "k", retry: noBackoff }, new Cache(new MemoryStore()), fetchFn);
+    await expect(jev.askCached({}, { q: {} }, 2)).rejects.toThrow(
+      /after 2 attempts: TypeSafe HTTP 502: boom/,
+    );
+    expect(calls).toBe(2);
   });
 
   it("does not retry a 401", async () => {
@@ -80,7 +87,7 @@ describe("JevClient", () => {
       calls++;
       return new Response(JSON.stringify({ error: "bad key" }), { status: 401 });
     }) as typeof fetch;
-    const jev = new JevClient({ apiKey: "k" }, new Cache(new MemoryStore()), fetchFn, async () => {});
+    const jev = new JevClient({ apiKey: "k", retry: noBackoff }, new Cache(new MemoryStore()), fetchFn);
     await expect(jev.askCached({}, { q: {} })).rejects.toThrow(/401/);
     expect(calls).toBe(1);
   });

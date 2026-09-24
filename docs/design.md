@@ -49,13 +49,14 @@ JSON state. It does not generate text and it is not asked to. The split, inherit
 
 The CLI proposes, the human approves, then the CLI executes from an allow-list. This first version of the
 extension stops at "proposes": it shows the accept and archive alternatives with the exact `gh` commands. The
-GitHub client has no write method and the message protocol has no write request. When the approve step is
+GitHub client (Octokit) only issues GETs and the message protocol has no write request. When the approve step is
 added it will be a separate, opt-in path with the same allow-list (Status moves and Prow comments), never
 a default.
 
 ## Parity with the reference
 
-`scripts/parity_fixture.py` imports the Python CLI and dumps, for every item in its cache: the normalised
+`tests/fixtures/parity.json` was generated once from the Python CLI and is now frozen (the generator was removed
+so the extension has no Python dependency). It holds, for every item in the CLI's cache: the normalised
 item, the raw detail, the computed signals, the Jev state and its Python `json.dumps` length; plus the
 questions for both item types, a 328-case grid over the decision policy, all 36 PR-lane combinations and
 sample command lines. `tests/parity.test.ts` runs the TypeScript over the same inputs and expects the same
