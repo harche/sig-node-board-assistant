@@ -1,9 +1,8 @@
 /** GitHub REST client on Octokit (no GraphQL: the hourly GraphQL point budget is never touched). Octokit adds
- *  Link-header pagination and retries on transient failures; this class adds the cache and the board shapes.
+ *  Link-header pagination; this class adds a short retry on 5xx, the cache and the board shapes.
  *  Every method here is a GET today; writes (Status moves, Prow comments) will go through `octokit` too. */
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
-import { retry } from "@octokit/plugin-retry";
 import { DAY, MINUTE, type Cache } from "./cache";
 import type { BoardFields, BoardItem, BoardRef, ItemDetail, ItemKind, ReviewDecision } from "./types";
 
@@ -20,8 +19,12 @@ export class GitHubError extends Error {
 
 export const GITHUB_API_VERSION = "2026-03-10";
 
-const Client = Octokit.plugin(paginateRest, retry);
+const Client = Octokit.plugin(paginateRest);
 type Params = Record<string, string | number>;
+
+/** Waits between attempts on a 5xx. Short on purpose: Chrome stops the extension's service worker after ~30s
+ *  idle. Rate limits (403/429) and network failures are not retried; they surface at once with their cause. */
+const RETRY_DELAYS_MS = [500, 1000];
 
 export class GitHubClient {
   readonly octokit: InstanceType<typeof Client>;
@@ -30,12 +33,25 @@ export class GitHubClient {
     token: string,
     private cache: Cache,
     fetchFn: typeof fetch = (...a) => fetch(...a),
+    sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
   ) {
     this.octokit = new Client({
       auth: token || undefined,
       userAgent: "sig-node-board-assistant",
       request: { fetch: fetchFn },
       headers: { "X-GitHub-Api-Version": GITHUB_API_VERSION },
+    });
+    // Wraps every request, including each page octokit.paginate fetches.
+    this.octokit.hook.wrap("request", async (request, options) => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await request(options);
+        } catch (e) {
+          const delay = RETRY_DELAYS_MS[attempt];
+          if (delay === undefined || !isServerError(e)) throw e;
+          await sleep(delay);
+        }
+      }
     });
   }
 
@@ -189,13 +205,25 @@ export class GitHubClient {
   }
 }
 
+type RequestErrorLike = {
+  status?: number;
+  message?: string;
+  response?: { headers?: Record<string, string | undefined>; data?: unknown };
+};
+
+/** A 5xx GitHub actually answered. Octokit also reports a failed fetch (offline, DNS) as status 500, but with
+ *  no response; that is not retried. */
+function isServerError(e: unknown): boolean {
+  const err = e as RequestErrorLike;
+  return Boolean(err?.response) && typeof err.status === "number" && err.status >= 500;
+}
+
 /** Octokit's RequestError -> GitHubError, keeping the message format and the rate-limit reset time. */
 function toGitHubError(e: unknown, path: string): Error {
-  const err = e as {
-    status?: number;
-    response?: { headers?: Record<string, string | undefined>; data?: unknown };
-  };
+  const err = e as RequestErrorLike;
   if (typeof err?.status !== "number") return e instanceof Error ? e : new Error(String(e));
+  if (!err.response)
+    return new GitHubError(`GitHub unreachable for ${path.split("?")[0]}: ${err.message}`, 0);
   const h = err.response?.headers ?? {};
   const reset = h["x-ratelimit-reset"];
   const data = err.response?.data as { message?: string } | undefined;

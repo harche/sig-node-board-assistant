@@ -12,8 +12,9 @@ First read-only release.
 - Settings page for the GitHub token and TypeSafe key, with connection tests and a cache reset.
 - Parity test suite against a frozen snapshot of the Python CLI's outputs (signals, state, prompts, policy,
   commands). No Python needed to build, test or run.
-- GitHub calls go through Octokit.js (pagination via Link headers, retries on transient errors, REST API
-  version `2026-03-10`); Jev calls go through the TypeSafe SDK (`@typesafe-ai/sdk`).
+- GitHub calls go through Octokit.js (pagination via Link headers, REST API version `2026-03-10`); Jev calls go
+  through the TypeSafe SDK (`@typesafe-ai/sdk`). Retries stay short so the service worker is never stopped
+  mid-call: GitHub retries only a 5xx it actually answered, and never a rate limit or a network failure.
 - Policy: a confident "another SIG owns it" answer turns a KEEP into BORDERLINE (the CLI had dropped this).
 - State: every human `/sig` or `/area` routing comment is sent to Jev as `human_routing`, not only those in
   the last-10 comment window.

@@ -85,6 +85,45 @@ describe("GitHubClient", () => {
     expect(f.calls.some((c) => /q=status(%3A|:)(%22|")Triage(%22|")/.test(c))).toBe(true);
   });
 
+  it("retries a 5xx, but not a 429 or a network failure", async () => {
+    const sleeps: number[] = [];
+    const sleep = async (ms: number) => {
+      sleeps.push(ms);
+    };
+    const json = { "content-type": "application/json" };
+
+    let calls = 0;
+    const flaky = (async () =>
+      ++calls < 3
+        ? new Response(JSON.stringify({ message: "Bad Gateway" }), { status: 502, headers: json })
+        : new Response(JSON.stringify({ login: "a" }), { status: 200, headers: json })) as typeof fetch;
+    const gh = new GitHubClient("tok", new Cache(new MemoryStore()), flaky, sleep);
+    await expect(gh.viewer()).resolves.toEqual({ login: "a" });
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([500, 1000]);
+
+    calls = 0;
+    const limited = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ message: "rate limited" }), {
+        status: 429,
+        headers: { ...json, "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" },
+      });
+    }) as typeof fetch;
+    const rl = new GitHubClient("tok", new Cache(new MemoryStore()), limited, sleep);
+    await expect(rl.viewer()).rejects.toThrow(/429 for \/user: rate limited \(rate limit resets/);
+    expect(calls).toBe(1);
+
+    calls = 0;
+    const offline = (async () => {
+      calls++;
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch;
+    const off = new GitHubClient("tok", new Cache(new MemoryStore()), offline, sleep);
+    await expect(off.viewer()).rejects.toThrow(/GitHub unreachable for \/user: Failed to fetch/);
+    expect(calls).toBe(1);
+  });
+
   it("surfaces GitHub errors with the message", async () => {
     const gh = new GitHubClient("tok", new Cache(new MemoryStore()), fakeFetch({}));
     await expect(gh.viewer()).rejects.toThrow(GitHubError);
