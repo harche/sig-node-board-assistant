@@ -1,20 +1,23 @@
 /* Everything is styled with GitHub's Primer CSS variables so it follows the page's theme. Our own class names all
    start with snba-. The badge and the pill live on the board; the evidence section lives inside GitHub's sidebar. */
 
-/* ---------- card badge (board) */
+/* ---------- card badge (board): Primer's Label (outlined, 20px, pill) with its success / danger / attention
+   variants, the look GitHub uses for status labels. The dot only shows while judging or on error. */
 .snba-badge {
   all: unset;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   margin-left: auto;
   margin-right: 6px;
-  padding: 0 8px 0 6px;
+  padding: 0 7px;
   height: 20px;
   border-radius: 999px;
-  font: 600 11px/1
-    var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif);
+  /* family is inherited from the page (all: unset); size and weight are Primer's tokens */
+  font-size: var(--text-body-size-small, 12px);
+  font-weight: var(--base-text-weight-semibold, 600);
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
@@ -23,38 +26,40 @@
   border: 1px solid var(--borderColor-default, #d1d9e0);
 }
 .snba-badge:hover {
-  filter: brightness(1.1);
+  background: var(--bgColor-neutral-muted, #818b981f);
 }
 .snba-badge:focus-visible {
   outline: 2px solid var(--focus-outlineColor, #0969da);
   outline-offset: 1px;
 }
 .snba-badge .snba-dot {
-  width: 7px;
-  height: 7px;
+  display: none;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
+.snba-badge[data-verdict="pending"] .snba-dot,
+.snba-badge[data-verdict="error"] .snba-dot {
+  display: block;
+}
 .snba-badge[data-verdict="KEEP"] {
-  color: var(--fgColor-onEmphasis, #fff);
-  background: var(--bgColor-success-emphasis, #1f883d);
-  border-color: transparent;
+  color: var(--fgColor-success, #1a7f37);
+  border-color: var(--borderColor-success-emphasis, #1a7f37);
 }
 .snba-badge[data-verdict="REMOVE"] {
-  color: var(--fgColor-onEmphasis, #fff);
-  background: var(--bgColor-danger-emphasis, #cf222e);
-  border-color: transparent;
+  color: var(--fgColor-danger, #d1242f);
+  border-color: var(--borderColor-danger-emphasis, #cf222e);
 }
 .snba-badge[data-verdict="BORDERLINE"] {
-  color: var(--fgColor-onEmphasis, #fff);
-  background: var(--bgColor-attention-emphasis, #9a6700);
-  border-color: transparent;
+  color: var(--fgColor-attention, #9a6700);
+  border-color: var(--borderColor-attention-emphasis, #9a6700);
 }
 .snba-badge[data-verdict="pending"] .snba-dot {
   animation: snba-pulse 1.1s ease-in-out infinite;
 }
 .snba-badge[data-verdict="error"] {
-  color: var(--fgColor-danger, #cf222e);
+  color: var(--fgColor-danger, #d1242f);
   border-color: var(--borderColor-danger-emphasis, #cf222e);
 }
 @keyframes snba-pulse {
@@ -85,8 +90,10 @@
   gap: 7px;
   padding: 6px 11px 6px 8px;
   border-radius: 999px;
-  font: 500 12px/1
-    var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif);
+  /* family is inherited from the page (all: unset); size and weight are Primer's tokens */
+  font-size: var(--text-body-size-small, 12px);
+  font-weight: var(--base-text-weight-medium, 500);
+  line-height: 1;
   color: var(--fgColor-default, #1f2328);
   background: var(--overlay-bgColor, var(--bgColor-default, #fff));
   border: 1px solid var(--borderColor-default, #d1d9e0);
@@ -292,4 +299,83 @@
 .discussion-sidebar-item .snba-foot {
   margin-left: 0;
   margin-right: 0;
+}
+
+/* ---------- column run button (board header)
+   Normally built from GitHub's own Primer button classes (adapters.ts nativeButton), so only state tweaks live here.
+   .snba-run-plain is the fallback when no GitHub button was found to borrow from: a small invisible Primer button. */
+.snba-run[data-state="running"] {
+  cursor: progress;
+}
+.snba-run[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+.snba-run-plain[aria-disabled="true"],
+.snba-run-plain[aria-disabled="true"] svg {
+  color: var(--fgColor-disabled, #818b98);
+}
+.snba-run-plain[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.snba-run .snba-run-text {
+  font-variant-numeric: tabular-nums;
+}
+.snba-run[data-state="running"] svg {
+  animation: snba-spin 1s linear infinite;
+}
+.snba-run[data-state="error"] svg {
+  color: var(--fgColor-danger, #cf222e);
+}
+.snba-run-plain {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--borderRadius-medium, 6px);
+  /* family is inherited from the page (all: unset); size and weight are Primer's tokens */
+  font-size: var(--text-body-size-small, 12px);
+  font-weight: var(--base-text-weight-medium, 500);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--button-invisible-fgColor-rest, var(--fgColor-default, #1f2328));
+}
+.snba-run-plain svg {
+  fill: currentColor;
+  color: var(--button-invisible-iconColor-rest, var(--fgColor-muted, #59636e));
+}
+.snba-run-plain:hover {
+  background: var(--button-invisible-bgColor-hover, var(--bgColor-neutral-muted, #818b981f));
+}
+.snba-run-plain:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, #0969da);
+  outline-offset: -2px;
+}
+@keyframes snba-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snba-run[data-state="running"] svg {
+    animation: none;
+  }
+}
+
+/* ---------- tooltip fallback (normally GitHub's own Primer tooltip class is borrowed; see adapters.ts) */
+.snba-tip-plain {
+  position: absolute;
+  inset: auto;
+  margin: 0;
+  max-width: 250px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--borderRadius-medium, 6px);
+  font-size: var(--text-body-size-small, 12px);
+  line-height: 1.625;
+  color: var(--tooltip-fgColor, #fff);
+  background: var(--tooltip-bgColor, #25292e);
 }

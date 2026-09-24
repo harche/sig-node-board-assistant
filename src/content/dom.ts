@@ -7,6 +7,7 @@ export const SEL = {
   column: (name: string) => `[data-board-column="${attr(name)}"]`,
   card: "[data-board-card-id]",
   badge: ".snba-badge",
+  run: ".snba-run",
 } as const;
 
 export interface CardRef {
@@ -33,6 +34,28 @@ export function itemLink(card: HTMLElement): HTMLAnchorElement | null {
       /\/(issues|pull)\/\d+(?:[?#]|$)/.test(a.href),
     ) ?? null
   );
+}
+
+/** Every column the board has rendered, by its Status name. */
+export function columns(root: ParentNode): { name: string; el: HTMLElement }[] {
+  return [...root.querySelectorAll<HTMLElement>("[data-board-column]")].map((el) => ({
+    name: el.dataset.boardColumn ?? "",
+    el,
+  }));
+}
+
+/** Puts the run button in the column's header, before GitHub's own "…" and "+" buttons. The actions row is found by
+ *  its CSS-module class prefix, then by the column title (h2); failing both, the button is not placed. */
+export function placeRunButton(col: HTMLElement, btn: HTMLElement): boolean {
+  const actions = col.querySelector<HTMLElement>('[class*="__ColumnActions"]');
+  if (actions) {
+    actions.prepend(btn);
+    return true;
+  }
+  const title = col.querySelector<HTMLElement>("h2");
+  if (!title?.parentElement) return false;
+  title.parentElement.append(btn);
+  return true;
 }
 
 /** Puts the badge in the card's header row (repo #number … avatar), before the avatar. The row is found by
@@ -65,5 +88,5 @@ export function paneItemId(url: string = location.href): number | null {
 /** True when a mutation happened inside something this extension drew, so observers can ignore their own work. */
 export function isOurs(node: Node): boolean {
   const el = node instanceof Element ? node : node.parentElement;
-  return Boolean(el?.closest(".snba-badge, .snba-evidence, #snba-pill"));
+  return Boolean(el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, #snba-pill"));
 }

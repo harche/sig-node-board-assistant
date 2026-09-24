@@ -1,24 +1,36 @@
-/** Board page: one badge per card in the judged column, and the evidence section inside GitHub's own item pane
- *  when it opens for one of those cards. Everything is read: fetching and judging happen in the background
- *  worker, and nothing here writes to GitHub. */
+/** Board page: a run button in the judged column's header. Nothing is fetched or judged until it is clicked; then
+ *  every item in the column is judged (like the CLI's `triage`), each card gets a verdict badge, and GitHub's own
+ *  item pane gets the evidence section when it opens for one of those cards. Fetching and judging happen in the
+ *  background worker. */
 import { boardFromUrl, knownBoard } from "../core/boards";
 import type { BoardItem, BoardRef } from "../core/types";
 import { send } from "../shared/messages";
-import { findSidebar, PANE_SIDEBAR, placeSection } from "./adapters";
-import { cardsIn, isOurs, itemLink, paneItemId, placeBadge, SEL } from "./dom";
+import { attachTooltip, findSidebar, nativeButton, PANE_SIDEBAR, placeSection } from "./adapters";
+import { cardsIn, columns, isOurs, itemLink, paneItemId, placeBadge, placeRunButton, SEL } from "./dom";
 import { renderEvidence, type EvidenceState } from "./evidence";
 import { Judged } from "./judged";
-import { h } from "./ui";
+import { h, octicon } from "./ui";
 
 class BoardAssistant {
   private items = new Map<number, BoardItem>();
-  private judged = new Judged();
+  /** Items are independent, so the column is judged in parallel; the cap keeps GitHub's secondary rate limit
+   *  (which penalises bursts of concurrent requests) and Jev out of the way. */
+  private judged = new Judged(8);
   private pill: HTMLElement;
   private pillText: HTMLElement;
   private configured = { github: false, typesafe: false };
   private columnLoad: Promise<void> | null = null;
+  /** Where reading the column stands. The button, the double-click guard and the missing-card refresh all read it. */
+  private load: { state: "idle" | "loading" | "loaded" } | { state: "failed"; message: string } = {
+    state: "idle",
+  };
   private refreshedOnce = false;
   private scanTimer: number | null = null;
+  /** Set by the column button. Until then the page is left exactly as GitHub drew it, apart from the button. */
+  private started = false;
+  private runBtn: HTMLElement | null = null;
+  /** Tackle buttons on the columns without a workflow yet, by column name. */
+  private idleBtns = new Map<string, HTMLElement>();
 
   constructor(
     private board: BoardRef,
@@ -37,6 +49,7 @@ class BoardAssistant {
       this.paintBadge(restId);
       this.syncPane();
       this.updatePill();
+      this.paintRunButton();
     });
   }
 
@@ -60,27 +73,68 @@ class BoardAssistant {
   }
 
   private async scan(): Promise<void> {
+    // React re-renders the header and cards (and the board virtualises long columns), so both are re-attached here.
+    for (const col of columns(document)) {
+      if (col.name === this.column) {
+        if (this.runBtn?.isConnected) continue;
+        this.runBtn ??= this.makeRunButton(col.el);
+        placeRunButton(col.el, this.runBtn);
+      } else {
+        let b = this.idleBtns.get(col.name);
+        if (b?.isConnected) continue;
+        if (!b) this.idleBtns.set(col.name, (b = this.makeIdleButton(col.el, col.name)));
+        placeRunButton(col.el, b);
+      }
+    }
+    if (!this.started) return;
     const cards = cardsIn(document, this.column);
     for (const c of cards) {
       if (!c.el.querySelector(SEL.badge)) this.mountBadge(c.el, c.restId);
       this.paintBadge(c.restId);
     }
-    if (!this.configured.github || !this.configured.typesafe) return;
-    if (cards.length || paneItemId()) await this.ensureColumn();
-    const missing = cards.filter((c) => !this.items.has(c.restId));
+    // Only against a finished read: while the first one is in flight every card looks missing.
+    const missing = this.load.state === "loaded" ? cards.filter((c) => !this.items.has(c.restId)) : [];
     if (missing.length && !this.refreshedOnce) {
       this.refreshedOnce = true; // a card the 10-minute column cache does not know: refresh once, then accept staleness
       await this.ensureColumn(true);
-    }
-    for (const c of cards) {
-      const item = this.items.get(c.restId);
-      if (item && !this.judged.slots.has(c.restId)) void this.judged.judge(item);
+      this.judgeAll();
     }
     this.syncPane();
   }
 
+  /** The column button: judge every item in the column, not only the cards the board has rendered. A second click
+   *  re-reads the column (new or moved items) and judges whatever is not judged yet or failed. */
+  private async run(): Promise<void> {
+    if (!this.configured.github || !this.configured.typesafe) {
+      void send({ type: "options.open" });
+      return;
+    }
+    if (this.load.state === "loading" || this.running()) return;
+    const again = this.started;
+    this.started = true;
+    this.paintRunButton();
+    await this.ensureColumn(again);
+    this.judgeAll();
+    this.paintRunButton();
+    this.scheduleScan();
+  }
+
+  private judgeAll(): void {
+    for (const item of this.items.values()) {
+      const slot = this.judged.slots.get(item.restId);
+      if (!slot || slot.state === "error") void this.judged.judge(item);
+    }
+  }
+
+  private running(): boolean {
+    return [...this.items.keys()].some((id) => this.judged.slots.get(id)?.state === "pending");
+  }
+
   private ensureColumn(refresh = false): Promise<void> {
-    if (this.columnLoad && !refresh) return this.columnLoad;
+    // A read in flight is joined, never raced by a second (uncached) one.
+    if (this.columnLoad && (!refresh || this.load.state === "loading")) return this.columnLoad;
+    this.load = { state: "loading" };
+    this.paintRunButton();
     this.columnLoad = (async () => {
       try {
         const [items] = await Promise.all([
@@ -88,11 +142,77 @@ class BoardAssistant {
           this.judged.loadFields(this.board),
         ]);
         this.items = new Map(items.map((i) => [i.restId, i]));
+        this.load = { state: "loaded" };
       } catch (e) {
-        this.setPill(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        this.load = { state: "failed", message };
+        this.setPill(message);
       }
+      this.paintRunButton();
     })();
     return this.columnLoad;
+  }
+
+  // ------------------------------------------------------------------ column button
+  private makeRunButton(col: HTMLElement): HTMLElement {
+    const b = tackleButton(col, () => void this.run());
+    this.paintRunButton(b);
+    return b;
+  }
+
+  /** Same button on a column whose workflow is not in the extension yet: shown so every column reads the same,
+   *  but disabled (aria-disabled keeps the tooltip, which a disabled button would not show). */
+  private makeIdleButton(col: HTMLElement, name: string): HTMLElement {
+    const b = tackleButton(col, () => {});
+    b.setAttribute("aria-disabled", "true");
+    b.dataset.state = "unavailable";
+    b.dataset.tip = `Not implemented yet: ${name} has no workflow in the extension`;
+    return b;
+  }
+
+  private paintRunButton(b: HTMLElement | null = this.runBtn): void {
+    if (!b) return;
+    const ids = [...this.items.keys()];
+    const slots = ids.map((id) => this.judged.slots.get(id));
+    const settled = slots.filter((s) => s && s.state !== "pending").length;
+    const errors = slots.filter((s) => s?.state === "error").length;
+    let state: string;
+    let text: string;
+    let title: string;
+    if (!this.started) {
+      [state, text, title] = [
+        "idle",
+        "Tackle",
+        `Ask Jev for a keep / remove verdict on every item in ${this.column}`,
+      ];
+    } else if (this.load.state === "loading") {
+      [state, text, title] = ["running", "Loading", `Reading ${this.column}`];
+    } else if (this.load.state === "failed") {
+      [state, text, title] = [
+        "error",
+        "Tackle again",
+        `Couldn't read ${this.column}: ${this.load.message}. Click to try again.`,
+      ];
+    } else if (!ids.length) {
+      [state, text, title] = ["done", "Tackle again", `${this.column} is empty. Click to read it again.`];
+    } else if (slots.some((s) => !s || s.state === "pending")) {
+      [state, text, title] = ["running", `${settled}/${ids.length}`, `Judging ${this.column} with Jev`];
+    } else {
+      [state, text, title] = [
+        errors ? "error" : "done",
+        "Tackle again",
+        `${ids.length - errors} judged${errors ? `, ${errors} failed` : ""}. Click to re-read the column and judge what is new or failed.`,
+      ];
+    }
+    if (b.dataset.state !== state) {
+      b.dataset.state = state;
+      b.querySelector("svg")?.replaceWith(
+        octicon(state === "idle" ? PLAY : state === "error" ? ALERT : SYNC),
+      );
+    }
+    const t = b.querySelector<HTMLElement>(".snba-run-text")!;
+    if (t.textContent !== text) t.textContent = text;
+    b.dataset.tip = title;
   }
 
   // ------------------------------------------------------------------ badges
@@ -125,13 +245,7 @@ class BoardAssistant {
     let text: string;
     let title: string;
     const slot = this.judged.slots.get(restId);
-    if (!this.configured.github || !this.configured.typesafe) {
-      [verdict, text, title] = [
-        "unconfigured",
-        "set up",
-        "SIG Node Board Assistant: add your tokens in the extension options",
-      ];
-    } else if (!slot || slot.state === "pending") {
+    if (!slot || slot.state === "pending") {
       [verdict, text, title] = ["pending", slot ? "judging" : "…", "Asking Jev"];
     } else if (slot.state === "error") {
       [verdict, text, title] = ["error", "error", slot.message];
@@ -153,6 +267,7 @@ class BoardAssistant {
   // ------------------------------------------------------------------ pane
   /** Keeps the evidence section in GitHub's pane in step with the pane's current item and our judging state. */
   private syncPane(): void {
+    if (!this.started) return;
     const restId = paneItemId();
     const existing = document.querySelector<HTMLElement>(".snba-evidence");
     if (!restId) {
@@ -189,13 +304,43 @@ class BoardAssistant {
     }
     const done = [...this.judged.slots.values()].filter((s) => s.state === "done").length;
     const pending = [...this.judged.slots.values()].filter((s) => s.state === "pending").length;
-    this.setPill(`Read-only. ${done} judged${pending ? `, ${pending} pending` : ""}`);
+    if (!this.started) {
+      this.setPill(`Click Tackle on ${this.column} to start`);
+      return;
+    }
+    this.setPill(`${done} judged${pending ? `, ${pending} pending` : ""}`);
   }
 
   private setPill(text: string): void {
     this.pillText.textContent = text;
   }
 }
+
+/** The column header's button, drawn with GitHub's own button classes where possible. */
+function tackleButton(col: HTMLElement, onClick: () => void): HTMLElement {
+  const { root: b, label, native } = nativeButton(col, octicon(PLAY), "Tackle");
+  b.classList.add("snba-run");
+  label.classList.add("snba-run-text");
+  if (!native) b.classList.add("snba-run-plain");
+  attachTooltip(b, col);
+  b.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClick();
+  });
+  // The column header is a drag handle; keep our clicks from starting a column drag.
+  for (const ev of ["mousedown", "pointerdown", "keydown"])
+    b.addEventListener(ev, (e) => e.stopPropagation());
+  return b;
+}
+
+const PLAY =
+  "M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z";
+const SYNC =
+  "M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z";
+
+const ALERT =
+  "M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z";
 
 function boot(): void {
   const ref = boardFromUrl(location.href);

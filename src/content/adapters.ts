@@ -108,3 +108,82 @@ export function placeSection(sidebar: HTMLElement, section: HTMLElement): void {
   if (after) after.after(section);
   else sidebar.append(section);
 }
+
+/** A button built from GitHub's own Primer button classes, so the page's stylesheet draws it: the classes of an
+ *  existing labelled button in `scope` (the column's "Add item") with the size and variant of the header's icon
+ *  buttons (small, invisible). Returns plain elements for content.css to style if no such button is found. */
+export function nativeButton(
+  scope: ParentNode,
+  icon: SVGSVGElement,
+  label: string,
+): { root: HTMLElement; label: HTMLElement; native: boolean } {
+  const tpl = scope
+    .querySelector<HTMLElement>('button:not(.snba-run) [data-component="buttonContent"]')
+    ?.closest<HTMLElement>("button");
+  const content = tpl?.querySelector<HTMLElement>('[data-component="buttonContent"]');
+  const visual = tpl?.querySelector<HTMLElement>('[data-component="leadingVisual"]');
+  const text = tpl?.querySelector<HTMLElement>('[data-component="text"]');
+  if (!tpl || !content || !visual || !text) {
+    const l = h("span", {}, label);
+    return { root: h("button", { type: "button" }, icon, l), label: l, native: false };
+  }
+  // Only Primer's own classes (prc-*): the template's column-module class makes it full-width.
+  const prc = (el: HTMLElement) => [...el.classList].filter((c) => c.startsWith("prc-")).join(" ");
+  const l = h(`span.${prc(text).replace(/ /g, ".")}`, { "data-component": "text" }, label);
+  const root = h(
+    `button.${prc(tpl).replace(/ /g, ".")}`,
+    {
+      type: "button",
+      "data-component": "Button",
+      "data-size": "small",
+      "data-variant": "invisible",
+      "data-loading": "false",
+      "data-no-visuals": "false",
+    },
+    h(
+      `span.${prc(content).replace(/ /g, ".")}`,
+      { "data-component": "buttonContent", "data-align": "center" },
+      h(`span.${prc(visual).replace(/ /g, ".")}`, { "data-component": "leadingVisual" }, icon),
+      l,
+    ),
+  );
+  return { root, label: l, native: true };
+}
+
+let tipSeq = 0;
+
+/** GitHub's own tooltip for `btn`: a popover span with the class of a Primer tooltip found in `scope` (the header's
+ *  "…" and "+" have one), shown 4px below the button and centred, like GitHub's. The text is read from
+ *  `btn.dataset.tip` each time it opens, so callers just update that. Falls back to .snba-tip-plain styling. */
+export function attachTooltip(btn: HTMLElement, scope: ParentNode): void {
+  const tpl = scope.querySelector<HTMLElement>('[data-component="Tooltip"]:not(.snba-tip)');
+  const cls = [...(tpl?.classList ?? [])].filter((c) => c.startsWith("prc-"));
+  const tip = h(`span.snba-tip${cls.length ? "." + cls.join(".") : ".snba-tip-plain"}`, {
+    "data-component": "Tooltip",
+    "data-direction": "s",
+    role: "tooltip",
+    id: `snba-tip-${++tipSeq}`,
+    popover: "manual",
+  });
+  btn.setAttribute("aria-describedby", tip.id);
+  document.body.append(tip);
+  const show = () => {
+    const text = btn.dataset.tip;
+    if (!text || !btn.isConnected) return;
+    tip.textContent = text;
+    tip.showPopover();
+    const b = btn.getBoundingClientRect();
+    const t = tip.getBoundingClientRect();
+    const left = Math.min(Math.max(4, b.left + b.width / 2 - t.width / 2), window.innerWidth - t.width - 4);
+    tip.style.top = `${b.bottom + 4 + window.scrollY}px`;
+    tip.style.left = `${left + window.scrollX}px`;
+  };
+  const hide = () => {
+    if (tip.matches(":popover-open")) tip.hidePopover();
+  };
+  btn.addEventListener("mouseenter", show);
+  btn.addEventListener("focus", show);
+  btn.addEventListener("mouseleave", hide);
+  btn.addEventListener("blur", hide);
+  btn.addEventListener("click", hide);
+}
