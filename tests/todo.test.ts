@@ -8,46 +8,10 @@ import {
   decideTodo,
   duplicateBody,
   freshFixGuard,
-  prowTypos,
   todoSteps,
   type TodoResult,
 } from "../src/core/todo";
-import type { BoardItem, ItemDetail } from "../src/core/types";
-
-const detail = (...bodies: [string, string][]): ItemDetail => ({
-  title: "t",
-  body: "",
-  labels: [],
-  state: "open",
-  author: { login: "a" },
-  createdAt: "2026-09-01T00:00:00Z",
-  url: "u",
-  comments: bodies.map(([login, body]) => ({ author: { login }, body, createdAt: "2026-09-02T00:00:00Z" })),
-});
-
-describe("prowTypos", () => {
-  it("finds commands Prow ignored, and what they meant", () => {
-    const d = detail(
-      ["maria", "seems green now!\ntriage/accept"],
-      ["sam", "/priority imporant-soon"],
-      ["kim", "/triage accept"],
-    );
-    expect(prowTypos(d)).toEqual([
-      { who: "maria", wrote: "triage/accept", fix: "/triage accepted" },
-      { who: "sam", wrote: "/priority imporant-soon", fix: "/priority important-soon" },
-      { who: "kim", wrote: "/triage accept", fix: "/triage accepted" },
-    ]);
-  });
-
-  it("ignores valid commands, prose and bots", () => {
-    const d = detail(
-      ["sam", "/triage accepted\n/priority backlog"],
-      ["sam", "Triage: https://storage.googleapis.com/k8s-triage/index.html"],
-      ["k8s-ci-robot", "/triage accept"],
-    );
-    expect(prowTypos(d)).toEqual([]);
-  });
-});
+import type { BoardItem } from "../src/core/types";
 
 const job = (
   rows: Partial<JobSignal["whole_job"]> & { failures: number; runs: number },
@@ -141,7 +105,7 @@ const result = (p: number, over: Partial<TodoResult> = {}): TodoResult => ({
       probabilities: { fixed_by_change: 0.8 },
     },
   },
-  rules: { assignees: [], sig_node: true, triage_accepted: true, priority_label: "backlog", prow_typos: [] },
+  rules: { assignees: [], sig_node: true, triage_accepted: true, priority_label: "backlog" },
   duplicate: null,
   guard: null,
   ci: [],
@@ -241,7 +205,7 @@ describe("todoSteps and the comment allow-list", () => {
 
   it("adds the missing labels to an action that keeps the card", () => {
     const r = result(0.1, {
-      rules: { assignees: [], sig_node: true, triage_accepted: false, priority_label: null, prow_typos: [] },
+      rules: { assignees: [], sig_node: true, triage_accepted: false, priority_label: null },
       priority: "important-longterm",
     });
     expect(todoSteps(item, r, "keep")).toEqual([

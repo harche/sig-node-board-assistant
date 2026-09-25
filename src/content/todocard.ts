@@ -112,14 +112,7 @@ function facts(r: TodoResult): [string, Node | string][] {
     !r.rules.triage_accepted && "triage/accepted",
     !r.rules.priority_label && "priority",
   ].filter(Boolean);
-  if (missing.length)
-    out.push([
-      "Labels",
-      `missing ${missing.join(" and ")}` +
-        (r.rules.prow_typos.length
-          ? `; ${r.rules.prow_typos.map((t) => `${t.who} wrote "${t.wrote}"`).join(", ")}, which Prow ignored`
-          : ""),
-    ]);
+  if (missing.length) out.push(["Labels", `missing ${missing.join(" and ")}`]);
   if (r.duplicate)
     out.push([
       "Duplicate of",
@@ -144,6 +137,8 @@ function describe(steps: ActionStep[]): string {
 }
 
 export interface TodoHoverContent {
+  /** The action\'s steps with the Prow fixes added. */
+  fix(steps: ActionStep[]): ActionStep[];
   item: BoardItem;
   result: TodoResult;
   overrides: TodoOverrides;
@@ -249,7 +244,7 @@ function actions(c: TodoHoverContent, action: TodoAction, locked: boolean): HTML
     box.append(h("p.snba-hc-status", {}, "Applied."));
     return box;
   }
-  const steps = chosenSteps(c.item, c.result, c.overrides);
+  const steps = c.fix(chosenSteps(c.item, c.result, c.overrides));
   const row = h("div.snba-hc-buttons");
   const apply = nativeButton(c.scope, null, "Apply", "primary").root;
   apply.classList.add("snba-hc-btn");

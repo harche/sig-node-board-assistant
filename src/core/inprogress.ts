@@ -7,6 +7,7 @@
  *
  *  Checked against kubernetes/151: on 2026-09-19 it reproduced the nudges and waits the board owner applied the
  *  next day (25/28, the rest borderline), and on 2026-09-25 26/26 against a hand-checked reading. */
+import type { ProwFix } from "./prowcmds";
 import { isBot } from "./boards";
 import type { TimelineEvent } from "./github";
 import type { JevClient } from "./jev";
@@ -350,6 +351,8 @@ export interface ProgressResult {
   assignees: AssigneeVerdict[];
   p_moving_on: number;
   usage: JevUsage;
+  /** Prow commands someone mistyped in the thread, with their fixes (prowcmds.ts). */
+  prow_fixes?: ProwFix[];
   state_chars: number;
 }
 

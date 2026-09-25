@@ -112,6 +112,87 @@ export class GitHubClient {
     }
   }
 
+  /** A GraphQL query (reads only). A 502 or 504 is GitHub timing out a heavy query: retried twice, since a read
+   *  is safe to repeat (the request hook never retries a POST). */
+  async graphql<T = unknown>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await this.octokit.request("POST /graphql", { query, variables });
+        const body = r.data as { data?: T; errors?: { message: string }[] };
+        if (body.errors?.length && !body.data) throw new Error(body.errors.map((e) => e.message).join("; "));
+        return body.data as T;
+      } catch (e) {
+        const status = (e as { status?: number }).status;
+        if ((status === 502 || status === 504) && attempt < 2) continue;
+        throw toGitHubError(e, "/graphql");
+      }
+    }
+  }
+
+  /** A pull request's state for the Needs Reviewer checks: the PR, its reviews, and Prow's tide status on the
+   *  head commit (tide's description says what still blocks the merge). */
+  pullState(repo: string, num: number, refresh = false): Promise<PullState> {
+    return this.cache.cached(
+      `pullstate:${repo}#${num}`,
+      15 * MINUTE,
+      async () => {
+        const pr = await this.api<RawPullFull>(`/repos/${repo}/pulls/${num}`);
+        const reviews = await this.paged<RawReview>(`/repos/${repo}/pulls/${num}/reviews`);
+        const status = await this.api<{
+          statuses: { context: string; state: string; description: string | null }[];
+        }>(`/repos/${repo}/commits/${pr.head.sha}/status`).catch(() => ({ statuses: [] }));
+        const tide = status.statuses.find((x) => x.context === "tide");
+        return {
+          state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open",
+          draft: pr.draft,
+          author: pr.user.login,
+          created_at: pr.created_at,
+          labels: pr.labels.map((l) => l.name),
+          tide: tide ? { state: tide.state, description: tide.description ?? "" } : null,
+          failing: status.statuses
+            .filter((x) => x.context !== "tide" && (x.state === "failure" || x.state === "error"))
+            .map((x) => x.context),
+          reviews: reviews
+            // A pending (unsubmitted) review of the token's owner has no date and is nobody's move yet.
+            .filter((r) => r.user && r.state !== "PENDING" && r.submitted_at)
+            .map((r) => ({
+              author: r.user!.login,
+              state: r.state,
+              at: r.submitted_at,
+              body: (r.body ?? "").slice(0, 600),
+            })),
+        };
+      },
+      refresh,
+    );
+  }
+
+  /** A file's text on the default branch (OWNERS, OWNERS_ALIASES), cached a day; null when it does not exist. */
+  rawFile(repo: string, path: string): Promise<string | null> {
+    return this.cache.cached(`raw:${repo}:${path}`, DAY, async () => {
+      try {
+        const r = await this.octokit.request(`GET /repos/${repo}/contents/${path}`, {
+          headers: { accept: "application/vnd.github.raw" },
+        });
+        return String(r.data);
+      } catch (e) {
+        if ((e as { status?: number }).status === 404) return null;
+        throw toGitHubError(e, path);
+      }
+    });
+  }
+
+  /** open / closed / merged for an issue or PR another item refers to. */
+  refState(repo: string, num: number): Promise<"open" | "closed" | "merged" | "missing"> {
+    return this.cache.cached(`ref:${repo}#${num}`, 30 * MINUTE, async () => {
+      const x = await this.api<{ state: string; pull_request?: { merged_at: string | null } }>(
+        `/repos/${repo}/issues/${num}`,
+      ).catch(() => null);
+      if (!x) return "missing";
+      return x.pull_request?.merged_at ? "merged" : x.state === "closed" ? "closed" : "open";
+    });
+  }
+
   /** Who the token belongs to; the options page's "test" button. */
   async viewer(): Promise<{ login: string }> {
     return this.api<{ login: string }>("/user");
@@ -419,6 +500,7 @@ interface RawIssue {
 /** Timeline events the extension reads, cut to the fields it reads: raw events carry full user objects and the
  *  whole cross-referenced issue, and the cache lives in chrome.storage.local's 10 MB (overflow clears it all). */
 const KEPT_EVENTS = new Set([
+  "review_requested",
   "assigned",
   "unassigned",
   "cross-referenced",
@@ -443,6 +525,7 @@ export function slim(events: TimelineEvent[]): TimelineEvent[] {
         actor: who(e.actor),
         user: who(e.user),
         assignee: who(e.assignee),
+        requested_reviewer: who(e.requested_reviewer),
         label: e.label && { name: e.label.name },
         body: e.body?.slice(0, 300),
         committer: e.committer && { date: e.committer.date },
@@ -472,6 +555,7 @@ export interface TimelineEvent {
   actor?: { login: string } | null;
   user?: { login: string } | null;
   assignee?: { login: string } | null;
+  requested_reviewer?: { login: string } | null;
   label?: { name: string };
   body?: string | null;
   committer?: { date: string } | null;
@@ -493,6 +577,32 @@ interface RawComment {
   user: { login: string };
   body: string | null;
   created_at: string;
+}
+/** What the Needs Reviewer checks read about a pull request. */
+export interface PullState {
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  author: string;
+  created_at: string;
+  labels: string[];
+  tide: { state: string; description: string } | null;
+  failing: string[];
+  reviews: { author: string; state: string; at: string; body: string }[];
+}
+interface RawPullFull {
+  state: string;
+  merged_at: string | null;
+  draft: boolean;
+  created_at: string;
+  user: { login: string };
+  labels: { name: string }[];
+  head: { sha: string };
+}
+interface RawReview {
+  user: { login: string } | null;
+  state: string;
+  submitted_at: string;
+  body: string | null;
 }
 interface RawPull {
   draft: boolean;

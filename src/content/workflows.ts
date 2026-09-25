@@ -8,7 +8,15 @@ import {
   type ProgressAction,
   type ProgressResult,
 } from "../core/inprogress";
+import {
+  decideReview,
+  REVIEW_TINT,
+  reviewSteps,
+  type ReviewAction,
+  type ReviewResult,
+} from "../core/reviewer";
 import { decideTodo, type TodoResult } from "../core/todo";
+import { chosenReview, renderReviewEvidence, renderReviewHoverCard } from "./reviewercard";
 import { chosenProgress, renderProgressEvidence, renderProgressHoverCard } from "./progresscard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -31,7 +39,37 @@ export type Overrides = Record<string, string>;
 const omit = (o: Overrides, key: string): Overrides =>
   Object.fromEntries(Object.entries(o).filter(([k]) => k !== key));
 
+/** Posts the fixes for mistyped Prow commands ahead of an action's own steps, unless the action closes the item or
+ *  takes it off the board (then the fix no longer matters), and without repeating a line the steps already post. */
+export function withFixes(
+  item: BoardItem,
+  r: { prow_fixes?: { fix: string }[] },
+  steps: ActionStep[],
+): ActionStep[] {
+  const fixes = r.prow_fixes ?? [];
+  if (!fixes.length) return steps;
+  const leaving = steps.some(
+    (s) =>
+      (s.kind === "move" && (s.lane === "Done" || s.lane === "Archive-it")) ||
+      (s.kind === "comment" && /^\/close$/m.test(s.body)),
+  );
+  if (leaving) return steps;
+  const posted = steps.flatMap((s) => (s.kind === "comment" ? s.body.split("\n") : []));
+  // A label the action itself sets (Triage's /priority, To do's missing labels) wins over a fix for the same kind of
+  // label: Prow adds a priority rather than replacing it, so posting both would leave two.
+  const cmdOf = (l: string) => l.split(/\s+/)[0]!.replace(/^\/remove-/, "/");
+  const labelCmds = new Set(["/triage", "/priority", "/kind"]);
+  const setByAction = new Set(posted.map(cmdOf).filter((c) => labelCmds.has(c)));
+  const lines = [...new Set(fixes.map((f) => f.fix))].filter(
+    (l) => !posted.includes(l) && !setByAction.has(cmdOf(l)),
+  );
+  if (!lines.length) return steps;
+  return [{ kind: "comment", repo: item.repository, number: item.number, body: lines.join("\n") }, ...steps];
+}
+
 export interface HoverCtx<R> {
+  /** An action's steps with the Prow fixes added (withFixes). */
+  fix(steps: ActionStep[]): ActionStep[];
   item: BoardItem;
   result: R;
   overrides: Overrides;
@@ -110,6 +148,7 @@ export const triageWorkflow: ColumnWorkflow<TriageResult> = {
   needsHuman: (r) => r.verdict === "BORDERLINE",
   hover: (c) =>
     renderHoverCard({
+      fix: c.fix,
       item: c.item,
       result: withPriority(c.result, c.overrides),
       suggested:
@@ -168,6 +207,7 @@ export const todoWorkflow: ColumnWorkflow<TodoResult> = {
   needsHuman: () => false,
   hover: (c) =>
     renderTodoHoverCard({
+      fix: c.fix,
       item: c.item,
       result: c.result,
       overrides: c.overrides as TodoOverrides,
@@ -231,6 +271,7 @@ export const progressWorkflow: ColumnWorkflow<ProgressResult> = {
   needsHuman: () => false,
   hover: (c) =>
     renderProgressHoverCard({
+      fix: c.fix,
       item: c.item,
       result: c.result,
       overrides: c.overrides,
@@ -262,8 +303,81 @@ export const progressWorkflow: ColumnWorkflow<ProgressResult> = {
       .join(", "),
 };
 
+// ---------------------------------------------------------------------------------------------------- Needs Reviewer
+
+const REVIEW_BADGE: Record<ReviewAction, string> = {
+  keep: "reviewing",
+  new_ask: "ask",
+  reping: "re-ping",
+  to_author: "author",
+  to_approver: "approver",
+  to_done: "done",
+};
+
+export const reviewWorkflow: ColumnWorkflow<ReviewResult> = {
+  judge: (item, refresh) => send({ type: "review.judge", item, refresh }),
+  badge(r, o) {
+    const a = chosenReview(r, o);
+    // A kept card says what it waits on.
+    const keep = r.holder
+      ? "held"
+      : r.engaged.length
+        ? "reviewing"
+        : r.asked.length
+          ? "asked"
+          : r.whose_move.choice === "blocked"
+            ? "blocked"
+            : "no reviewer";
+    return { tint: REVIEW_TINT[a], text: a === "keep" ? keep : REVIEW_BADGE[a] };
+  },
+  recommended(item, r, _fields, o) {
+    const a = chosenReview(r, o);
+    const steps = reviewSteps(item, r, a);
+    return steps.length ? { tint: REVIEW_TINT[a], steps } : null;
+  },
+  steps: (item, r, _fields, o) => reviewSteps(item, r, chosenReview(r, o)),
+  override(r, o, key, value) {
+    const rest = omit(o, key);
+    return key === "action" && value === decideReview(r).action ? rest : { ...rest, [key]: value };
+  },
+  needsHuman: () => false,
+  hover: (c) =>
+    renderReviewHoverCard({
+      fix: c.fix,
+      item: c.item,
+      result: c.result,
+      overrides: c.overrides,
+      setOverride: c.setOverride,
+      applied: c.applied,
+      canApply: c.canApply,
+      scope: c.scope,
+      apply: () => c.apply("chosen"),
+      skip: c.skip,
+    }),
+  hoverKey: (r) => `${decideReview(r).action}|${r.candidates.map((c) => c.login).join(",")}`,
+  pane: (adapter, item, st, rejudge) =>
+    renderReviewEvidence(
+      adapter,
+      item,
+      st.state === "done" ? { state: "done", result: st.result } : st,
+      rejudge,
+      SECTION_TITLE,
+    ),
+  runTip: (column) =>
+    `Ask Jev whose move each PR in ${column} is, and find reviewers for the ones nobody is reviewing`,
+  acceptTip: (n) =>
+    [
+      n.MOVE && `${n.MOVE} moved to Waiting on Author or Needs Approver`,
+      n.REMOVE && `${n.REMOVE} moved to Done`,
+      n.BORDERLINE && `${n.BORDERLINE} reviewers asked or re-pinged`,
+    ]
+      .filter(Boolean)
+      .join(", "),
+};
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
   progress: progressWorkflow as ColumnWorkflow<unknown>,
+  review: reviewWorkflow as ColumnWorkflow<unknown>,
 };

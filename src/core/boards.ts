@@ -17,7 +17,12 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 151,
     title: "SIG Node CI/Test Board",
     about: "CI health: failing and flaky tests, coverage gaps, test-infra jobs",
-    workflows: { triage: "Triage", todo: "Issues - To do", progress: "Issues - In progress" },
+    workflows: {
+      triage: "Triage",
+      todo: "Issues - To do",
+      progress: "Issues - In progress",
+      review: "PRs - Needs Reviewer",
+    },
   },
   {
     owner: "kubernetes",
@@ -40,7 +45,12 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 5,
     title: "SIG Node CI/Test Board (test)",
     about: "Test copy of kubernetes/151",
-    workflows: { triage: "Triage", todo: "Issues - To do", progress: "Issues - In progress" },
+    workflows: {
+      triage: "Triage",
+      todo: "Issues - To do",
+      progress: "Issues - In progress",
+      review: "PRs - Needs Reviewer",
+    },
     writable: true,
   },
 ];

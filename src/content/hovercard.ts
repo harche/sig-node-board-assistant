@@ -3,7 +3,7 @@
  *  never reflows under the pointer; it looks like GitHub's own hovercards. The full evidence stays in GitHub's pane. */
 import { f2, OWNER_OTHER_AT, PRIORITY_CHOICES, tieBreak } from "../core/policy";
 import { proposedActions } from "../core/triage";
-import type { BoardFields, BoardItem, ProposedAction, TriageResult } from "../core/types";
+import type { ActionStep, BoardFields, BoardItem, ProposedAction, TriageResult } from "../core/types";
 import { nativeButton } from "./adapters";
 import { decision } from "./evidence";
 import { h } from "./ui";
@@ -11,6 +11,8 @@ import { h } from "./ui";
 export type Applied = { state: "pending" | "done" } | { state: "error"; message: string };
 
 export interface HoverContent {
+  /** An action's steps with the Prow fixes added (Accept only: an archived item does not need them). */
+  fix?(steps: ActionStep[]): ActionStep[];
   item: BoardItem;
   /** With the reviewer's priority applied, if they picked one; `suggested` is what the extension proposed. */
   result: TriageResult;
@@ -132,7 +134,8 @@ function actions(c: HoverContent): HTMLElement {
       if (root.getAttribute("aria-disabled") !== "true") c.apply(choice);
     });
     row.append(root);
-    lines.append(h("li", {}, h("b", {}, name), h("span.snba-muted", {}, `: ${describe(action)}`)));
+    const shown = choice === "accept" && c.fix ? { ...action, steps: c.fix(action.steps) } : action;
+    lines.append(h("li", {}, h("b", {}, name), h("span.snba-muted", {}, `: ${describe(shown)}`)));
   }
   // Skip, as in the CLI: no write. The verdict is dropped and the card goes back to its own Tackle.
   const skip = nativeButton(c.scope, null, "Skip", "invisible").root;

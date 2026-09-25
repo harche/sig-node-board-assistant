@@ -1,86 +1,107 @@
-/** What a reviewer sees for an 'Issues - In progress' card: each assignee with Jev's reading of them (active,
- *  waiting out a check-in, quiet), and one action, the suggested one preselected, that the reviewer can change. */
+/** What a reviewer sees for a 'PRs - Needs Reviewer' card: whose move it is, who is reviewing or was asked, the
+ *  candidates to /cc with their reasons, and one action, the suggested one preselected, that can be changed. */
 import { f2 } from "../core/policy";
 import {
-  decideProgressCard,
-  PROGRESS_LABEL,
-  PROGRESS_TINT,
-  progressActions,
-  STALE_DAYS,
-  progressSteps,
-  type AssigneeVerdict,
-  type ProgressAction,
-  type ProgressResult,
-} from "../core/inprogress";
+  decideReview,
+  REVIEW_LABEL,
+  REVIEW_TINT,
+  reviewActions,
+  reviewSteps,
+  type ReviewAction,
+  type ReviewResult,
+} from "../core/reviewer";
 import type { ActionStep, BoardItem } from "../core/types";
 import { nativeButton } from "./adapters";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { h } from "./ui";
 
-export function chosenProgress(r: ProgressResult, o: { action?: string }): ProgressAction {
-  const a = o.action as ProgressAction | undefined;
-  return a && progressActions(r).includes(a) ? a : decideProgressCard(r).action;
+export function chosenReview(r: ReviewResult, o: { action?: string }): ReviewAction {
+  const a = o.action as ReviewAction | undefined;
+  return a && reviewActions(r).includes(a) ? a : decideReview(r).action;
 }
 
 function describe(steps: ActionStep[]): string {
   if (!steps.length) return "nothing to write";
   return steps
     .map((st) =>
-      st.kind === "comment" ? `comment "${st.body.replaceAll("\n", " ")}"` : `move to '${st.lane}'`,
+      st.kind === "comment" ? `comment "${st.body.replaceAll("\n", " / ")}"` : `move to '${st.lane}'`,
     )
     .join(", then ");
 }
 
-function assigneeLine(a: AssigneeVerdict): string {
-  const last =
-    a.last_activity_days_ago === null ? "no activity" : `last active ${a.last_activity_days_ago}d ago`;
-  // Within the threshold the date settles it; past it, Jev's reading is what decided.
-  const byDate = a.last_activity_days_ago !== null && a.last_activity_days_ago <= STALE_DAYS;
-  if (a.verdict === "active")
-    return `${a.login}: active, ${last}${byDate || a.p_active === null ? "" : ` (P still on it ${f2(a.p_active)})`}`;
-  const word = a.verdict === "wait" ? "waiting on a check-in" : "quiet";
-  const jev = a.p_active === null ? "" : `, P(still on it) ${f2(a.p_active)}`;
-  return `${a.login}: ${word}, ${last}${jev}. ${a.why}`;
+const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
+
+function facts(r: ReviewResult): [string, Node | string][] {
+  const out: [string, Node | string][] = [];
+  const m = r.whose_move;
+  out.push([
+    "Whose move",
+    `${m.choice} ${f2(m.probabilities[m.choice] ?? m.confidence)} (${Object.entries(m.probabilities)
+      .filter(([k]) => k !== m.choice)
+      .map(([k, p]) => `${k} ${f2(p)}`)
+      .join(", ")})`,
+  ]);
+  const prow = [
+    ...r.pr.labels.filter((l) => /^(lgtm|approved|do-not-merge\/|needs-rebase|lifecycle\/)/.test(l)),
+    r.pr.draft ? "draft" : "",
+  ].filter(Boolean);
+  if (prow.length) out.push(["Labels", prow.join(", ")]);
+  if (r.pr.tide?.description) out.push(["Tide", r.pr.tide.description]);
+  if (r.pr.failing.length) out.push(["Failing", r.pr.failing.slice(0, 4).join(", ")]);
+  if (r.holder)
+    out.push(["Hold", `by ${r.holder}${r.hold_met !== null ? `, condition met P ${f2(r.hold_met)}` : ""}`]);
+  if (r.engaged.length)
+    out.push([
+      "Reviewing",
+      lines(
+        r.engaged.map(
+          (e) =>
+            `${e.login}: last ${e.last_days_ago}d ago${r.pinged[e.login] != null ? `, pinged ${r.pinged[e.login]}d ago` : ""}`,
+        ),
+      ),
+    ]);
+  if (r.asked.length)
+    out.push([
+      "Asked",
+      lines(
+        r.asked.map(
+          (a) =>
+            `${a.login}, by ${a.by} ${a.days_ago}d ago${a.pinged_days_ago !== null && a.pinged_days_ago < a.days_ago ? `, pinged ${a.pinged_days_ago}d ago` : ""}`,
+        ),
+      ),
+    ]);
+  if (r.declined.length) out.push(["Declined or handed off", r.declined.join(", ")]);
+  if (r.author_last_days_ago !== null)
+    out.push(["Author", `${r.pr.author}, last moved ${r.author_last_days_ago}d ago`]);
+  if (r.candidates.length)
+    out.push(["Would /cc", lines(r.candidates.map((c) => `${c.login} (P ${f2(c.p)}): ${c.reason}`))]);
+  else if (r.candidates_note) out.push(["Candidates", r.candidates_note]);
+  return out;
 }
 
-function heading(r: ProgressResult, action: ProgressAction): HTMLElement {
-  const d = decideProgressCard(r);
-  const tint = PROGRESS_TINT[action].toLowerCase();
+function heading(r: ReviewResult, action: ReviewAction): HTMLElement {
+  const d = decideReview(r);
   return h(
     "div.snba-decision",
     {},
     h(
       "div",
       {},
-      h(`span.snba-verdict.snba-${tint}`, {}, PROGRESS_LABEL[action]),
+      h(`span.snba-verdict.snba-${REVIEW_TINT[action].toLowerCase()}`, {}, REVIEW_LABEL[action]),
       action !== d.action
-        ? h("span.snba-muted", {}, ` (suggested: ${PROGRESS_LABEL[d.action].toLowerCase()})`)
+        ? h("span.snba-muted", {}, ` (suggested: ${REVIEW_LABEL[d.action].toLowerCase()})`)
         : null,
     ),
     h("p.snba-why", {}, d.why),
   );
 }
 
-function facts(r: ProgressResult): [string, Node | string][] {
-  const out: [string, Node | string][] = [];
-  out.push([
-    "Assignees",
-    r.assignees.length
-      ? h("span.snba-lines", {}, ...r.assignees.map((a) => h("span", {}, assigneeLine(a))))
-      : "none",
-  ]);
-  if (r.assignees.some((a) => a.verdict !== "active"))
-    out.push(["Work by others", `P ${f2(r.p_moving_on)} that it moves or is done through others`]);
-  if (!r.sig_node) out.push(["Labels", "no sig/node"]);
-  return out;
-}
-
-export interface ProgressHoverContent {
+export interface ReviewHoverContent {
   /** The action\'s steps with the Prow fixes added. */
   fix(steps: ActionStep[]): ActionStep[];
   item: BoardItem;
-  result: ProgressResult;
+  result: ReviewResult;
   overrides: { action?: string };
   setOverride(key: string, value: string): void;
   applied: Applied | undefined;
@@ -90,19 +111,19 @@ export interface ProgressHoverContent {
   skip(): void;
 }
 
-export function renderProgressHoverCard(c: ProgressHoverContent): HTMLElement {
+export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
   const r = c.result;
   const locked = c.applied?.state === "pending" || c.applied?.state === "done" || !c.canApply;
-  const action = chosenProgress(r, c.overrides);
-  const suggested = decideProgressCard(r).action;
+  const action = chosenReview(r, c.overrides);
+  const suggested = decideReview(r).action;
   const sel = h(
     "select.snba-hc-select",
     { "aria-label": "Action", "data-focus-key": "action" },
-    ...progressActions(r).map((a) => {
+    ...reviewActions(r).map((a) => {
       const o = h(
         "option",
         { value: a },
-        a === suggested ? `${PROGRESS_LABEL[a]} (suggested)` : PROGRESS_LABEL[a],
+        a === suggested ? `${REVIEW_LABEL[a]} (suggested)` : REVIEW_LABEL[a],
       ) as HTMLOptionElement;
       o.selected = a === action;
       return o;
@@ -128,7 +149,7 @@ export function renderProgressHoverCard(c: ProgressHoverContent): HTMLElement {
   if (c.applied?.state === "done") {
     box.append(h("p.snba-hc-status", {}, "Applied."));
   } else {
-    const steps = c.fix(progressSteps(c.item, r, action));
+    const steps = c.fix(reviewSteps(c.item, r, action));
     const apply = nativeButton(c.scope, null, "Apply", "primary").root;
     apply.classList.add("snba-hc-btn");
     if (locked || !steps.length) apply.setAttribute("aria-disabled", "true");
@@ -150,7 +171,7 @@ export function renderProgressHoverCard(c: ProgressHoverContent): HTMLElement {
       h(
         "ul.snba-hc-steps",
         {},
-        h("li", {}, h("b", {}, PROGRESS_LABEL[action]), h("span.snba-muted", {}, `: ${describe(steps)}`)),
+        h("li", {}, h("b", {}, REVIEW_LABEL[action]), h("span.snba-muted", {}, `: ${describe(steps)}`)),
         h(
           "li",
           {},
@@ -168,13 +189,13 @@ export function renderProgressHoverCard(c: ProgressHoverContent): HTMLElement {
   return body;
 }
 
-export type ProgressPaneState =
-  { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: ProgressResult };
+export type ReviewPaneState =
+  { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: ReviewResult };
 
-export function renderProgressEvidence(
+export function renderReviewEvidence(
   adapter: SidebarAdapter,
   item: BoardItem,
-  st: ProgressPaneState,
+  st: ReviewPaneState,
   rejudge: (i: BoardItem) => Promise<void>,
   title: string,
 ): HTMLElement {
@@ -182,7 +203,7 @@ export function renderProgressEvidence(
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
   const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
-  again.title = "Re-read the thread and linked PRs and ask Jev again";
+  again.title = "Re-read the PR, its reviews and history, and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;
     try {
@@ -192,7 +213,7 @@ export function renderProgressEvidence(
     }
   });
   if (st.state === "pending") {
-    body.append(h("p.snba-muted", {}, "Reading the thread and linked PRs, and asking Jev…"));
+    body.append(h("p.snba-muted", {}, "Reading the PR, its reviews and review history, and asking Jev…"));
     return root;
   }
   if (st.state === "error") {
@@ -200,12 +221,12 @@ export function renderProgressEvidence(
     return root;
   }
   const r = st.result;
-  const action = decideProgressCard(r).action;
+  const action = decideReview(r).action;
   body.append(
     heading(r, action),
     ...facts(r).map(([k, v]) => adapter.row(k, v)),
     h("div.snba-subhead", {}, "What the suggested action does"),
-    h("p.snba-muted", {}, describe(progressSteps(item, r, action))),
+    h("p.snba-muted", {}, describe(reviewSteps(item, r, action))),
     h("div.snba-foot", {}, again),
   );
   return root;

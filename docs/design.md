@@ -93,6 +93,30 @@ positives); is the assignee still on it (asked only past 30 days of quiet, since
 comparisons); is the work moving through others. Code then does only date arithmetic: a check-in under 14 days
 waits, 14 or more unassigns, none nudges, and asking the thread needs P ≥ 0.65 and no active assignee.
 
+## PRs - Needs Reviewer
+
+`src/core/reviewer.ts`: plain rules (state, draft, the `lgtm` / `needs-rebase` / `lifecycle` labels, who put a
+`/hold`, including in a review), plain facts (every comment, review, push and human review request with its author
+and date; people asked by `/cc`, `/assign` or a human request; the latest @-mention ping to each), and one Jev call:
+whose move it is (author, reviewers, blocked), per participant whether they are reviewing and whether they
+declined, and whether a reviewer's hold condition is met. Reviews that only left inline comments are kept as events:
+dropping them hid a reviewer's request from Jev.
+
+`src/core/candidates.ts` finds reviewers. The CLI ranked OWNERS approvers near the top; tested on 662 merged 151 PRs
+that was one of the weakest signals (about half had an actual reviewer in its top 3), below who reviewed recent PRs
+touching the same files. The extension gathers, per touched file and top directory, the last year's merged PRs and
+their reviewers (one small GraphQL query per path; one large query timed out), plus the author's own recent PRs,
+blends them with OWNERS as a small bonus, and lets Jev pick three of the best eight given each candidate's counts and
+the titles they reviewed lately.
+
+## Broken Prow commands
+
+`src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell
+prose from a command. Now code flags a line only when it looks like a command Prow does not know (a bare lowercase
+`/word` close to a real one, a fixed-value command with a value not on its list, or a `label/value` line), and Jev
+chooses among the nearby real commands or "not a command". On 60 open 151 threads it flagged two lines: one fixed
+(`triage/accept` → `/triage accepted`), one already satisfied (the label was set another way), none spurious.
+
 ## Writes
 
 The CLI proposes, the human approves, then the CLI executes from an allow-list. The extension does the same:
@@ -101,7 +125,8 @@ clicks Apply (one card) or Accept (the column's suggestions). Writes go through 
 the worker refuses it unless the board is marked `writable` (today only the private test copy of 151), every
 move names that one project item, and every comment is on that item's issue and is one the extension drafts:
 Triage's `/triage accepted` + `/priority`, To do's label fix, close-as-fixed, close-as-duplicate and
-check-in comments, or In progress's nudge, `/unassign @x` and check-in comments (`src/core/comments.ts`), and no
+check-in comments, In progress's nudge, `/unassign @x` and check-in comments, or Needs Reviewer's `/cc` (up to three people, one
+reason line each) and re-pings, or a Prow-command fix (routing, labels, `/assign`, `/cc` only) (`src/core/comments.ts`), and no
 other Prow command. The header's Accept applies every suggestion in its column, comments included: clicking it
 means the reviewer has read the cards and agrees.
 

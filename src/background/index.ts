@@ -9,11 +9,30 @@ import { DUPLICATE_QUESTIONS } from "../core/prompts/todo";
 import { TestGridClient } from "../core/testgrid";
 import { judge } from "../core/triage";
 import { isDraftedComment } from "../core/comments";
+import { prowFixes, type ProwFix } from "../core/prowcmds";
+import { blend, nearestOwners, pickReviewers, reviewHistory } from "../core/candidates";
 import { judgeProgress } from "../core/inprogress";
+import { decideReview, judgeReview, type Candidate, type ReviewResult } from "../core/reviewer";
 import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
-import type { BoardItem, BoardRef, JevChoice, JevNoul } from "../core/types";
+import type { BoardItem, BoardRef, ItemDetail, JevChoice, JevNoul } from "../core/types";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
 import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
+
+/** Broken Prow commands in the thread and their fixes (core/prowcmds.ts); a failure here never fails the judge. */
+async function fixes(detail: ItemDetail, jev: JevClient, refresh?: boolean): Promise<ProwFix[]> {
+  try {
+    return (
+      await prowFixes(
+        detail,
+        detail.labels.map((l) => l.name),
+        jev,
+        refresh,
+      )
+    ).fixes;
+  } catch {
+    return [];
+  }
+}
 
 /** At most `n` of `jobs` at once, in order. */
 async function pool<T>(n: number, jobs: (() => Promise<T>)[]): Promise<T[]> {
@@ -149,7 +168,9 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       const { gh, jev } = await clients();
       if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
       const detail = await gh.itemDetail(req.item.repository, req.item.type, req.item.number, req.refresh);
-      return (await judge(req.item, detail, jev, req.refresh)) as Out;
+      const r = await judge(req.item, detail, jev, req.refresh);
+      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      return r as Out;
     }
     case "todo.judge": {
       const { gh, jev } = await clients();
@@ -159,7 +180,9 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         gh.itemDetail(repo, "Issue", num, req.refresh),
         gh.linkedPrs(repo, num, req.refresh),
       ]);
-      return (await judgeTodo(req.item, detail, prs, new TestGridClient(tgCache), jev, req.refresh)) as Out;
+      const r = await judgeTodo(req.item, detail, prs, new TestGridClient(tgCache), jev, req.refresh);
+      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      return r as Out;
     }
     case "progress.judge": {
       const { gh, jev } = await clients();
@@ -170,7 +193,67 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         timeline: (r: string, n: number) => gh.timeline(r, n, req.refresh),
         prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n, req.refresh),
       };
-      return (await judgeProgress(req.item, detail, f, jev, req.refresh)) as Out;
+      const r = await judgeProgress(req.item, detail, f, jev, req.refresh);
+      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      return r as Out;
+    }
+    case "review.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const { repository: repo, number: num } = req.item;
+      const [detail, ps, tl] = await Promise.all([
+        gh.itemDetail(repo, "PullRequest", num, req.refresh),
+        gh.pullState(repo, num, req.refresh),
+        gh.timeline(repo, num, req.refresh),
+      ]);
+      const base = await judgeReview(req.item, detail, ps, tl, (r, n) => gh.refState(r, n), jev, req.refresh);
+      let candidates: Candidate[] = [];
+      let note = "";
+      if (decideReview(base).action === "new_ask") {
+        try {
+          const files = (detail.files ?? []).map((f) => f.path);
+          const count = new Map<string, number>();
+          for (const f of files) {
+            const d = f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "";
+            count.set(d, (count.get(d) ?? 0) + 1);
+          }
+          const dirs = [...count]
+            .sort((a, b) => b[1] - a[1])
+            .map(([d]) => d)
+            .filter(Boolean)
+            .slice(0, 3);
+          const now = Date.now();
+          const [hist, owners] = await Promise.all([
+            reviewHistory(gh, repo, ps.author, files, dirs, now),
+            Promise.all(dirs.map((d) => nearestOwners({ raw: (r, p) => gh.rawFile(r, p) }, repo, d))),
+          ]);
+          const exclude = [
+            ...base.engaged.map((e) => e.login),
+            ...base.declined,
+            ...base.asked.map((a) => a.login),
+          ];
+          const pool = blend(ps.author, files.slice(0, 5), dirs, hist, owners, exclude, now);
+          const pick = await pickReviewers(
+            jev,
+            { repository: repo, title: detail.title, author: ps.author, changed_files: files.slice(0, 30) },
+            pool,
+            req.refresh,
+          );
+          candidates = pick.picks;
+          note = pool.length
+            ? `${pool.length} candidates from review history and OWNERS; Jev picked ${candidates.length}`
+            : "no one with review history on these files";
+        } catch (e) {
+          note = `reviewer search failed: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+      const out: ReviewResult = {
+        ...base,
+        candidates,
+        candidates_note: note,
+        prow_fixes: await fixes(detail, jev, req.refresh),
+      };
+      return out as Out;
     }
     case "todo.duplicates": {
       const { gh, jev } = await clients();

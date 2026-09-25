@@ -9,6 +9,8 @@ use, for two columns:
   from the thread, the PRs that link to it and its tests' TestGrid history.
 - **Issues - In progress**: is each assignee still on it; nudge the quiet ones, unassign after an unanswered
   check-in, or send the card back to To do.
+- **PRs - Needs Reviewer**: is the PR really waiting on a reviewer (or on its author, an approver, a hold); re-ping
+  a quiet reviewer, or `/cc` new ones picked from who actually reviews that code.
 
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
@@ -19,7 +21,7 @@ works on boards marked `writable` in `src/core/boards.ts`, today only the privat
 kubernetes/151 the extension reads and suggests; it never comments, labels or moves a card there. The worker
 checks every write against an allow-list: Status moves of the one item, and only the comments the extension
 drafts (`/triage accepted` with a priority, the To-do close / duplicate / check-in comments, and the
-In-progress nudge, `/unassign` and check-in comments).
+In-progress nudge, `/unassign` and check-in comments, and the Needs Reviewer `/cc` and re-pings).
 
 | on the board                                         | in GitHub's item pane (issues)                                   | on the PR page (pull requests)                       |
 | ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
@@ -111,14 +113,38 @@ within 30 days counts as active without asking. Then:
 On kubernetes/151 this reproduced the nudges and waits the board owner applied on 2026-09-20 from the state a
 day earlier, and matched a hand-checked reading of all 26 assignees on 2026-09-25.
 
+## PRs - Needs Reviewer
+
+On 151 the column means "triage accepted", not "no reviewer", so most cards need a move rather than a ping. Plain
+rules first (merged or closed → Done; draft, `needs-rebase`, stale → Waiting on Author; `lgtm` → Needs Approver),
+then Jev reads the PR's events (comments, reviews, pushes, review requests, Prow's `tide` status) for whose move it
+is, who is really reviewing, who declined, and whether a reviewer's `/hold` condition looks met. A reviewer or an
+earlier ask gets 14 days (a ping restarts it) before a re-ping.
+
+When nobody is reviewing and nobody was asked, the extension looks for reviewers. Measured on 662 PRs merged on 151
+since 2025-10 (hit = the person actually reviewed): OWNERS membership alone put a reviewer in its top 3 for about
+half; who reviewed recent PRs touching the same files, directories, or by the same author did better; Jev picking
+from that history, given each candidate's counts and the titles they reviewed lately, did best (71% in its top 3;
+77% on 39 recent k/k PRs with repository-wide history). The comment `/cc`s up to three people with one checkable
+reason each, so they can decide whether they have the bandwidth.
+
+## Broken Prow commands (every column)
+
+A comment line Prow ignored (`/assing @x`, `/triage accept`, `triage/accept`, `/priority imporant-soon`) means the
+assignment or label never happened. Code flags lines that are not a known command with valid arguments; Jev says which
+command was meant, or that the line was never a command (prose, a path, an example); code writes the fix with the
+original arguments. The fix is shown on the hover card and posted ahead of the card's own action by Apply and Accept,
+unless the item is being closed or archived, or the label already came some other way. Fixes only cover routing,
+labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassign`, which are a person's decision.
+
 ## Boards
 
-| board                         | project        | what the extension does today                                      |
-| ----------------------------- | -------------- | ------------------------------------------------------------------ |
-| SIG Node CI/Test Board        | kubernetes/151 | judges Triage, Issues - To do and Issues - In progress (read-only) |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing                                 |
-| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)                                |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)                                |
+| board                         | project        | what the extension does today                                                            |
+| ----------------------------- | -------------- | ---------------------------------------------------------------------------------------- |
+| SIG Node CI/Test Board        | kubernetes/151 | judges Triage, Issues - To do, Issues - In progress and PRs - Needs Reviewer (read-only) |
+| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing                                                       |
+| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)                                                      |
+| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)                                                      |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.
@@ -152,7 +178,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/design.md](docs/design.md).
 ## Roadmap
 
 1. Writes on kubernetes/151, after testing on the test board and an explicit opt-in in settings.
-2. The PR lanes: lane hygiene and reviewer finding, as the CLI has them.
+2. PRs - Needs Approver and PRs Waiting on Author.
 3. The Bugs board (kubernetes/185) triage workflow.
 4. Chrome Web Store listing.
 

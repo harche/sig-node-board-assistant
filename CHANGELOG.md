@@ -9,6 +9,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
   grouped duplicate pass. The reviewer can change the action (and a missing priority) on the hover card.
 - Issues - In progress: per assignee, active / wait / nudge / unassign / ask the thread, from plain facts and
   Jev's reading of the thread and linked PRs; cards without an assignee go back to To do.
+- PRs - Needs Reviewer: plain rules, then Jev on whose move it is, who reviews, who declined, whether a hold is
+  met; re-pings after 14 quiet days; new reviewers found from review history and picked by Jev, asked with `/cc`.
+- Broken Prow commands in any column: flagged by code, read by Jev, fixed on Apply / Accept.
 - The header's Accept applies every suggestion, comments included, in every column.
 - Board columns are workflows (`src/content/workflows.ts`): Triage and Issues - To do share the column
   button, badges, tints, hover card, Accept, Cancel and Skip.

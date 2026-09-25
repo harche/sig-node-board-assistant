@@ -163,3 +163,29 @@ describe("slim (cached timelines)", () => {
     expect(s[1]!.body).toHaveLength(300);
   });
 });
+
+describe("pullState", () => {
+  it("leaves out a pending review, which has no date", async () => {
+    const f = fakeFetch({
+      "/repos/o/r/pulls/1": {
+        state: "open",
+        merged_at: null,
+        draft: false,
+        created_at: "2026-09-01T00:00:00Z",
+        user: { login: "a" },
+        labels: [],
+        head: { sha: "abc" },
+      },
+      "/repos/o/r/pulls/1/reviews": [
+        { user: { login: "r" }, state: "COMMENTED", submitted_at: "2026-09-02T00:00:00Z", body: "nit" },
+        { user: { login: "me" }, state: "PENDING", body: "draft" },
+      ],
+      "/repos/o/r/commits/abc/status": {
+        statuses: [{ context: "tide", state: "pending", description: "Needs lgtm" }],
+      },
+    });
+    const ps = await new GitHubClient("tok", new Cache(new MemoryStore()), f).pullState("o/r", 1);
+    expect(ps.reviews.map((r) => r.author)).toEqual(["r"]);
+    expect(ps.tide).toEqual({ state: "pending", description: "Needs lgtm" });
+  });
+});

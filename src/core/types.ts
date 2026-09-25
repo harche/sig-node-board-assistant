@@ -1,5 +1,6 @@
 /** Shared domain types. Field names mirror the reference Python implementation (sig-node-ci-assistant) so the
  *  parity fixtures generated from it compare 1:1. */
+import type { ProwFix } from "./prowcmds";
 
 export type ItemKind = "Issue" | "PullRequest";
 
@@ -154,6 +155,8 @@ export interface TriageResult {
   lane: string;
   answers: TriageAnswers;
   signals: Signals;
+  /** Prow commands someone mistyped in the thread, with their fixes (prowcmds.ts). */
+  prow_fixes?: ProwFix[];
   usage: JevUsage;
   state_chars: number;
 }

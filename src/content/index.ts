@@ -14,7 +14,7 @@ import type { PaneState } from "./workflows";
 import { HoverCard, type Applied } from "./hovercard";
 import { Judged } from "./judged";
 import { h, octicon } from "./ui";
-import { WORKFLOWS, type ColumnWorkflow, type Overrides } from "./workflows";
+import { withFixes, WORKFLOWS, type ColumnWorkflow, type Overrides } from "./workflows";
 
 /** Items judged or applied at once. */
 const PARALLEL = 8;
@@ -483,8 +483,13 @@ class BoardAssistant<R> {
       if (slot?.state !== "done") continue;
       const applied = this.applied.get(item.restId)?.state;
       if (applied === "pending" || applied === "done" || this.skipped.has(item.restId)) continue;
-      const rec = this.wf.recommended(item, slot.result, fields, this.overrides.get(item.restId) ?? {});
-      if (rec) out.push({ item, ...rec });
+      const o = this.overrides.get(item.restId) ?? {};
+      const rec = this.wf.recommended(item, slot.result, fields, o);
+      // A card with nothing else to do still gets its Prow fixes, unless it needs the reviewer's call.
+      const base = rec ?? (this.wf.needsHuman(slot.result, o) ? null : { tint: "KEEP", steps: [] });
+      if (!base) continue;
+      const steps = withFixes(item, slot.result as { prow_fixes?: { fix: string }[] }, base.steps);
+      if (steps.length) out.push({ item, tint: base.tint, steps });
     }
     return out;
   }
@@ -525,8 +530,10 @@ class BoardAssistant<R> {
       state === "done"
     )
       return;
-    const steps = this.wf.steps(item, slot.result, fields, this.overrides.get(restId) ?? {}, choice);
-    if (!steps?.length) return;
+    const own = this.wf.steps(item, slot.result, fields, this.overrides.get(restId) ?? {}, choice);
+    if (!own) return;
+    const steps = withFixes(item, slot.result as { prow_fixes?: { fix: string }[] }, own);
+    if (!steps.length) return;
     await this.applySteps(restId, steps);
   }
 
@@ -567,7 +574,8 @@ class BoardAssistant<R> {
     const slot = this.judged.slots.get(restId);
     const col = columns(document).find((c) => c.name === this.column)?.el;
     if (!item || slot?.state !== "done" || !col) return null;
-    return this.wf.hover({
+    const el = this.wf.hover({
+      fix: (steps) => withFixes(item, slot.result as { prow_fixes?: { fix: string }[] }, steps),
       item,
       result: slot.result,
       overrides: this.overrides.get(restId) ?? {},
@@ -579,6 +587,18 @@ class BoardAssistant<R> {
       scope: col,
       apply: (choice) => void this.applyOne(restId, choice),
     });
+    // Every column: say which Prow commands were ignored, above the buttons that would post the fix.
+    const fixes =
+      (slot.result as { prow_fixes?: { who: string; wrote: string; fix: string }[] }).prow_fixes ?? [];
+    if (fixes.length)
+      el.querySelector(".snba-hc-actions")?.before(
+        h(
+          "p.snba-hc-status.snba-muted",
+          {},
+          `Prow ignored ${fixes.map((f) => `"${f.wrote}" (${f.who})`).join(", ")}; Apply and Accept also post ${fixes.map((f) => `"${f.fix}"`).join(", ")}, unless the item is closed or archived.`,
+        ),
+      );
+    return el;
   }
 
   /** A pick on the hover card (a priority, an action) in place of the suggested one. */

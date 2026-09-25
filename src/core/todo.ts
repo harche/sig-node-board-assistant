@@ -1,9 +1,10 @@
 /** The state Jev reads for an 'Issues - To do' card: the thread, the PRs that reference it and the CI run history
  *  of what it tracks, all computed by code. `asOf` lets an offline evaluation see a closed issue as it stood
  *  before it was closed; on the board it is now. */
+import type { ProwFix } from "./prowcmds";
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
-import { f2, priority, PRIORITY_CHOICES } from "./policy";
+import { f2, priority } from "./policy";
 import { todoQuestions } from "./prompts/todo";
 import { priorityQuestion } from "./prompts/triage";
 import { buildState } from "./state";
@@ -109,44 +110,11 @@ export async function buildTodoState(
 // ---------------------------------------------------------------------------------------------------------------
 // Rules the code applies itself, as in the CLI's sweep.
 
-/** Prow's /triage and /priority arguments. A command with any other argument silently did nothing. */
-const PROW_OK: Record<string, string[]> = {
-  triage: ["accepted", "needs-information", "duplicate", "not-reproducible", "unresolved"],
-  priority: PRIORITY_CHOICES,
-};
-/** A whole line that is a /triage or /priority command, or the label typed as one (`triage/accept`). */
-const PROW_RE = /^\s*(?:\/(triage|priority)\s+([\w-]+)|(triage|priority)\/([\w-]+))\s*$/gim;
-
-/** Malformed /triage or /priority commands in human comments (`/triage accept`, `triage/accept`,
- *  `/priority imporant-soon`), with the command they meant. Prow ignores them, so the label never came. */
-export function prowTypos(d: ItemDetail): { who: string; wrote: string; fix: string }[] {
-  const out: { who: string; wrote: string; fix: string }[] = [];
-  for (const c of d.comments) {
-    if (isBot(c.author.login)) continue;
-    for (const m of c.body.matchAll(PROW_RE)) {
-      const cmd = (m[1] ?? m[3]!).toLowerCase();
-      const arg = (m[2] ?? m[4]!).toLowerCase();
-      const ok = PROW_OK[cmd]!;
-      if (m[1] && ok.includes(arg)) continue; // a valid command
-      const fix = ok.reduce((best, o) => (distance(o, arg) < distance(best, arg) ? o : best));
-      out.push({ who: c.author.login, wrote: m[0].trim(), fix: `/${cmd} ${fix}` });
-    }
-  }
-  return out;
-}
-
-function distance(a: string, b: string): number {
-  let diff = Math.abs(a.length - b.length);
-  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) diff++;
-  return diff;
-}
-
 export interface TodoRules {
   assignees: string[];
   sig_node: boolean;
   triage_accepted: boolean;
   priority_label: string | null;
-  prow_typos: { who: string; wrote: string; fix: string }[];
 }
 
 export function todoRules(item: BoardItem, d: ItemDetail): TodoRules {
@@ -156,7 +124,6 @@ export function todoRules(item: BoardItem, d: ItemDetail): TodoRules {
     sig_node: labels.includes("sig/node"),
     triage_accepted: labels.includes("triage/accepted"),
     priority_label: labels.find((l) => l.startsWith("priority/"))?.slice("priority/".length) ?? null,
-    prow_typos: prowTypos(d),
   };
 }
 
@@ -247,6 +214,8 @@ export interface TodoResult {
   priority: string | null;
   priority_why: string;
   usage: JevUsage;
+  /** Prow commands someone mistyped in the thread, with their fixes (prowcmds.ts). */
+  prow_fixes?: ProwFix[];
   state_chars: number;
 }
 
