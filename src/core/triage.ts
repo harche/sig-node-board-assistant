@@ -2,7 +2,7 @@
  *  take. The actions are *described*; nothing in this module (or this extension) executes them. */
 import type { JevClient } from "./jev";
 import { decide, prLane, priority } from "./policy";
-import { triageQuestions } from "./prompts/triage";
+import { priorityQuestion, triageQuestions } from "./prompts/triage";
 import { signals } from "./signals";
 import { buildState, pyJsonLength } from "./state";
 import type {
@@ -25,9 +25,19 @@ export async function judge(
   const sig = signals(d, kind);
   const state = buildState(item, d, kind);
   const r = await jev.askCached<TriageAnswers>(state, triageQuestions(kind), 4, refresh);
-  const a = r.answers;
+  const a: TriageAnswers = { ...r.answers };
+  const usage = { ...r.usage };
   const { verdict, why } = decide(a, sig);
-  const prio = priority(a, sig);
+  // Priority only matters for an item that stays on the board, and a label a human already set wins anyway.
+  const keeping = verdict !== "REMOVE";
+  if (keeping && !sig.priority_label_already) {
+    const p = await jev.askCached<Pick<TriageAnswers, "priority">>(state, priorityQuestion(kind), 4, refresh);
+    a.priority = p.answers.priority;
+    usage.input_tokens += p.usage.input_tokens;
+    usage.cost += p.usage.cost;
+    usage.cached = usage.cached && p.usage.cached;
+  }
+  const prio = keeping ? priority(a, sig) : { priority: null, why: "" };
   return {
     item_id: item.id,
     repo: item.repository,
@@ -42,7 +52,7 @@ export async function judge(
     lane: kind === "PullRequest" ? prLane(sig) : "Issues - To do",
     answers: a,
     signals: sig,
-    usage: r.usage,
+    usage,
     state_chars: pyJsonLength(state),
   };
 }
@@ -63,9 +73,22 @@ export function moveCommand(itemId: string, lane: string, f: BoardFields): strin
   ].join(" ");
 }
 
-export function prowCommand(kind: ItemKind, repo: string, num: number, prio: string): string {
+/** The Prow comment that accepts an item at `prio`. Prow's /priority only adds a label, so a different priority
+ *  already on the item (`from`) is removed in the same comment. */
+export function prowBody(prio: string, from: string | null = null): string {
+  const remove = from && from !== prio ? `/remove-priority ${from}\n` : "";
+  return `/triage accepted\n${remove}/priority ${prio}`;
+}
+
+export function prowCommand(
+  kind: ItemKind,
+  repo: string,
+  num: number,
+  prio: string,
+  from: string | null = null,
+): string {
   const tool = kind === "PullRequest" ? "pr" : "issue";
-  return `gh ${tool} comment ${num} --repo ${repo} --body ${q(`/triage accepted\n/priority ${prio}`)}`;
+  return `gh ${tool} comment ${num} --repo ${repo} --body ${q(prowBody(prio, from))}`;
 }
 
 /** The accept / reject alternatives for a judged item and which one the verdict recommends. */
@@ -73,26 +96,30 @@ export function proposedActions(
   item: BoardItem,
   r: TriageResult,
   fields: BoardFields,
-): { accept: ProposedAction; reject: ProposedAction; recommended: "accept" | "reject" | null } {
+): { accept: ProposedAction | null; reject: ProposedAction; recommended: "accept" | "reject" | null } {
   const { repository: repo, number: num, type: kind } = item;
   const sig = r.signals;
-  const needsProw = !(sig.triage_accepted_already && sig.priority_label_already);
-  const prowBody = `/triage accepted\n/priority ${r.priority}`;
-  const accept: ProposedAction = {
-    label: `ACCEPT: /triage accepted + /priority ${r.priority}, move to '${r.lane}'`,
-    steps: [
-      ...(needsProw ? [{ kind: "comment" as const, repo, number: num, body: prowBody }] : []),
-      { kind: "move" as const, itemId: item.id, restId: item.restId, lane: r.lane },
-    ],
-    ghCommands: [
-      ...(needsProw ? [prowCommand(kind, repo, num, r.priority)] : []),
-      moveCommand(item.id, r.lane, fields),
-    ],
-  };
   const reject: ProposedAction = {
     label: "REJECT: move to 'Archive-it'",
     steps: [{ kind: "move", itemId: item.id, restId: item.restId, lane: "Archive-it" }],
     ghCommands: [moveCommand(item.id, "Archive-it", fields)],
+  };
+  // An item Jev says to remove is only ever archived: no /triage accepted, no priority.
+  if (r.priority === null) return { accept: null, reject, recommended: "reject" };
+  // r.priority may be the reviewer's pick rather than the label already there; then the comment changes it.
+  const existing = sig.priority_label_already?.split("/").slice(1).join("/") ?? null;
+  const needsProw = !(sig.triage_accepted_already && existing === r.priority);
+  const prio = r.priority;
+  const accept: ProposedAction = {
+    label: `ACCEPT: /triage accepted + /priority ${prio}, move to '${r.lane}'`,
+    steps: [
+      ...(needsProw ? [{ kind: "comment" as const, repo, number: num, body: prowBody(prio, existing) }] : []),
+      { kind: "move" as const, itemId: item.id, restId: item.restId, lane: r.lane },
+    ],
+    ghCommands: [
+      ...(needsProw ? [prowCommand(kind, repo, num, prio, existing)] : []),
+      moveCommand(item.id, r.lane, fields),
+    ],
   };
   const recommended = r.verdict === "KEEP" ? "accept" : r.verdict === "REMOVE" ? "reject" : null;
   return { accept, reject, recommended };

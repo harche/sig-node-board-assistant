@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { findSidebar, paneAdapter, placeSection } from "../src/content/adapters";
 import { renderEvidence } from "../src/content/evidence";
+import { proposedActions } from "../src/core/triage";
 import type { BoardFields, BoardItem, TriageResult } from "../src/core/types";
 import fixture from "./fixtures/parity.json";
 
@@ -134,6 +135,22 @@ describe("findSidebar + renderEvidence", () => {
     expect(el.textContent).toMatch(/Jev read \d+ chars/);
     expect(el.textContent).toContain("gh project item-edit");
     expect(el.querySelectorAll("button, a")).toHaveLength(1); // only "Judge again"
+  });
+  it("offers only Archive, and no priority, for an item Jev says to remove", () => {
+    const removed: TriageResult = { ...result, verdict: "REMOVE", priority: null, priority_why: "" };
+    const p = proposedActions(item, removed, fields);
+    expect(p.accept).toBeNull();
+    expect(p.recommended).toBe("reject");
+    document.body.innerHTML = CLASSIC;
+    const el = renderEvidence(
+      findSidebar(document)!.adapter,
+      item,
+      { state: "done", result: removed, fields },
+      handlers,
+    );
+    expect(el.querySelectorAll(".snba-choice")).toHaveLength(1);
+    expect(el.textContent).not.toContain("Urgency");
+    expect(el.textContent).not.toContain("/triage accepted");
   });
   it("renders pending and error states", () => {
     document.body.innerHTML = CLASSIC;

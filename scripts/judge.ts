@@ -88,7 +88,11 @@ for (const item of items) {
   console.log(
     `  bucket    ${r.answers.bucket.choice} (${r.answers.bucket.confidence.toFixed(2)})   owner ${r.answers.owner.choice} (${r.answers.owner.confidence.toFixed(2)})`,
   );
-  console.log(`  priority  ${r.priority} (${r.priority_why})   lane ${r.lane}`);
+  console.log(
+    r.priority === null
+      ? `  priority  - (removing)`
+      : `  priority  ${r.priority} (${r.priority_why})   lane ${r.lane}`,
+  );
   console.log(
     `  jev       ${r.state_chars.toLocaleString()} chars, ${r.usage.input_tokens} tokens, $${r.usage.cost.toFixed(5)}${r.usage.cached ? " (cached)" : ""}`,
   );
@@ -96,6 +100,7 @@ for (const item of items) {
     ["accept", accept],
     ["reject", reject],
   ] as const) {
+    if (!a) continue; // an item Jev says to remove is only ever archived
     console.log(`  ${name}${recommended === name ? " (recommended)" : ""}: ${a.label}`);
     for (const c of a.ghCommands) console.log(`      ${c}`);
   }

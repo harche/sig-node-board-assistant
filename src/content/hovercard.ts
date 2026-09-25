@@ -1,7 +1,7 @@
 /** The board's hover card: hovering a card's verdict badge shows Jev's scores for that item and buttons to apply
  *  either action to that one item. It floats beside the card (right, or left when there is no room) so the board
  *  never reflows under the pointer; it looks like GitHub's own hovercards. The full evidence stays in GitHub's pane. */
-import { f2, OWNER_OTHER_AT, tieBreak } from "../core/policy";
+import { f2, OWNER_OTHER_AT, PRIORITY_CHOICES, tieBreak } from "../core/policy";
 import { proposedActions } from "../core/triage";
 import type { BoardFields, BoardItem, ProposedAction, TriageResult } from "../core/types";
 import { nativeButton } from "./adapters";
@@ -12,7 +12,9 @@ export type Applied = { state: "pending" | "done" } | { state: "error"; message:
 
 export interface HoverContent {
   item: BoardItem;
+  /** With the reviewer's priority applied, if they picked one; `suggested` is what the extension proposed. */
   result: TriageResult;
+  suggested: { priority: string; why: string } | null;
   fields: BoardFields | null;
   applied: Applied | undefined;
   /** False while the header's Accept is running: single-item buttons wait for it. */
@@ -21,6 +23,7 @@ export interface HoverContent {
   scope: ParentNode;
   apply(choice: "accept" | "reject"): void;
   skip(): void;
+  setPriority(p: string): void;
 }
 
 export function renderHoverCard(c: HoverContent): HTMLElement {
@@ -41,12 +44,38 @@ export function renderHoverCard(c: HoverContent): HTMLElement {
       ...score("CI or test work", ci),
       ...score("SIG Node owns it", node),
       ...score("Another SIG owns it", other, other >= OWNER_OTHER_AT),
-      h("dt", {}, "Priority"),
-      h("dd.snba-hc-text", {}, r.priority, h("span.snba-muted", {}, ` · ${r.priority_why}`)),
+      ...(r.priority === null
+        ? []
+        : [h("dt", {}, "Priority"), h("dd.snba-hc-text", {}, prioritySelect(c, r.priority))]),
     ),
   );
   body.append(actions(c));
   return body;
+}
+
+/** Jev's pick (or the label already there), preselected; the reviewer can change it before accepting. Items Jev
+ *  says to remove have none: they are only ever archived. */
+function prioritySelect(c: HoverContent, current: string): HTMLElement {
+  const suggested = c.suggested ?? { priority: current, why: "" };
+  const choices = PRIORITY_CHOICES.includes(current) ? PRIORITY_CHOICES : [current, ...PRIORITY_CHOICES];
+  const options = choices.map((p) => {
+    const o = h("option", { value: p }, p) as HTMLOptionElement;
+    o.selected = p === current;
+    return o;
+  });
+  const sel = h(
+    "select.snba-hc-select",
+    { "aria-label": "Priority", "data-focus-key": "priority" },
+    ...options,
+  ) as HTMLSelectElement;
+  const locked = c.applied?.state === "pending" || c.applied?.state === "done" || !c.canApply;
+  sel.disabled = locked;
+  // The board treats keys and clicks inside a card as its own; keep them in the select.
+  for (const ev of ["click", "keydown", "mousedown"]) sel.addEventListener(ev, (e) => e.stopPropagation());
+  sel.addEventListener("change", () => c.setPriority(sel.value));
+  const note =
+    current === suggested.priority ? suggested.why : `changed from ${suggested.priority}, ${suggested.why}`;
+  return h("span.snba-hc-prio", {}, sel, h("span.snba-muted", {}, note));
 }
 
 function score(label: string, p: number, warn = false): HTMLElement[] {
@@ -79,9 +108,11 @@ function actions(c: HoverContent): HTMLElement {
   const busy = c.applied?.state === "pending" || !c.canApply;
   const row = h("div.snba-hc-buttons");
   const lines = h("ul.snba-hc-steps");
-  // Recommended first, as GitHub's primary button; borderline has none, so both are plain.
-  const order: ["accept" | "reject", ProposedAction][] =
-    recommended === "reject"
+  // Recommended first, as GitHub's primary button; borderline has none, so both are plain. An item Jev says to
+  // remove offers Archive only.
+  const order: ["accept" | "reject", ProposedAction][] = !accept
+    ? [["reject", reject]]
+    : recommended === "reject"
       ? [
           ["reject", reject],
           ["accept", accept],
@@ -130,7 +161,9 @@ function actions(c: HoverContent): HTMLElement {
 
 function describe(a: ProposedAction): string {
   return a.steps
-    .map((st) => (st.kind === "comment" ? `comment ${st.body.replace("\n", " + ")}` : `move to '${st.lane}'`))
+    .map((st) =>
+      st.kind === "comment" ? `comment ${st.body.replaceAll("\n", " + ")}` : `move to '${st.lane}'`,
+    )
     .join(", then ");
 }
 
@@ -147,6 +180,8 @@ export class HoverCard {
   private key: string | null = null;
   /** Set while focus is handed back to the anchor, so its focus handler does not reopen the card. */
   private returning = false;
+  /** A <select> list is open: it is drawn outside the card, so picking from it reads as the pointer leaving. */
+  private picking = false;
 
   constructor(
     private render: (restId: number) => HTMLElement | null,
@@ -154,11 +189,26 @@ export class HoverCard {
   ) {
     this.el = h("div.snba-hovercard", { role: "dialog", "aria-label": "Jev's verdict" });
     this.el.hidden = true;
-    this.el.addEventListener("mouseenter", () => this.cancelClose());
+    this.el.addEventListener("mouseenter", () => {
+      // Back over the card, so any list opened from it has closed.
+      this.picking = false;
+      this.cancelClose();
+    });
     this.el.addEventListener("mouseleave", () => this.scheduleClose());
     this.el.addEventListener("focusout", (e) => {
+      this.picking = false;
       if (!this.el.contains(e.relatedTarget as Node | null)) this.scheduleClose();
     });
+    // Capture phase: the select stops mousedown from bubbling (the board would take it). The list opens on mousedown
+    // and closes with the pick.
+    this.el.addEventListener(
+      "mousedown",
+      (e) => {
+        if (e.target instanceof HTMLSelectElement) this.picking = !this.picking;
+      },
+      true,
+    );
+    this.el.addEventListener("change", () => (this.picking = false), true);
     // Capture phase: the badge stops keydown from bubbling (the board would treat it as a drag), so a listener on
     // document in the bubble phase would never see Escape pressed on the badge.
     document.addEventListener(
@@ -226,8 +276,8 @@ export class HoverCard {
   }
 
   private focusables(): HTMLElement[] {
-    return [...this.el.querySelectorAll<HTMLElement>("button, a[href], [tabindex]")].filter(
-      (x) => x.getAttribute("aria-disabled") !== "true",
+    return [...this.el.querySelectorAll<HTMLElement>("button, select, a[href], [tabindex]")].filter(
+      (x) => x.getAttribute("aria-disabled") !== "true" && !(x as HTMLSelectElement).disabled,
     );
   }
 
@@ -245,6 +295,7 @@ export class HoverCard {
 
   close(): void {
     this.cancelClose();
+    this.picking = false;
     this.el.hidden = true;
     this.el.replaceChildren();
     this.restId = null;
@@ -255,12 +306,20 @@ export class HoverCard {
   private show(restId: number, anchor: HTMLElement): void {
     const content = this.render(restId);
     if (!content || !anchor.isConnected) return this.close();
+    const focused = this.el.contains(document.activeElement)
+      ? (document.activeElement as HTMLElement).dataset.focusKey
+      : undefined;
     this.restId = restId;
     this.anchor = anchor;
     this.key = this.keyOf(restId);
     this.el.replaceChildren(content);
     this.el.hidden = false;
     this.place(anchor);
+    if (focused) {
+      // Removing the old control fired focusout, which scheduled a close; focus is back inside, so keep the card.
+      this.el.querySelector<HTMLElement>(`[data-focus-key="${focused}"]`)?.focus();
+      this.cancelClose();
+    }
   }
 
   private place(anchor: HTMLElement): void {
@@ -279,7 +338,11 @@ export class HoverCard {
 
   private scheduleClose(delay = 250): void {
     this.cancelClose();
-    this.closeTimer = window.setTimeout(() => this.close(), delay);
+    this.closeTimer = window.setTimeout(() => {
+      // Wait for an open list to close, then decide again.
+      if (this.picking) this.scheduleClose(delay);
+      else this.close();
+    }, delay);
   }
 
   private cancelClose(): void {

@@ -462,6 +462,35 @@
 .snba-hc-scores dd.snba-hc-text {
   display: block;
 }
+.snba-hc-prio {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+/* Styled like GitHub's small select (Primer form-select) from its own tokens, so it follows the theme. */
+.snba-hc-select {
+  appearance: auto;
+  height: 28px;
+  max-width: 100%;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--text-body-size-small, 12px);
+  color: var(--fgColor-default);
+  background-color: var(--bgColor-default);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  color-scheme: inherit;
+}
+.snba-hc-select:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, var(--borderColor-accent-emphasis));
+  outline-offset: -1px;
+}
+.snba-hc-select:disabled {
+  color: var(--fgColor-disabled);
+  background-color: var(--bgColor-disabled);
+  cursor: not-allowed;
+}
 .snba-hc-title .snba-muted {
   font-weight: var(--base-text-weight-normal, 400);
 }

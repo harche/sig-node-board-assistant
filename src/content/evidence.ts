@@ -49,7 +49,11 @@ export function renderEvidence(
   body.append(
     adapter.row("Kind of work", choice(a.bucket)),
     adapter.row("Owning SIG", choice(a.owner)),
-    adapter.row("Urgency", h("span", {}, r.priority, h("span.snba-muted", {}, ` · ${r.priority_why}`))),
+    ...(r.priority === null
+      ? []
+      : [
+          adapter.row("Urgency", h("span", {}, r.priority, h("span.snba-muted", {}, ` · ${r.priority_why}`))),
+        ]),
     adapter.row(
       "Routing",
       s.human_slash_routing_comments.length
@@ -68,7 +72,8 @@ export function renderEvidence(
   body.append(h("div.snba-subhead", {}, "What a reviewer could do"));
   if (st.fields) {
     const { accept, reject, recommended } = proposedActions(item, r, st.fields);
-    const cards = recommended === "reject" ? [reject, accept] : [accept, reject];
+    // An item Jev says to remove has no Accept: it is only ever archived.
+    const cards = (recommended === "reject" ? [reject, accept] : [accept, reject]).filter((c) => c !== null);
     for (const c of cards)
       body.append(choiceCard(c, c === (recommended === "reject" ? reject : accept) && recommended !== null));
   } else {
@@ -177,7 +182,7 @@ function reviewState(s: Signals): string {
 function choiceCard(a: ProposedAction, recommended: boolean): HTMLElement {
   const name = a.steps.some((st) => st.kind === "move" && st.lane === "Archive-it") ? "Archive" : "Accept";
   const steps = a.steps.map((st) =>
-    st.kind === "comment" ? `comment "${st.body.replace("\n", " ")}"` : `move to "${st.lane}"`,
+    st.kind === "comment" ? `comment "${st.body.replaceAll("\n", " ")}"` : `move to "${st.lane}"`,
   );
   return h(
     `div.snba-choice${recommended ? ".snba-rec" : ""}`,

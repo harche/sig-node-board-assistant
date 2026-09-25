@@ -69,20 +69,32 @@ export function decide(a: TriageAnswers, sig: Signals): { verdict: Verdict; why:
   return { verdict, why };
 }
 
-/** A priority/* label a human already set wins; otherwise the default. Jev's Score is shown as a hint only: on
- *  past board decisions it never beat always answering the default, at any confidence gate. */
+/** Every Prow priority a reviewer can pick on the hover card, most urgent first (test-infra label_sync/labels.md). */
+export const PRIORITY_CHOICES = [
+  "critical-urgent",
+  "important-soon",
+  "important-longterm",
+  "backlog",
+  "awaiting-more-evidence",
+];
+
+/** A priority/* label a human already set wins; otherwise Jev's most likely level. The reviewer can change it on the
+ *  hover card before accepting. On 245 past board decisions Jev agreed with the triager 43% of the time against 38%
+ *  for always answering important-longterm (triagers disagree with each other a lot), hence the easy override. */
 export function priority(a: TriageAnswers, sig: Signals): { priority: string; why: string } {
   if (sig.priority_label_already) {
     return { priority: sig.priority_label_already.split("/").slice(1).join("/"), why: "already labelled" };
   }
   const s = a.priority;
-  let level = 0;
-  for (let i = 1; i < PRIORITIES.length; i++)
-    if ((s.probabilities[String(i)] ?? 0) > (s.probabilities[String(level)] ?? 0)) level = i;
-  return {
-    priority: PRIORITY_DEFAULT,
-    why: `default; Jev leans ${PRIORITIES[level]} (conf ${f2(s.confidence)})`,
-  };
+  if (!s) return { priority: PRIORITY_DEFAULT, why: "default; Jev gave no level" };
+  let level = -1;
+  let best = 0;
+  for (let i = 0; i < PRIORITIES.length; i++) {
+    const p = s.probabilities[String(i)] ?? 0;
+    if (p > best) [level, best] = [i, p];
+  }
+  if (level < 0) return { priority: PRIORITY_DEFAULT, why: "default; Jev gave no level" };
+  return { priority: PRIORITIES[level]!, why: `Jev's pick (p ${f2(best)})` };
 }
 
 /** Review lane from Prow/GitHub state; code, not Jev (it matched the board as well as Jev did). */

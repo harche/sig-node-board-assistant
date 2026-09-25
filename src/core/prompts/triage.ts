@@ -132,8 +132,8 @@ const owner = {
   },
 };
 
-/** Levels map to Prow priorities in order (policy.PRIORITIES). Shown to the reviewer as a hint only: against past
- *  board decisions it never beat always answering important-longterm, so policy.priority() uses that default. */
+/** Levels map to Prow priorities in order (policy.PRIORITIES). policy.priority() takes the most likely one; the
+ *  reviewer can change it on the hover card. */
 const priority = {
   type: "score",
   instructions: {
@@ -160,20 +160,30 @@ const priority = {
   ],
 };
 
-export type TriageQuestions = Record<"bucket" | "in_scope" | "owner" | "priority", Record<string, unknown>>;
+export type TriageQuestions = Record<"bucket" | "in_scope" | "owner", Record<string, unknown>>;
 
-/** The four questions with `evidence` for the item type appended to each one's instructions. Key order is the
- *  file-name order of the reference prompts, so the request (and its cache key) is stable. */
+const withEvidence = (
+  kind: ItemKind,
+  q: { instructions: Record<string, unknown> } & Record<string, unknown>,
+) => ({
+  ...q,
+  instructions: {
+    ...q.instructions,
+    evidence: [...EVIDENCE[kind === "PullRequest" ? "pull_request" : "issue"]],
+  },
+});
+
+/** The three questions behind the verdict, with `evidence` for the item type appended to each one's instructions.
+ *  Key order is the file-name order of the reference prompts, so the request (and its cache key) is stable. */
 export function triageQuestions(kind: ItemKind): TriageQuestions {
-  const evidence = [...EVIDENCE[kind === "PullRequest" ? "pull_request" : "issue"]];
-  const withEvidence = (q: { instructions: Record<string, unknown> } & Record<string, unknown>) => ({
-    ...q,
-    instructions: { ...q.instructions, evidence },
-  });
   return {
-    bucket: withEvidence(bucket),
-    in_scope: withEvidence(in_scope),
-    owner: withEvidence(owner),
-    priority: withEvidence(priority),
+    bucket: withEvidence(kind, bucket),
+    in_scope: withEvidence(kind, in_scope),
+    owner: withEvidence(kind, owner),
   };
+}
+
+/** The priority question, asked in a second call only for items that are not being removed. */
+export function priorityQuestion(kind: ItemKind): { priority: Record<string, unknown> } {
+  return { priority: withEvidence(kind, priority) };
 }

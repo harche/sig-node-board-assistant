@@ -2,7 +2,7 @@
  *  Same signals, same Jev state, same questions, same verdicts, same commands. */
 import { describe, expect, it } from "vitest";
 import { decide, priority, prLane } from "../src/core/policy";
-import { triageQuestions } from "../src/core/prompts/triage";
+import { priorityQuestion, triageQuestions } from "../src/core/prompts/triage";
 import { signals } from "../src/core/signals";
 import { buildState, pyJsonLength } from "../src/core/state";
 import { moveCommand, prowCommand } from "../src/core/triage";
@@ -94,11 +94,13 @@ describe("buildState()", () => {
 
 describe("triageQuestions()", () => {
   const q = fixture.questions as Record<ItemKind, unknown>;
-  it("issue questions match the YAML prompts", () => expect(triageQuestions("Issue")).toEqual(q.Issue));
+  // The CLI asks all four at once; here priority is a second call, made only when the item is not removed.
+  const both = (k: ItemKind) => ({ ...triageQuestions(k), ...priorityQuestion(k) });
+  it("issue questions match the YAML prompts", () => expect(both("Issue")).toEqual(q.Issue));
   it("pull request questions match the YAML prompts", () =>
-    expect(triageQuestions("PullRequest")).toEqual(q.PullRequest));
+    expect(both("PullRequest")).toEqual(q.PullRequest));
   it("question order is stable (cache key)", () =>
-    expect(Object.keys(triageQuestions("Issue"))).toEqual(["bucket", "in_scope", "owner", "priority"]));
+    expect(Object.keys(triageQuestions("Issue"))).toEqual(["bucket", "in_scope", "owner"]));
 });
 
 describe("decide() and priority()", () => {
@@ -113,7 +115,11 @@ describe("decide() and priority()", () => {
   it(`agrees with the reference on ${cases.length} decision-grid cases`, () => {
     for (const c of cases) {
       expect(decide(c.answers, c.signals)).toEqual({ verdict: c.verdict, why: c.why });
-      expect(priority(c.answers, c.signals)).toEqual({ priority: c.priority, why: c.priority_why });
+      // Deliberate difference: the CLI always proposes important-longterm; this takes Jev's most likely level.
+      // A priority label already set still wins, as in the CLI.
+      if (c.signals.priority_label_already)
+        expect(priority(c.answers, c.signals)).toEqual({ priority: c.priority, why: c.priority_why });
+      else expect(c.priority_why).toContain(`Jev leans ${priority(c.answers, c.signals).priority} `);
     }
   });
 });

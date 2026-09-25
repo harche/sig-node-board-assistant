@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decide, f2, OWNER_OTHER_AT } from "../src/core/policy";
+import { decide, f2, OWNER_OTHER_AT, priority } from "../src/core/policy";
+import { prowBody } from "../src/core/triage";
 import type { Signals, TriageAnswers } from "../src/core/types";
 
 describe("f2 (Python-compatible .2f)", () => {
@@ -54,5 +55,35 @@ describe("decide(): ownership guard", () => {
   it("leaves KEEP alone when the owner answer is node or unsure", () => {
     expect(decide(answers(0.8, "node", 0.9), sig).verdict).toBe("KEEP");
     expect(decide(answers(0.8, "other", 0.59), sig).verdict).toBe("KEEP");
+  });
+});
+
+describe("priority()", () => {
+  const a = (probabilities: Record<string, number>) =>
+    ({ priority: { type: "score", score: 0, confidence: 0.4, probabilities } }) as unknown as TriageAnswers;
+  const sig = (label: string | null) => ({ priority_label_already: label }) as Signals;
+  it("takes Jev's most likely level", () => {
+    expect(priority(a({ "0": 0.1, "1": 0.2, "2": 0.7 }), sig(null))).toEqual({
+      priority: "important-soon",
+      why: "Jev's pick (p 0.70)",
+    });
+    expect(priority(a({ "0": 0.6, "1": 0.4 }), sig(null)).priority).toBe("backlog");
+  });
+  it("keeps a label already set, and falls back to the default when Jev gives nothing", () => {
+    expect(priority(a({ "2": 1 }), sig("priority/backlog"))).toEqual({
+      priority: "backlog",
+      why: "already labelled",
+    });
+    expect(priority(a({}), sig(null)).priority).toBe("important-longterm");
+  });
+});
+
+describe("prowBody()", () => {
+  it("removes a different priority already on the item", () => {
+    expect(prowBody("important-soon")).toBe("/triage accepted\n/priority important-soon");
+    expect(prowBody("important-soon", "important-soon")).toBe("/triage accepted\n/priority important-soon");
+    expect(prowBody("backlog", "important-soon")).toBe(
+      "/triage accepted\n/remove-priority important-soon\n/priority backlog",
+    );
   });
 });

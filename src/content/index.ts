@@ -7,7 +7,7 @@
  *  Fetching, judging and writing happen in the background worker. */
 import { boardFromUrl, knownBoard } from "../core/boards";
 import { proposedActions } from "../core/triage";
-import type { ActionStep, BoardItem, BoardRef } from "../core/types";
+import type { ActionStep, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
 import { attachTooltip, findSidebar, nativeButton, PANE_SIDEBAR, placeSection } from "./adapters";
 import { cardsIn, columns, isOurs, itemLink, paneItemId, placeBadge, placeRunButton, SEL } from "./dom";
@@ -47,6 +47,8 @@ class BoardAssistant {
   /** Items skipped from their hover card (the CLI's `s`): verdict dropped, card back to its own Tackle. Kept so
    *  nothing judges them again behind the user's back; their own Tackle (or the header's) clears it. */
   private skipped = new Set<number>();
+  /** Priorities the reviewer picked on the hover card in place of the suggested one; dropped with the verdict. */
+  private priorities = new Map<number, string>();
   /** The header's Accept is running. */
   private applying = false;
   /** The items the header's Accept is applying (or last applied): its counter and summary count only these. */
@@ -82,6 +84,7 @@ class BoardAssistant {
           a?.state === "error" ? a.message : "",
           this.applying,
           Boolean(this.judged.fields),
+          this.priorities.get(restId),
         ].join("|");
       },
     );
@@ -169,6 +172,7 @@ class BoardAssistant {
     this.hover.close();
     this.applied.clear();
     this.skipped.clear();
+    this.priorities.clear();
     this.applySummary = null;
     this.paintRunButton();
     await this.ensureColumn(true);
@@ -201,6 +205,7 @@ class BoardAssistant {
     }
     this.applied.delete(restId);
     this.skipped.delete(restId);
+    this.priorities.delete(restId);
     await this.judged.judge(item, true);
   }
 
@@ -387,8 +392,9 @@ class BoardAssistant {
       if (slot?.state !== "done") continue;
       const applied = this.applied.get(item.restId)?.state;
       if (applied === "pending" || applied === "done" || this.skipped.has(item.restId)) continue;
-      const p = proposedActions(item, slot.result, fields);
-      if (p.recommended) out.push({ item, recommended: p.recommended, action: p[p.recommended] });
+      const p = proposedActions(item, this.withPriority(item.restId, slot.result), fields);
+      const action = p.recommended && p[p.recommended];
+      if (p.recommended && action) out.push({ item, recommended: p.recommended, action });
     }
     return out;
   }
@@ -429,7 +435,9 @@ class BoardAssistant {
       state === "done"
     )
       return;
-    await this.applySteps(restId, proposedActions(item, slot.result, fields)[choice].steps);
+    const action = proposedActions(item, this.withPriority(restId, slot.result), fields)[choice];
+    if (!action) return;
+    await this.applySteps(restId, action.steps);
   }
 
   private async applySteps(restId: number, steps: ActionStep[]): Promise<void> {
@@ -454,6 +462,7 @@ class BoardAssistant {
     // Only this item's own write, or the header's Accept, holds it; another item's write does not.
     if (this.applying || this.applied.get(restId)?.state === "pending") return;
     this.skipped.add(restId);
+    this.priorities.delete(restId);
     this.judged.slots.delete(restId);
     this.applied.delete(restId);
     this.hover.close();
@@ -470,7 +479,12 @@ class BoardAssistant {
     if (!item || slot?.state !== "done" || !col) return null;
     return renderHoverCard({
       item,
-      result: slot.result,
+      result: this.withPriority(restId, slot.result),
+      suggested:
+        slot.result.priority === null
+          ? null
+          : { priority: slot.result.priority, why: slot.result.priority_why },
+      setPriority: (p) => this.setPriority(restId, p),
       fields: this.judged.fields,
       applied: this.applied.get(restId),
       canApply: !this.applying,
@@ -478,6 +492,22 @@ class BoardAssistant {
       scope: col,
       apply: (choice) => void this.applyOne(restId, choice),
     });
+  }
+
+  /** The judged result with the reviewer's priority, if they picked one on the hover card. */
+  private withPriority(restId: number, r: TriageResult): TriageResult {
+    const p = this.priorities.get(restId);
+    return p ? { ...r, priority: p, priority_why: "picked by you" } : r;
+  }
+
+  private setPriority(restId: number, p: string): void {
+    const slot = this.judged.slots.get(restId);
+    const state = this.applied.get(restId)?.state;
+    if (slot?.state !== "done" || this.applying || state === "pending" || state === "done") return;
+    if (slot.result.priority === null) return;
+    if (p === slot.result.priority) this.priorities.delete(restId);
+    else this.priorities.set(restId, p);
+    this.hover.refresh(restId);
   }
 
   /** Cancel: drop every verdict and our marks on the board; the next Tackle starts over (Jev answers are cached). */
@@ -489,6 +519,7 @@ class BoardAssistant {
     this.judged.slots.clear();
     this.applied.clear();
     this.skipped.clear();
+    this.priorities.clear();
     this.applySummary = null;
     for (const b of document.querySelectorAll(SEL.badge)) b.remove();
     for (const c of document.querySelectorAll<HTMLElement>("[data-snba-verdict]"))

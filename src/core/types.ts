@@ -114,7 +114,8 @@ export interface TriageAnswers {
   in_scope: JevNoul;
   bucket: JevChoice;
   owner: JevChoice;
-  priority: JevScore;
+  /** Asked only when the item is not being removed. */
+  priority?: JevScore;
 }
 
 export interface JevUsage {
@@ -135,7 +136,8 @@ export interface TriageResult {
   url: string;
   verdict: Verdict;
   why: string;
-  priority: string;
+  /** Null when Jev says remove: the item is only ever archived, so Jev is not asked and Accept is not offered. */
+  priority: string | null;
   priority_why: string;
   lane: string;
   answers: TriageAnswers;

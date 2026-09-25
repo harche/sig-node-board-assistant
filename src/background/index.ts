@@ -9,8 +9,8 @@ import { judge } from "../core/triage";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
 import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
 
-/** The only comment Accept may post: the triage acceptance and a priority. */
-const PROW_TRIAGE = /^\/triage accepted\n\/priority [a-z-]+$/;
+/** The only comment Accept may post: the triage acceptance and a priority, replacing a different one if set. */
+const PROW_TRIAGE = /^\/triage accepted\n(\/remove-priority [a-z-]+\n)?\/priority [a-z-]+$/;
 
 const store = new ChromeLocalStore();
 const cache = new Cache(store);
