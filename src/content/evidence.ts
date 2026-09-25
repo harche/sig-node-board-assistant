@@ -81,7 +81,7 @@ export function renderEvidence(
       h(
         "span.snba-muted",
         {},
-        `Read-only. Nothing here writes to GitHub. Jev read ${r.state_chars.toLocaleString()} chars${r.usage.cached ? ", cached" : ` for $${r.usage.cost.toFixed(5)}`}.`,
+        `Jev read ${r.state_chars.toLocaleString()} chars${r.usage.cached ? ", cached" : ` for $${r.usage.cost.toFixed(5)}`}.`,
       ),
       rejudgeLink(item, handlers),
     ),
@@ -103,7 +103,8 @@ function rejudgeLink(item: BoardItem, handlers: EvidenceHandlers): HTMLElement {
   return b;
 }
 
-function decision(r: TriageResult): HTMLElement {
+/** Verdict, the P(in scope) band with its thresholds, and the one-line why. Shared with the board's hover card. */
+export function decision(r: TriageResult): HTMLElement {
   const p = r.answers.in_scope.noul;
   const word = r.verdict === "BORDERLINE" ? "Borderline" : r.verdict === "KEEP" ? "Keep" : "Remove";
   const sub =

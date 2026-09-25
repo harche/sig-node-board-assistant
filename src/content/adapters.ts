@@ -114,8 +114,9 @@ export function placeSection(sidebar: HTMLElement, section: HTMLElement): void {
  *  buttons (small, invisible). Returns plain elements for content.css to style if no such button is found. */
 export function nativeButton(
   scope: ParentNode,
-  icon: SVGSVGElement,
+  icon: SVGSVGElement | null,
   label: string,
+  variant: "invisible" | "primary" | "default" = "invisible",
 ): { root: HTMLElement; label: HTMLElement; native: boolean } {
   const tpl = scope
     .querySelector<HTMLElement>('button:not(.snba-run) [data-component="buttonContent"]')
@@ -136,14 +137,14 @@ export function nativeButton(
       type: "button",
       "data-component": "Button",
       "data-size": "small",
-      "data-variant": "invisible",
+      "data-variant": variant,
       "data-loading": "false",
-      "data-no-visuals": "false",
+      "data-no-visuals": String(!icon),
     },
     h(
       `span.${prc(content).replace(/ /g, ".")}`,
       { "data-component": "buttonContent", "data-align": "center" },
-      h(`span.${prc(visual).replace(/ /g, ".")}`, { "data-component": "leadingVisual" }, icon),
+      icon ? h(`span.${prc(visual).replace(/ /g, ".")}`, { "data-component": "leadingVisual" }, icon) : null,
       l,
     ),
   );

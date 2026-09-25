@@ -2,14 +2,16 @@
  *  every item in the column is judged (like the CLI's `triage`), each card gets a verdict badge and tint, and
  *  GitHub's own item pane gets the evidence section when it opens for one of those cards. Once every item is
  *  judged the header offers Accept (apply every recommendation, in parallel) or Cancel (back to the plain board).
+ *  Hovering a badge shows Jev's scores for that item with buttons to apply either action to it alone.
  *  Fetching, judging and writing happen in the background worker. */
 import { boardFromUrl, knownBoard } from "../core/boards";
 import { proposedActions } from "../core/triage";
-import type { BoardItem, BoardRef } from "../core/types";
+import type { ActionStep, BoardItem, BoardRef } from "../core/types";
 import { send } from "../shared/messages";
 import { attachTooltip, findSidebar, nativeButton, PANE_SIDEBAR, placeSection } from "./adapters";
 import { cardsIn, columns, isOurs, itemLink, paneItemId, placeBadge, placeRunButton, SEL } from "./dom";
 import { renderEvidence, type EvidenceState } from "./evidence";
+import { HoverCard, renderHoverCard, type Applied } from "./hovercard";
 import { Judged } from "./judged";
 import { h, octicon } from "./ui";
 
@@ -39,9 +41,15 @@ class BoardAssistant {
   /** Shown instead of Tackle once every item is judged. */
   private acceptBtn: HTMLElement | null = null;
   private cancelBtn: HTMLElement | null = null;
-  /** Accept's writes, per project item. */
-  private applied = new Map<number, { state: "pending" | "done" } | { state: "error"; message: string }>();
+  /** Writes per project item, from the header's Accept or from an item's own hover card buttons. */
+  private applied = new Map<number, Applied>();
+  /** The header's Accept is running. */
   private applying = false;
+  /** The items the header's Accept is applying (or last applied): its counter and summary count only these. */
+  private batch: number[] = [];
+  /** The header's Accept has run: review is over and Tackle comes back to re-read what is left. */
+  private accepted = false;
+  private hover: HoverCard;
   /** What the last Accept did; the pill shows it until the next Tackle or Cancel. */
   private applySummary: string | null = null;
 
@@ -58,6 +66,21 @@ class BoardAssistant {
     );
     this.pill.addEventListener("click", () => void send({ type: "options.open" }));
     document.body.append(this.pill);
+    this.hover = new HoverCard(
+      (restId) => this.hoverContent(restId),
+      (restId) => {
+        const slot = this.judged.slots.get(restId);
+        const a = this.applied.get(restId);
+        return [
+          slot?.state,
+          slot?.state === "done" ? slot.result.verdict + slot.result.why : "",
+          a?.state,
+          a?.state === "error" ? a.message : "",
+          this.applying,
+          Boolean(this.judged.fields),
+        ].join("|");
+      },
+    );
     this.judged.onChange((restId) => {
       this.paintBadge(restId);
       this.syncPane();
@@ -115,6 +138,7 @@ class BoardAssistant {
       }
       if (!badge) this.mountBadge(c.el, c.restId);
       else placeBadge(c.el, badge); // GitHub may draw the header after we mounted; move the badge into it
+      this.watchHover(c.el);
       this.paintBadge(c.restId);
     }
     // Only against a finished read: while the first one is in flight every card looks missing.
@@ -134,8 +158,10 @@ class BoardAssistant {
       void send({ type: "options.open" });
       return;
     }
-    if (this.load.state === "loading" || this.running() || this.applying) return;
+    if (this.load.state === "loading" || this.running() || this.busy()) return;
     this.started = true;
+    this.accepted = false;
+    this.hover.close();
     this.applied.clear();
     this.applySummary = null;
     this.paintRunButton();
@@ -256,12 +282,17 @@ class BoardAssistant {
     this.paintReview();
   }
 
+  /** A write is in flight: the header's Accept, or one item's own button. Tackle and Cancel wait for it. */
+  private busy(): boolean {
+    return this.applying || [...this.applied.values()].some((a) => a.state === "pending");
+  }
+
   /** Every item judged (or Accept under way): Accept and Cancel take Tackle's place in the header. */
   private reviewing(): boolean {
     if (this.applying) return true;
     if (!this.started || this.load.state !== "loaded" || !this.items.size || this.running()) return false;
     // Once Accept has run, Tackle comes back to re-read what is left.
-    return this.applied.size === 0;
+    return !this.accepted;
   }
 
   private paintReview(): void {
@@ -276,16 +307,17 @@ class BoardAssistant {
     const plan = this.plan();
     const keep = plan.filter((p) => p.recommended === "accept").length;
     const remove = plan.length - keep;
-    const borderline = [...this.items.keys()].filter(
-      (id) => this.judged.slots.get(id)?.state === "done" && !plan.some((p) => p.item.restId === id),
-    ).length;
+    const borderline = [...this.items.keys()].filter((id) => {
+      const slot = this.judged.slots.get(id);
+      return slot?.state === "done" && slot.result.verdict === "BORDERLINE" && !this.applied.has(id);
+    }).length;
     const failed = [...this.items.keys()].filter((id) => this.judged.slots.get(id)?.state === "error").length;
     const left = [
       borderline && `${borderline} borderline`,
       failed && `${failed} that failed to judge`,
     ].filter(Boolean);
-    const settled = [...this.applied.values()].filter((a) => a.state !== "pending").length;
-    setText(accept, this.applying ? `${settled}/${this.applied.size}` : "Accept");
+    const settled = this.batch.filter((id) => this.applied.get(id)?.state !== "pending").length;
+    setText(accept, this.applying ? `${settled}/${this.batch.length}` : "Accept");
     accept.dataset.state = this.applying ? "applying" : "ready";
     accept.setAttribute("aria-disabled", String(this.applying || !plan.length));
     accept.dataset.tip = this.applying
@@ -295,13 +327,14 @@ class BoardAssistant {
           `${keep} keep (/triage accepted + /priority, move to its lane), ${remove} remove (move to Archive-it)` +
           (left.length ? `. ${left.join(" and ")} stay in ${this.column} for you.` : ".")
         : `Nothing to apply: every item needs your call`;
-    cancel.setAttribute("aria-disabled", String(this.applying));
-    cancel.dataset.tip = this.applying
+    cancel.setAttribute("aria-disabled", String(this.busy()));
+    cancel.dataset.tip = this.busy()
       ? "Can't cancel while applying"
       : `Discard the verdicts and go back to the board as it was`;
   }
 
-  /** The recommended action for every item with a clear verdict; borderline and failed items are left out. */
+  /** The recommended action for every item with a clear verdict that is not applied yet (or being applied);
+   *  borderline and failed items are left out. */
   private plan() {
     const fields = this.judged.fields;
     if (!fields) return [];
@@ -309,6 +342,8 @@ class BoardAssistant {
     for (const item of this.items.values()) {
       const slot = this.judged.slots.get(item.restId);
       if (slot?.state !== "done") continue;
+      const applied = this.applied.get(item.restId)?.state;
+      if (applied === "pending" || applied === "done") continue;
       const p = proposedActions(item, slot.result, fields);
       if (p.recommended) out.push({ item, recommended: p.recommended, action: p[p.recommended] });
     }
@@ -321,35 +356,75 @@ class BoardAssistant {
     const plan = this.plan();
     if (!plan.length) return;
     this.applying = true;
+    this.batch = plan.map((p) => p.item.restId);
     for (const p of plan) this.applied.set(p.item.restId, { state: "pending" });
     this.repaintAll();
     const queue = [...plan];
     const worker = async () => {
-      for (let p = queue.shift(); p; p = queue.shift()) {
-        try {
-          await send({ type: "item.apply", board: this.board, restId: p.item.restId, steps: p.action.steps });
-          this.applied.set(p.item.restId, { state: "done" });
-        } catch (e) {
-          this.applied.set(p.item.restId, {
-            state: "error",
-            message: e instanceof Error ? e.message : String(e),
-          });
-        }
-        this.paintBadge(p.item.restId);
-        this.paintRunButton();
-      }
+      for (let p = queue.shift(); p; p = queue.shift()) await this.applySteps(p.item.restId, p.action.steps);
     };
     await Promise.all(Array.from({ length: Math.min(PARALLEL, plan.length) }, worker));
     this.applying = false;
-    const failed = [...this.applied.values()].filter((a) => a.state === "error").length;
-    this.applySummary = `Applied ${this.applied.size - failed}${failed ? `, ${failed} failed` : ""}`;
+    this.accepted = true;
+    const failed = this.batch.filter((id) => this.applied.get(id)?.state === "error").length;
+    this.applySummary = `Applied ${this.batch.length - failed}${failed ? `, ${failed} failed` : ""}`;
     this.repaintAll();
+  }
+
+  /** One item's action from its hover card: its own write, independent of the header's Accept. */
+  private async applyOne(restId: number, choice: "accept" | "reject"): Promise<void> {
+    const item = this.items.get(restId);
+    const slot = this.judged.slots.get(restId);
+    const fields = this.judged.fields;
+    const state = this.applied.get(restId)?.state;
+    if (
+      !item ||
+      slot?.state !== "done" ||
+      !fields ||
+      this.applying ||
+      state === "pending" ||
+      state === "done"
+    )
+      return;
+    await this.applySteps(restId, proposedActions(item, slot.result, fields)[choice].steps);
+  }
+
+  private async applySteps(restId: number, steps: ActionStep[]): Promise<void> {
+    this.applied.set(restId, { state: "pending" });
+    this.paintBadge(restId);
+    this.paintRunButton();
+    try {
+      await send({ type: "item.apply", board: this.board, restId, steps });
+      this.applied.set(restId, { state: "done" });
+    } catch (e) {
+      this.applied.set(restId, { state: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+    this.paintBadge(restId);
+    this.paintRunButton();
+  }
+
+  private hoverContent(restId: number): HTMLElement | null {
+    const item = this.items.get(restId);
+    const slot = this.judged.slots.get(restId);
+    const col = columns(document).find((c) => c.name === this.column)?.el;
+    if (!this.started || !item || slot?.state !== "done" || !col) return null;
+    return renderHoverCard({
+      item,
+      result: slot.result,
+      fields: this.judged.fields,
+      applied: this.applied.get(restId),
+      canApply: !this.applying,
+      scope: col,
+      apply: (choice) => void this.applyOne(restId, choice),
+    });
   }
 
   /** Cancel: drop every verdict and our marks on the board; the next Tackle starts over (Jev answers are cached). */
   private cancel(): void {
-    if (this.applying) return;
+    if (this.busy()) return;
     this.started = false;
+    this.accepted = false;
+    this.hover.close();
     this.judged.slots.clear();
     this.applied.clear();
     this.applySummary = null;
@@ -387,7 +462,28 @@ class BoardAssistant {
     });
     for (const ev of ["mousedown", "pointerdown", "keydown"])
       b.addEventListener(ev, (e) => e.stopPropagation());
+    b.addEventListener("focus", () => this.hover.hoverStart(restId, b, 0));
+    b.addEventListener("keydown", (e) => {
+      if (e.key === "Tab" && !e.shiftKey && this.hover.isOpenFor(restId) && this.hover.focusInto())
+        e.preventDefault();
+    });
+    b.addEventListener("blur", (e) => {
+      if (!this.hover.el.contains(e.relatedTarget as Node | null)) this.hover.hoverEnd();
+    });
     placeBadge(card, b);
+  }
+
+  /** Hovering anywhere on a card opens its hover card. The item id is read at hover time because GitHub can
+   *  reuse a card element for another item; the listeners go on once per element. */
+  private hoverWatched = new WeakSet<HTMLElement>();
+  private watchHover(card: HTMLElement): void {
+    if (this.hoverWatched.has(card)) return;
+    this.hoverWatched.add(card);
+    card.addEventListener("mouseenter", () => {
+      const restId = Number(card.dataset.boardCardId);
+      if (restId) this.hover.hoverStart(restId, card);
+    });
+    card.addEventListener("mouseleave", () => this.hover.hoverEnd());
   }
 
   private paintBadge(restId: number): void {
@@ -403,16 +499,13 @@ class BoardAssistant {
       [verdict, text, title] = ["error", "error", slot.message];
     } else {
       const v = slot.result.verdict;
-      [verdict, text, title] = [
-        v,
-        v === "BORDERLINE" ? "borderline" : v.toLowerCase(),
-        `${slot.result.why}. Open the item for the evidence.`,
-      ];
+      // No native tooltip once judged: the hover card takes its place.
+      [verdict, text, title] = [v, v === "BORDERLINE" ? "borderline" : v.toLowerCase(), ""];
     }
     const applied = this.applied.get(restId);
-    if (applied?.state === "pending") [text, title] = ["applying", "Applying the recommendation"];
-    else if (applied?.state === "done") [text, title] = ["applied", "Recommendation applied"];
-    else if (applied?.state === "error") [verdict, text, title] = ["error", "failed", applied.message];
+    if (applied?.state === "pending") text = "applying";
+    else if (applied?.state === "done") text = "applied";
+    else if (applied?.state === "error") [verdict, text] = ["error", "failed"];
     // Only touch the DOM when something changed: every write here is a mutation other observers see.
     if (b.dataset.verdict !== verdict) b.dataset.verdict = verdict;
     const t = b.querySelector<HTMLElement>(".snba-text")!;
@@ -425,6 +518,7 @@ class BoardAssistant {
       if (tint) card.dataset.snbaVerdict = tint;
       else delete card.dataset.snbaVerdict;
     }
+    this.hover.refresh(restId);
   }
 
   // ------------------------------------------------------------------ pane

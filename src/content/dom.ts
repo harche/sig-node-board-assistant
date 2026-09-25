@@ -90,5 +90,7 @@ export function paneItemId(url: string = location.href): number | null {
 /** True when a mutation happened inside something this extension drew, so observers can ignore their own work. */
 export function isOurs(node: Node): boolean {
   const el = node instanceof Element ? node : node.parentElement;
-  return Boolean(el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, #snba-pill"));
+  return Boolean(
+    el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, .snba-hovercard, #snba-pill"),
+  );
 }
