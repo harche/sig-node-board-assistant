@@ -7,6 +7,7 @@
  *
  *  Checked against kubernetes/151: on 2026-09-19 it reproduced the nudges and waits the board owner applied the
  *  next day (25/28, the rest borderline), and on 2026-09-25 26/26 against a hand-checked reading. */
+import { noulReading, type Reading } from "./readings";
 import type { ProwFix } from "./prowcmds";
 import { isBot } from "./boards";
 import type { TimelineEvent } from "./github";
@@ -353,6 +354,8 @@ export interface ProgressResult {
   usage: JevUsage;
   /** Prow commands someone mistyped in the thread, with their fixes (prowcmds.ts). */
   prow_fixes?: ProwFix[];
+  /** Every answer Jev gave, labelled, for the bars on the hover card and the pane. */
+  readings?: Reading[];
   state_chars: number;
 }
 
@@ -464,6 +467,25 @@ export function progressActions(r: ProgressResult): ProgressAction[] {
   );
 }
 
+/** Jev's answers, labelled: each check-in it was asked about, each assignee, and the work moving on. */
+export function progressReadings(state: Record<string, unknown>, a: ProgressAnswers): Reading[] {
+  const as = state.assignees as { login: string }[];
+  const thread = state.thread as { author: string; days_ago: number }[];
+  const cands = checkinCandidates(state);
+  return [
+    ...as.flatMap((x, i) => [
+      ...noulReading(`${x.login} still on it`, a[`active_${i}`]),
+      ...cands[i]!.flatMap((c) =>
+        noulReading(
+          `check-in to ${x.login} (${thread[c]!.author}, ${thread[c]!.days_ago}d ago)`,
+          a[`checkin_${i}_${c}`],
+        ),
+      ),
+    ]),
+    ...noulReading("Moves on through others", a.moving_on),
+  ];
+}
+
 export async function judgeProgress(
   item: BoardItem,
   d: ItemDetail,
@@ -502,6 +524,7 @@ export async function judgeProgress(
       p_active: r.answers[`active_${i}`]?.noul ?? null,
     })),
     p_moving_on: r.answers.moving_on?.noul ?? 0,
+    readings: progressReadings(state, r.answers),
     usage: r.usage,
     state_chars: JSON.stringify(state).length,
   };

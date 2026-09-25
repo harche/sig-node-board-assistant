@@ -11,6 +11,7 @@
  *  from 2025–26, the decisions Accept applies matched the first human triage decision 8/8 (support), 5/7 (needs
  *  information) and 140/195 (accept, the base rate); feature requests, other SIGs and the less sure calls agreed
  *  far less often, so they wait for the reviewer. */
+import { choiceReading, noulReading, type Reading } from "./readings";
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
 import { f2 } from "./policy";
@@ -127,6 +128,8 @@ export interface BugResult {
   /** For a report that needs information: what to ask for. */
   missing: Fact[];
   prow_fixes?: ProwFix[];
+  /** Every answer Jev gave, labelled, for the bars on the hover card and the pane. */
+  readings?: Reading[];
   usage: JevUsage;
   state_chars: number;
 }
@@ -358,13 +361,17 @@ function scorePriority(s: JevScore | undefined): { priority: string; why: string
     if (v > best) [best, level] = [v, i];
   }
   if (level < 0) return { priority: "important-longterm", why: "default; Jev gave no level" };
-  return { priority: levels[level]!, why: `Jev's pick (p ${f2(best)})` };
+  return { priority: levels[level]!, why: "Jev's pick" };
 }
 
 function setPriority(r: BugResult, a: { priority: JevScore }): void {
   const s = scorePriority(a.priority);
   r.priority = s.priority;
   r.priority_why = s.why;
+  r.readings = [
+    ...(r.readings ?? []),
+    ...choiceReading("Priority", a.priority, [...BUG_PRIORITIES].reverse()),
+  ];
 }
 
 export async function judgeBug(
@@ -421,6 +428,17 @@ export async function judgeBug(
     ]);
     r.answers = answers;
     r.sig = OTHER_SIGS.includes(sig.sig.choice as never) ? sig.sig.choice : null;
+    r.readings = [
+      ...choiceReading("Kind of report", answers.report),
+      ...choiceReading("Owner", answers.owner),
+      ...choiceReading("If not SIG Node, which SIG", sig.sig),
+      ...noulReading(
+        "Enough information",
+        answers.enough_information,
+        answers.enough_information.noul < INFO_ASK_AT,
+      ),
+      ...noulReading("About DRA", answers.dra),
+    ];
   }
   const first = decideBug(r);
   // The follow-up questions only for the actions that use them. The priority is asked for any open card without
@@ -430,6 +448,13 @@ export async function judgeBug(
     first.action === "needs_info" ? ask<Record<string, JevNoul>>(missingQuestions()) : null,
   ]);
   if (prio) setPriority(r, prio);
+  if (missing)
+    r.readings = [
+      ...(r.readings ?? []),
+      ...(Object.keys(FACTS) as Fact[]).flatMap((f) =>
+        noulReading(`Needs ${FACTS[f]}`, missing[`missing_${f}`]),
+      ),
+    ];
   if (missing)
     r.missing = (Object.keys(FACTS) as Fact[]).filter((f) => (missing[`missing_${f}`]?.noul ?? 0) >= 0.5);
   return r;

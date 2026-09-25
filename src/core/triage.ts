@@ -1,7 +1,8 @@
 /** Everything for one Triage item: state, Jev answers, verdict, priority, lane, and the actions a reviewer could
  *  take. The actions are *described*; nothing in this module (or this extension) executes them. */
 import type { JevClient } from "./jev";
-import { decide, prLane, priority } from "./policy";
+import { decide, PRIORITIES, prLane, priority } from "./policy";
+import { choiceReading, noulReading } from "./readings";
 import { priorityQuestion, triageQuestions } from "./prompts/triage";
 import { signals } from "./signals";
 import { buildState, pyJsonLength } from "./state";
@@ -51,6 +52,12 @@ export async function judge(
     priority_why: prio.why,
     lane: kind === "PullRequest" ? prLane(sig) : "Issues - To do",
     answers: a,
+    readings: [
+      ...noulReading("In scope", a.in_scope, verdict === "REMOVE"),
+      ...choiceReading("Kind of work", a.bucket),
+      ...choiceReading("Owning SIG", a.owner),
+      ...choiceReading("Priority", a.priority, PRIORITIES),
+    ],
     signals: sig,
     usage,
     state_chars: pyJsonLength(state),

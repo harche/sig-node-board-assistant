@@ -18,7 +18,6 @@ import {
   type AuthorAction,
   type AuthorResult,
 } from "../core/author";
-import { f2 } from "../core/policy";
 import {
   decideReview,
   REVIEW_LABEL,
@@ -29,7 +28,7 @@ import {
   type ReviewResult,
 } from "../core/reviewer";
 import type { ActionStep, BoardItem } from "../core/types";
-import { nativeButton } from "./adapters";
+import { actionBox, allReadings, describe, readingsBlock, select } from "./hcparts";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { h } from "./ui";
@@ -48,7 +47,7 @@ export interface PrSpec {
   /** Candidates carry Jev's probability (reviewers) or a ranking score (approvers). */
   showP: boolean;
   /** Column-specific rows, shown before the rest. */
-  extra?(r: PrResult): [string, string][];
+  extra?(r: PrResult): [string, Node | string][];
 }
 
 export const REVIEW_SPEC: PrSpec = {
@@ -81,7 +80,7 @@ export const AUTHOR_SPEC: PrSpec = {
   showP: false,
   extra: (r) => {
     const a = r as AuthorResult;
-    const rows: [string, string][] = [["On the board", `${a.scope.verdict.toLowerCase()}: ${a.scope.why}`]];
+    const rows: [string, Node | string][] = [];
     if (a.author_checkin_days_ago != null)
       rows.push(["Checked in", `${a.author_checkin_days_ago}d ago, unanswered`]);
     return rows;
@@ -92,27 +91,16 @@ export function chosenPr(spec: PrSpec, r: PrResult, o: { action?: string }): str
   return o.action && spec.actions(r).includes(o.action) ? o.action : spec.decide(r).action;
 }
 
-function describe(steps: ActionStep[]): string {
-  if (!steps.length) return "nothing to write";
-  return steps
-    .map((st) =>
-      st.kind === "comment" ? `comment "${st.body.replaceAll("\n", " / ")}"` : `move to '${st.lane}'`,
-    )
-    .join(", then ");
-}
-
 const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
+
+/** Jev's readings; Needs Reviewer's pick among the candidates is one too. */
+function jev(spec: PrSpec, r: PrResult): HTMLElement {
+  const picks = spec.showP ? r.candidates.map((c) => ({ label: `Jev picks ${c.login}`, p: c.p })) : [];
+  return readingsBlock(allReadings(r, picks));
+}
 
 function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
   const out: [string, Node | string][] = [...(spec.extra?.(r) ?? [])];
-  const m = r.whose_move;
-  out.push([
-    "Whose move",
-    `${m.choice} ${f2(m.probabilities[m.choice] ?? m.confidence)} (${Object.entries(m.probabilities)
-      .filter(([k]) => k !== m.choice)
-      .map(([k, p]) => `${k} ${f2(p)}`)
-      .join(", ")})`,
-  ]);
   const prow = [
     ...r.pr.labels.filter((l) => /^(lgtm|approved|do-not-merge\/|needs-rebase|lifecycle\/)/.test(l)),
     r.pr.draft ? "draft" : "",
@@ -120,8 +108,7 @@ function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
   if (prow.length) out.push(["Labels", prow.join(", ")]);
   if (r.pr.tide?.description) out.push(["Tide", r.pr.tide.description]);
   if (r.pr.failing.length) out.push(["Failing", r.pr.failing.slice(0, 4).join(", ")]);
-  if (r.holder)
-    out.push(["Hold", `by ${r.holder}${r.hold_met !== null ? `, condition met P ${f2(r.hold_met)}` : ""}`]);
+  if (r.holder) out.push(["Hold", `by ${r.holder}`]);
   if (r.engaged.length)
     out.push([
       "Reviewing",
@@ -148,7 +135,11 @@ function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
   if (r.candidates.length)
     out.push([
       spec.asks,
-      lines(r.candidates.map((c) => `${c.login}${spec.showP ? ` (P ${f2(c.p)})` : ""}: ${c.reason}`)),
+      h(
+        "span.snba-lines",
+        {},
+        ...r.candidates.map((c) => h("span", {}, h("b", {}, c.login), h("span.snba-muted", {}, c.reason))),
+      ),
     ]);
   else if (r.candidates_note) out.push(["Candidates", r.candidates_note]);
   return out;
@@ -191,26 +182,21 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
   const locked = c.applied?.state === "pending" || c.applied?.state === "done" || !c.canApply;
   const action = chosenPr(spec, r, c.overrides);
   const suggested = spec.decide(r).action;
-  const sel = h(
-    "select.snba-hc-select",
-    { "aria-label": "Action", "data-focus-key": "action" },
-    ...spec.actions(r).map((a) => {
-      const o = h(
-        "option",
-        { value: a },
-        a === suggested ? `${spec.label[a]} (suggested)` : spec.label[a],
-      ) as HTMLOptionElement;
-      o.selected = a === action;
-      return o;
-    }),
-  ) as HTMLSelectElement;
-  sel.disabled = locked;
-  for (const ev of ["click", "keydown", "mousedown"]) sel.addEventListener(ev, (e) => e.stopPropagation());
-  sel.addEventListener("change", () => c.setOverride("action", sel.value));
+  const sel = select(
+    "Action",
+    "action",
+    spec
+      .actions(r)
+      .map((a): [string, string] => [a, a === suggested ? `${spec.label[a]} (suggested)` : spec.label[a]!]),
+    action,
+    locked,
+    (v) => c.setOverride("action", v),
+  );
   const body = h(
     "div.snba-hc-body",
     {},
     heading(spec, r, action),
+    jev(spec, r),
     h(
       "dl.snba-hc-scores.snba-hc-facts",
       {},
@@ -219,46 +205,16 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
       h("dd.snba-hc-text", {}, h("span.snba-hc-prio", {}, sel)),
     ),
   );
-  const box = h("div.snba-hc-actions");
-  if (c.applied?.state === "done") {
-    box.append(h("p.snba-hc-status", {}, "Applied."));
-  } else {
-    const steps = c.fix(spec.steps(c.item, r, action));
-    const apply = nativeButton(c.scope, null, "Apply", "primary").root;
-    apply.classList.add("snba-hc-btn");
-    if (locked || !steps.length) apply.setAttribute("aria-disabled", "true");
-    apply.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (apply.getAttribute("aria-disabled") !== "true") c.apply();
-    });
-    const skip = nativeButton(c.scope, null, "Skip", "invisible").root;
-    skip.classList.add("snba-hc-btn");
-    if (locked) skip.setAttribute("aria-disabled", "true");
-    skip.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (skip.getAttribute("aria-disabled") !== "true") c.skip();
-    });
-    box.append(
-      h("div.snba-hc-buttons", {}, apply, skip),
-      h(
-        "ul.snba-hc-steps",
-        {},
-        h("li", {}, h("b", {}, spec.label[action]), h("span.snba-muted", {}, `: ${describe(steps)}`)),
-        h(
-          "li",
-          {},
-          h("b", {}, "Skip"),
-          h("span.snba-muted", {}, ": leave it untouched and drop the verdict; Accept passes over it"),
-        ),
-      ),
-    );
-    if (c.applied?.state === "pending") box.append(h("p.snba-hc-status", {}, "Applying…"));
-    else if (c.applied?.state === "error")
-      box.append(h("p.snba-hc-status.snba-error", {}, c.applied.message));
-    else if (!c.canApply) box.append(h("p.snba-hc-status.snba-muted", {}, "Waiting for Accept to finish."));
-  }
+  const box = actionBox({
+    scope: c.scope,
+    applied: c.applied,
+    canApply: c.canApply,
+    label: spec.label[action]!,
+    steps: c.fix(spec.steps(c.item, r, action)),
+    where: "",
+    apply: c.apply,
+    skip: c.skip,
+  });
   body.append(box);
   return body;
 }
@@ -299,6 +255,7 @@ export function renderReviewEvidence(
   const action = spec.decide(r).action;
   body.append(
     heading(spec, r, action),
+    jev(spec, r),
     ...facts(spec, r).map(([k, v]) => adapter.row(k, v)),
     h("div.snba-subhead", {}, "What the suggested action does"),
     h("p.snba-muted", {}, describe(spec.steps(item, r, action))),

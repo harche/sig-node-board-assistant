@@ -4,7 +4,8 @@
 import type { ProwFix } from "./prowcmds";
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
-import { f2, priority } from "./policy";
+import { f2, PRIORITIES, priority } from "./policy";
+import { choiceReading, noulReading, type Reading } from "./readings";
 import { todoQuestions } from "./prompts/todo";
 import { priorityQuestion } from "./prompts/triage";
 import { buildState } from "./state";
@@ -216,6 +217,8 @@ export interface TodoResult {
   usage: JevUsage;
   /** Prow commands someone mistyped in the thread, with their fixes (prowcmds.ts). */
   prow_fixes?: ProwFix[];
+  /** Every answer Jev gave, labelled, for the bars on the hover card and the pane. */
+  readings?: Reading[];
   state_chars: number;
 }
 
@@ -401,6 +404,11 @@ export async function judgeTodo(
     title: d.title,
     url: item.url,
     answers,
+    readings: [
+      ...noulReading("Resolved", answers.resolved),
+      ...choiceReading("How it was resolved", answers.resolution),
+      ...choiceReading("Priority", answers.priority, PRIORITIES),
+    ],
     rules,
     duplicate: null,
     guard: freshFixGuard(st.ci_signal),

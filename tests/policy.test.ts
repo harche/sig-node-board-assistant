@@ -65,7 +65,7 @@ describe("priority()", () => {
   it("takes Jev's most likely level", () => {
     expect(priority(a({ "0": 0.1, "1": 0.2, "2": 0.7 }), sig(null))).toEqual({
       priority: "important-soon",
-      why: "Jev's pick (p 0.70)",
+      why: "Jev's pick",
     });
     expect(priority(a({ "0": 0.6, "1": 0.4 }), sig(null)).priority).toBe("backlog");
   });

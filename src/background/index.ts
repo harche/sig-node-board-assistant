@@ -13,6 +13,7 @@ import { prowFixes, type ProwFix } from "../core/prowcmds";
 import { decideApprove, type ApproveResult } from "../core/approver";
 import type { AuthorResult } from "../core/author";
 import { judgeBug } from "../core/bugs";
+import { noulReading } from "../core/readings";
 import {
   blend,
   blendApprovers,
@@ -367,6 +368,14 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         ...r,
         kind: "author",
         scope: { verdict: scope.verdict, why: scope.why },
+        readings: [
+          ...noulReading(
+            "SIG Node CI work (belongs on the board)",
+            scope.answers.in_scope,
+            scope.verdict === "REMOVE",
+          ),
+          ...(r.readings ?? []),
+        ],
         candidates: [],
         candidates_note: "",
         prow_fixes: await fixes(detail, jev, req.refresh),

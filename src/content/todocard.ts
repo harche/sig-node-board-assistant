@@ -15,7 +15,7 @@ import {
 } from "../core/todo";
 import type { JobSignal } from "../core/testgrid";
 import type { ActionStep, BoardItem } from "../core/types";
-import { nativeButton } from "./adapters";
+import { actionBox, allReadings, describe, readingsBlock, select } from "./hcparts";
 import type { EvidenceHandlers, SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { h } from "./ui";
@@ -86,16 +86,15 @@ export function ciLines(ci: JobSignal[]): string[] {
   });
 }
 
+/** Jev's readings, and the duplicate pass's match. */
+function jev(r: TodoResult): HTMLElement {
+  const dup = r.duplicate ? [{ label: `Duplicate of #${r.duplicate.number}`, p: r.duplicate.p }] : [];
+  return readingsBlock(allReadings(r, dup));
+}
+
 function facts(r: TodoResult): [string, Node | string][] {
-  const out: [string, Node | string][] = [];
-  const res = r.answers.resolution;
   const p = r.answers.resolved.noul;
-  // How it was resolved only means something when it may be.
-  if (p > OPEN_AT)
-    out.push([
-      "Resolution",
-      `${res.choice.replaceAll("_", " ")} ${f2(res.probabilities[res.choice] ?? res.confidence)}`,
-    ]);
+  const out: [string, Node | string][] = [];
   out.push(["CI", r.ci.length ? list(ciLines(r.ci)) : "no TestGrid history for the jobs it names"]);
   const merged = r.linked_prs.filter((x) => x.state === "merged");
   const open = r.linked_prs.filter((x) => x.state === "open");
@@ -114,10 +113,7 @@ function facts(r: TodoResult): [string, Node | string][] {
   ].filter(Boolean);
   if (missing.length) out.push(["Labels", `missing ${missing.join(" and ")}`]);
   if (r.duplicate)
-    out.push([
-      "Duplicate of",
-      `#${r.duplicate.number} (${r.duplicate.status}, P ${f2(r.duplicate.p)}): ${r.duplicate.title}`,
-    ]);
+    out.push(["Duplicate of", `#${r.duplicate.number} (${r.duplicate.status}): ${r.duplicate.title}`]);
   // The guard only matters when Jev would close it.
   if (r.guard && p >= RESOLVED_AT) out.push(["Wait", r.guard]);
   return out;
@@ -125,15 +121,6 @@ function facts(r: TodoResult): [string, Node | string][] {
 
 function list(lines: string[]): HTMLElement {
   return h("span.snba-lines", {}, ...lines.map((l) => h("span", {}, l)));
-}
-
-function describe(steps: ActionStep[]): string {
-  if (!steps.length) return "nothing to write";
-  return steps
-    .map((st) =>
-      st.kind === "comment" ? `comment "${st.body.replaceAll("\n", " ")}"` : `move to '${st.lane}'`,
-    )
-    .join(", then ");
 }
 
 export interface TodoHoverContent {
@@ -159,6 +146,7 @@ export function renderTodoHoverCard(c: TodoHoverContent): HTMLElement {
     "div.snba-hc-body",
     {},
     todoDecision(r, c.overrides),
+    jev(r),
     h(
       "dl.snba-hc-scores.snba-hc-facts",
       {},
@@ -170,7 +158,7 @@ export function renderTodoHoverCard(c: TodoHoverContent): HTMLElement {
         : []),
     ),
   );
-  body.append(actions(c, action, locked));
+  body.append(actions(c, action));
   return body;
 }
 
@@ -179,30 +167,6 @@ function needsPriority(r: TodoResult, action: TodoAction): boolean {
   return (
     !r.rules.priority_label && r.priority !== null && ["keep", "in_progress", "ask_thread"].includes(action)
   );
-}
-
-function select(
-  label: string,
-  key: string,
-  options: [string, string][],
-  current: string,
-  locked: boolean,
-  onChange: (v: string) => void,
-): HTMLSelectElement {
-  const sel = h(
-    "select.snba-hc-select",
-    { "aria-label": label, "data-focus-key": key },
-    ...options.map(([v, text]) => {
-      const o = h("option", { value: v }, text) as HTMLOptionElement;
-      o.selected = v === current;
-      return o;
-    }),
-  ) as HTMLSelectElement;
-  sel.disabled = locked;
-  // The board treats keys and clicks inside a card as its own; keep them in the select.
-  for (const ev of ["click", "keydown", "mousedown"]) sel.addEventListener(ev, (e) => e.stopPropagation());
-  sel.addEventListener("change", () => onChange(sel.value));
-  return sel;
 }
 
 function actionSelect(c: TodoHoverContent, action: TodoAction, locked: boolean): HTMLElement {
@@ -237,49 +201,17 @@ function prioritySelect(c: TodoHoverContent, locked: boolean): HTMLElement {
   return h("span.snba-hc-prio", {}, sel, h("span.snba-muted", {}, note));
 }
 
-function actions(c: TodoHoverContent, action: TodoAction, locked: boolean): HTMLElement {
-  const box = h("div.snba-hc-actions");
-  if (c.applied?.state === "done") {
-    box.append(h("p.snba-hc-status", {}, "Applied."));
-    return box;
-  }
-  const steps = c.fix(chosenSteps(c.item, c.result, c.overrides));
-  const row = h("div.snba-hc-buttons");
-  const apply = nativeButton(c.scope, null, "Apply", "primary").root;
-  apply.classList.add("snba-hc-btn");
-  if (locked || !steps.length) apply.setAttribute("aria-disabled", "true");
-  apply.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (apply.getAttribute("aria-disabled") !== "true") c.apply();
+function actions(c: TodoHoverContent, action: TodoAction): HTMLElement {
+  return actionBox({
+    scope: c.scope,
+    applied: c.applied,
+    canApply: c.canApply,
+    label: ACTION_LABEL[action],
+    steps: c.fix(chosenSteps(c.item, c.result, c.overrides)),
+    where: "in To do",
+    apply: c.apply,
+    skip: c.skip,
   });
-  const skip = nativeButton(c.scope, null, "Skip", "invisible").root;
-  skip.classList.add("snba-hc-btn");
-  if (locked) skip.setAttribute("aria-disabled", "true");
-  skip.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (skip.getAttribute("aria-disabled") !== "true") c.skip();
-  });
-  row.append(apply, skip);
-  box.append(
-    row,
-    h(
-      "ul.snba-hc-steps",
-      {},
-      h("li", {}, h("b", {}, ACTION_LABEL[action]), h("span.snba-muted", {}, `: ${describe(steps)}`)),
-      h(
-        "li",
-        {},
-        h("b", {}, "Skip"),
-        h("span.snba-muted", {}, ": leave it in To do untouched and drop the verdict; Accept passes over it"),
-      ),
-    ),
-  );
-  if (c.applied?.state === "pending") box.append(h("p.snba-hc-status", {}, "Applying…"));
-  else if (c.applied?.state === "error") box.append(h("p.snba-hc-status.snba-error", {}, c.applied.message));
-  else if (!c.canApply) box.append(h("p.snba-hc-status.snba-muted", {}, "Waiting for Accept to finish."));
-  return box;
 }
 
 export type TodoEvidenceState =
@@ -315,7 +247,7 @@ export function renderTodoEvidence(
     return root;
   }
   const r = st.result;
-  body.append(todoDecision(r), ...facts(r).map(([k, v]) => adapter.row(k, v)));
+  body.append(todoDecision(r), jev(r), ...facts(r).map(([k, v]) => adapter.row(k, v)));
   body.append(
     h("div.snba-subhead", {}, "What the suggested action does"),
     h("p.snba-muted", {}, describe(todoSteps(item, r, decideTodo(r).action))),

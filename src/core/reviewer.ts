@@ -5,6 +5,7 @@
  *  Code keeps what is plain (merged, draft, the lgtm / hold / needs-rebase labels, who put a /hold, Prow's tide
  *  status, dates, who wrote what); Jev reads the thread for whose move it is, who is really reviewing, who
  *  declined, and whether a reviewer's /hold condition looks met. Finding a new reviewer is candidates.ts. */
+import { choiceReading, noulReading, type Reading } from "./readings";
 import type { ProwFix } from "./prowcmds";
 import { isBot } from "./boards";
 import type { PullState, TimelineEvent } from "./github";
@@ -446,6 +447,8 @@ export interface ReviewResult {
   usage: JevUsage;
   /** Prow commands someone mistyped in the thread, with their fixes (prowcmds.ts). */
   prow_fixes?: ProwFix[];
+  /** Every answer Jev gave, labelled, for the bars on the hover card and the pane. */
+  readings?: Reading[];
 }
 
 /** Plain rules first (merged, draft, lgtm, needs-rebase), then the hold, then Jev's whose-move; a PR waiting on
@@ -662,6 +665,25 @@ export async function judgeReview(
           .filter((x) => x.p >= 0.6)
           .at(-1)?.c.days_ago ?? null)
       : null,
+    readings: [
+      ...choiceReading("Whose move", a.whose_move),
+      ...f.participants.flatMap((who, i) => [
+        ...noulReading(`${who} is reviewing`, a[`engaged_${i}`] as JevNoul),
+        ...noulReading(`${who} declined or handed off`, a[`declined_${i}`] as JevNoul, true),
+      ]),
+      ...f.mentions.flatMap((m, j) =>
+        noulReading(`${m.by} asks ${m.login} to review (${m.days_ago}d ago)`, a[`mention_${j}`] as JevNoul),
+      ),
+      ...(opts.authorCheckins
+        ? sinceAuthor(f, ps.author).flatMap((c, k) =>
+            noulReading(
+              `check-in to the author (${c.who}, ${c.days_ago}d ago)`,
+              a[`author_checkin_${k}`] as JevNoul,
+            ),
+          )
+        : []),
+      ...noulReading("Hold condition met", a.hold_met),
+    ],
     usage: r.usage,
   };
 }

@@ -94,7 +94,7 @@ export function priority(a: TriageAnswers, sig: Signals): { priority: string; wh
     if (p > best) [level, best] = [i, p];
   }
   if (level < 0) return { priority: PRIORITY_DEFAULT, why: "default; Jev gave no level" };
-  return { priority: PRIORITIES[level]!, why: `Jev's pick (p ${f2(best)})` };
+  return { priority: PRIORITIES[level]!, why: "Jev's pick" };
 }
 
 /** Review lane from Prow/GitHub state; code, not Jev (it matched the board as well as Jev did). */

@@ -522,6 +522,55 @@
   height: 100%;
   background: var(--fgColor-muted, #59636e);
 }
+/* Jev's readings: one grid for the whole card, so every bar starts and ends at the same place. */
+.snba-readings {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(48px, 1fr) 2.5em;
+  align-items: center;
+  gap: 3px 8px;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--borderColor-muted, #d1d9e0b3);
+}
+.snba-readings .snba-bar-label {
+  max-width: 15em;
+  white-space: normal;
+  color: var(--fgColor-muted, #59636e);
+}
+.snba-readings .snba-opt {
+  padding-left: 12px;
+  color: var(--fgColor-default);
+}
+.snba-readings-head {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  color: var(--fgColor-muted, #59636e);
+}
+.snba-readings-more {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: 0 0 0 12px;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-body-size-small, 12px);
+  color: var(--fgColor-accent, #0969da);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.snba-readings-more:hover {
+  text-decoration: underline;
+}
+.snba-readings-more:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, var(--borderColor-accent-emphasis));
+  border-radius: 3px;
+}
+.snba-readings > [hidden] {
+  display: none;
+}
+.snba-readings .snba-hc-num {
+  min-width: 0;
+}
 .snba-hc-num {
   flex: 0 0 auto;
   min-width: 28px;

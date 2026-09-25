@@ -1,10 +1,11 @@
 /** The board's hover card: hovering a card's verdict badge shows Jev's scores for that item and buttons to apply
  *  either action to that one item. It floats beside the card (right, or left when there is no room) so the board
  *  never reflows under the pointer; it looks like GitHub's own hovercards. The full evidence stays in GitHub's pane. */
-import { f2, OWNER_OTHER_AT, PRIORITY_CHOICES, tieBreak } from "../core/policy";
+import { PRIORITY_CHOICES } from "../core/policy";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, ProposedAction, TriageResult } from "../core/types";
 import { nativeButton } from "./adapters";
+import { allReadings, readingsBlock } from "./hcparts";
 import { decision } from "./evidence";
 import { h } from "./ui";
 
@@ -30,21 +31,14 @@ export interface HoverContent {
 
 export function renderHoverCard(c: HoverContent): HTMLElement {
   const { result: r } = c;
-  const a = r.answers;
-  const { ci } = tieBreak(a);
-  const node = a.owner.probabilities.node ?? 0;
-  const other = a.owner.probabilities.other ?? 0;
   const body = h(
     "div.snba-hc-body",
     {},
     decision(r),
+    readingsBlock(allReadings(r)),
     h(
       "dl.snba-hc-scores",
       {},
-      ...score("In scope", a.in_scope.noul),
-      ...score("CI or test work", ci),
-      ...score("SIG Node owns it", node),
-      ...score("Another SIG owns it", other, other >= OWNER_OTHER_AT),
       ...(r.priority === null
         ? []
         : [h("dt", {}, "Priority"), h("dd.snba-hc-text", {}, prioritySelect(c, r.priority))]),
@@ -77,22 +71,6 @@ function prioritySelect(c: HoverContent, current: string): HTMLElement {
   const note =
     current === suggested.priority ? suggested.why : `changed from ${suggested.priority}, ${suggested.why}`;
   return h("span.snba-hc-prio", {}, sel, h("span.snba-muted", {}, note));
-}
-
-function score(label: string, p: number, warn = false): HTMLElement[] {
-  return [
-    h("dt", {}, label),
-    h(
-      "dd",
-      {},
-      h(
-        "span.snba-hc-meter",
-        { "aria-hidden": "true" },
-        h("span", { style: `width:${Math.round(p * 100)}%` }),
-      ),
-      h(`span.snba-hc-num${warn ? ".snba-error" : ""}`, {}, f2(p)),
-    ),
-  ];
 }
 
 function actions(c: HoverContent): HTMLElement {

@@ -3,7 +3,8 @@
  *  an adapter that supplies the page's native section and row markup, so it reads as part of the page. */
 import { f2, KEEP_AT, REMOVE_AT, tieBreak } from "../core/policy";
 import { proposedActions } from "../core/triage";
-import type { BoardFields, BoardItem, JevChoice, ProposedAction, Signals, TriageResult } from "../core/types";
+import type { BoardFields, BoardItem, ProposedAction, Signals, TriageResult } from "../core/types";
+import { allReadings, readingsBlock } from "./hcparts";
 import { h } from "./ui";
 
 /** How to build a section and a label/value row that look native on the host page. */
@@ -43,12 +44,9 @@ export function renderEvidence(
     return root;
   }
   const r = st.result;
-  const a = r.answers;
   const s = r.signals;
-  body.append(decision(r));
+  body.append(decision(r), readingsBlock(allReadings(r)));
   body.append(
-    adapter.row("Kind of work", choice(a.bucket)),
-    adapter.row("Owning SIG", choice(a.owner)),
     ...(r.priority === null
       ? []
       : [
@@ -150,23 +148,6 @@ export function decision(r: TriageResult): HTMLElement {
       h("span", {}, "keep"),
     ),
     h("p.snba-why", {}, r.why),
-  );
-}
-
-function choice(c: JevChoice): HTMLElement {
-  const runnerUp = Object.entries(c.probabilities)
-    .filter(([k]) => k !== c.choice)
-    .sort((x, y) => y[1] - x[1])[0];
-  return h(
-    "span",
-    {},
-    c.choice.replaceAll("_", " "),
-    h(
-      "span.snba-muted",
-      {},
-      ` ${f2(c.probabilities[c.choice] ?? c.confidence)}`,
-      runnerUp ? `, then ${runnerUp[0].replaceAll("_", " ")} ${f2(runnerUp[1])}` : "",
-    ),
   );
 }
 

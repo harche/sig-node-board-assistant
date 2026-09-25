@@ -197,3 +197,51 @@ describe("judgeBug", () => {
     expect(r).toMatchObject({ priority: "important-longterm", priority_why: "default; Jev gave no level" });
   });
 });
+
+describe("readings", () => {
+  it("records every Jev answer, priority levels named", async () => {
+    const client = {
+      askCached: async (_s: unknown, q: Record<string, unknown>) => ({
+        answers: {
+          ...answers({ info: 0.2 }),
+          sig: choice({ storage: 0.7, network: 0.3 }),
+          priority: { type: "score", score: 1, confidence: 1, probabilities: { "0": 0.1, "1": 0.9 } },
+          ...Object.fromEntries(
+            Object.keys(q)
+              .filter((k) => k.startsWith("missing_"))
+              .map((k) => [k, { type: "noul", noul: 0.8 }]),
+          ),
+        },
+        usage: { input_tokens: 0, cost: 0, cached: true },
+      }),
+    } as unknown as JevClient;
+    const d = {
+      title: "t",
+      body: "b",
+      labels: [],
+      state: "OPEN",
+      author: { login: "r" },
+      createdAt: "",
+      url: "u",
+      comments: [],
+    } as ItemDetail;
+    const r = await judgeBug(item, d, client);
+    const labels = (r.readings ?? []).map((x) => x.label);
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "Kind of report",
+        "Owner",
+        "If not SIG Node, which SIG",
+        "Enough information",
+        "About DRA",
+        "Priority",
+      ]),
+    );
+    expect(labels.filter((l) => l.startsWith("Needs "))).toHaveLength(4);
+    const prio = r.readings!.find((x) => x.label === "Priority");
+    expect(prio).toEqual({
+      label: "Priority",
+      probabilities: { "critical-urgent": 0, "important-soon": 0, "important-longterm": 0.9, backlog: 0.1 },
+    });
+  });
+});
