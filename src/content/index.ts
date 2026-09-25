@@ -43,6 +43,8 @@ class BoardAssistant {
   private cancelBtn: HTMLElement | null = null;
   /** Writes per project item, from the header's Accept or from an item's own hover card buttons. */
   private applied = new Map<number, Applied>();
+  /** Items skipped from their hover card (the CLI's `s`): the header's Accept passes over them. */
+  private skipped = new Set<number>();
   /** The header's Accept is running. */
   private applying = false;
   /** The items the header's Accept is applying (or last applied): its counter and summary count only these. */
@@ -75,6 +77,7 @@ class BoardAssistant {
           slot?.state,
           slot?.state === "done" ? slot.result.verdict + slot.result.why : "",
           a?.state,
+          this.skipped.has(restId),
           a?.state === "error" ? a.message : "",
           this.applying,
           Boolean(this.judged.fields),
@@ -163,6 +166,7 @@ class BoardAssistant {
     this.accepted = false;
     this.hover.close();
     this.applied.clear();
+    this.skipped.clear();
     this.applySummary = null;
     this.paintRunButton();
     await this.ensureColumn(true);
@@ -309,10 +313,17 @@ class BoardAssistant {
     const remove = plan.length - keep;
     const borderline = [...this.items.keys()].filter((id) => {
       const slot = this.judged.slots.get(id);
-      return slot?.state === "done" && slot.result.verdict === "BORDERLINE" && !this.applied.has(id);
+      return (
+        slot?.state === "done" &&
+        slot.result.verdict === "BORDERLINE" &&
+        !this.applied.has(id) &&
+        !this.skipped.has(id)
+      );
     }).length;
+    const skipped = [...this.skipped].filter((id) => this.items.has(id) && !this.applied.has(id)).length;
     const failed = [...this.items.keys()].filter((id) => this.judged.slots.get(id)?.state === "error").length;
     const left = [
+      skipped && `${skipped} skipped`,
       borderline && `${borderline} borderline`,
       failed && `${failed} that failed to judge`,
     ].filter(Boolean);
@@ -325,7 +336,9 @@ class BoardAssistant {
       : plan.length
         ? `Apply the recommendation to ${plan.length} item${plan.length === 1 ? "" : "s"}: ` +
           `${keep} keep (/triage accepted + /priority, move to its lane), ${remove} remove (move to Archive-it)` +
-          (left.length ? `. ${left.join(" and ")} stay in ${this.column} for you.` : ".")
+          (left.length
+            ? `. ${left.join(" and ")} ${skipped + borderline + failed === 1 ? "stays" : "stay"} in ${this.column} for you.`
+            : ".")
         : `Nothing to apply: every item needs your call`;
     cancel.setAttribute("aria-disabled", String(this.busy()));
     cancel.dataset.tip = this.busy()
@@ -343,7 +356,7 @@ class BoardAssistant {
       const slot = this.judged.slots.get(item.restId);
       if (slot?.state !== "done") continue;
       const applied = this.applied.get(item.restId)?.state;
-      if (applied === "pending" || applied === "done") continue;
+      if (applied === "pending" || applied === "done" || this.skipped.has(item.restId)) continue;
       const p = proposedActions(item, slot.result, fields);
       if (p.recommended) out.push({ item, recommended: p.recommended, action: p[p.recommended] });
     }
@@ -390,6 +403,8 @@ class BoardAssistant {
   }
 
   private async applySteps(restId: number, steps: ActionStep[]): Promise<void> {
+    // Choosing an action for a skipped item un-skips it: if the write fails, Accept can retry it like any other.
+    this.skipped.delete(restId);
     this.applied.set(restId, { state: "pending" });
     this.paintBadge(restId);
     this.paintRunButton();
@@ -414,6 +429,13 @@ class BoardAssistant {
       fields: this.judged.fields,
       applied: this.applied.get(restId),
       canApply: !this.applying,
+      skipped: this.skipped.has(restId),
+      toggleSkip: () => {
+        if (this.applying) return;
+        if (!this.skipped.delete(restId)) this.skipped.add(restId);
+        this.paintBadge(restId);
+        this.paintRunButton();
+      },
       scope: col,
       apply: (choice) => void this.applyOne(restId, choice),
     });
@@ -427,6 +449,7 @@ class BoardAssistant {
     this.hover.close();
     this.judged.slots.clear();
     this.applied.clear();
+    this.skipped.clear();
     this.applySummary = null;
     for (const b of document.querySelectorAll(SEL.badge)) b.remove();
     for (const c of document.querySelectorAll<HTMLElement>("[data-snba-verdict]"))
@@ -503,7 +526,9 @@ class BoardAssistant {
       [verdict, text, title] = [v, v === "BORDERLINE" ? "borderline" : v.toLowerCase(), ""];
     }
     const applied = this.applied.get(restId);
-    if (applied?.state === "pending") text = "applying";
+    const skipped = this.skipped.has(restId) && !applied;
+    if (skipped) [verdict, text] = ["skipped", "skipped"];
+    else if (applied?.state === "pending") text = "applying";
     else if (applied?.state === "done") text = "applied";
     else if (applied?.state === "error") [verdict, text] = ["error", "failed"];
     // Only touch the DOM when something changed: every write here is a mutation other observers see.
@@ -513,7 +538,8 @@ class BoardAssistant {
     if (b.title !== title) b.title = title;
     // Tint the whole card with the verdict's muted colour (content.css); only settled verdicts tint.
     const card = b.closest<HTMLElement>("[data-board-card-id]");
-    const tint = slot?.state === "done" ? verdict : undefined;
+    // A skipped card loses its tint: nothing will happen to it.
+    const tint = slot?.state === "done" && !skipped ? verdict : undefined;
     if (card && card.dataset.snbaVerdict !== tint) {
       if (tint) card.dataset.snbaVerdict = tint;
       else delete card.dataset.snbaVerdict;
