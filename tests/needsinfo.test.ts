@@ -3,7 +3,6 @@ import { bugLabels, type BugAnswers } from "../src/core/bugs";
 import { isDraftedComment } from "../src/core/comments";
 import {
   askedAt,
-  closeInfoBody,
   decideInfo,
   infoState,
   infoSteps,
@@ -64,7 +63,7 @@ describe("decideInfo", () => {
     ["asked 10 days ago", base({ asked_days_ago: 10 }), "keep", true],
     ["asked 30 days ago, nobody reminded", base(), "nudge", true],
     ["reminded 5 days ago", base({ reminded_days_ago: 5 }), "keep", true],
-    ["reminded 20 days ago", base({ reminded_days_ago: 20 }), "close", true],
+    ["reminded 60 days ago: the lifecycle bot's", base({ reminded_days_ago: 60 }), "keep", true],
   ] as [string, InfoResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
     expect(decideInfo(r)).toMatchObject({ action, auto }),
   );
@@ -83,10 +82,9 @@ describe("infoSteps", () => {
     ]);
   });
 
-  it("reminds the reporter, and closes to Done", () => {
+  it("reminds the reporter, and never closes", () => {
     expect(out(base(), "nudge")).toEqual([nudgeInfoBody("rep")]);
-    expect(out(base(), "close")).toEqual([closeInfoBody(), "-> Done"]);
-    expect(closeInfoBody()).toMatch(/\n\n\/close$/);
+    expect(nudgeInfoBody("rep")).not.toMatch(/close/);
   });
 
   it("only moves a card whose labels already decided", () => {
@@ -112,14 +110,14 @@ describe("infoSteps", () => {
   });
 
   it("drafts only allowed comments", () => {
-    for (const a of ["accept", "nudge", "close"] as const)
+    for (const a of ["accept", "nudge"] as const)
       for (const st of infoSteps(item, base({ p_answered: 0.9, answers: answers(0.8) }), a))
         if (st.kind === "comment") expect(isDraftedComment(st.body), st.body).toBe(true);
     for (const bad of [
       "@rep could you share the details asked for above?",
       "/remove-triage needs-information\n/close",
       "/remove-triage needs-information\n/lgtm",
-      `${closeInfoBody()}\n/cc @x`,
+      `${nudgeInfoBody("rep")}\n/close`,
     ])
       expect(isDraftedComment(bad), bad).toBe(false);
   });

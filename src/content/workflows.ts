@@ -26,6 +26,13 @@ import { BUG_TINT, decideBug, type BugAction, type BugResult } from "../core/bug
 import { chosenBug, chosenBugSteps, renderBugEvidence, renderBugHoverCard } from "./bugcard";
 import { decideInfo, INFO_TINT, type InfoAction, type InfoResult } from "../core/needsinfo";
 import { chosenInfo, chosenInfoSteps, renderInfoEvidence, renderInfoHoverCard } from "./infocard";
+import { BACKLOG_TINT, decideBacklog, type BacklogAction, type BacklogResult } from "../core/backlog";
+import {
+  chosenBacklog,
+  chosenBacklogSteps,
+  renderBacklogEvidence,
+  renderBacklogHoverCard,
+} from "./backlogcard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
@@ -518,13 +525,13 @@ export const bugsWorkflow: ColumnWorkflow<BugResult> = {
 const INFO_BADGE: Record<InfoAction, string> = {
   accept: "accept",
   nudge: "remind",
-  close: "close",
   to_triage: "to triage",
   done: "done",
   keep: "waiting",
 };
 
-/** The Needs Information column of the SIG Node Bugs board: answered → accept, quiet → remind, then close. */
+/** The Needs Information column of the SIG Node Bugs board: answered → accept, quiet → remind once, then the
+ *  lifecycle bot. */
 export const infoWorkflow: ColumnWorkflow<InfoResult> = {
   judge: (item, refresh) => send({ type: "info.judge", item, refresh }),
   badge(r, o) {
@@ -577,10 +584,116 @@ export const infoWorkflow: ColumnWorkflow<InfoResult> = {
     return [
       c("accept") && `${c("accept")} accepted (move to Triaged or High Priority)`,
       c("nudge") && `${c("nudge")} reporters reminded`,
-      c("close") && `${c("close")} closed for want of an answer`,
       c("to_triage") && `${c("to_triage")} back to Triage`,
       c("done") && `${c("done")} closed, moved to Done`,
       c("keep") + c("KEEP") && `${c("keep") + c("KEEP")} with Prow fixes only`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  },
+};
+
+// ---------------------------------------------------------------------------------------------------- Triaged, High Priority
+
+const BACKLOG_BADGE: Record<BacklogAction, string> = {
+  keep: "ok",
+  close_fixed: "fixed",
+  close_duplicate: "duplicate",
+  nudge: "nudge",
+  unassign: "unassign",
+  to_info: "needs info",
+  to_triage: "to triage",
+  done: "done",
+};
+
+/** The SIG Node Bugs board's accepted backlog, Triaged and High Priority: fixed, duplicate, a quiet assignee, and
+ *  the priority's column. */
+export const backlogWorkflow: ColumnWorkflow<BacklogResult> = {
+  judge: (item, refresh) => send({ type: "backlog.judge", item, refresh }),
+  async afterJudge(board, items, results) {
+    const dups = await send({ type: "backlog.duplicates", board, targets: items });
+    const out = new Map<number, BacklogResult>();
+    for (const [restId, r] of results) {
+      const d = dups[restId] ?? null;
+      if ((d?.number ?? null) !== (r.duplicate?.number ?? null)) out.set(restId, { ...r, duplicate: d });
+    }
+    return out;
+  },
+  badge(r, o) {
+    const a = chosenBacklog(r, o);
+    const d = decideBacklog(r);
+    const unsure = !o.action && !d.auto;
+    if (d.flag && !o.action) return { tint: "BORDERLINE", text: "no owner" };
+    const steps = chosenBacklogSteps(
+      { id: "", restId: 0, repository: r.repo, number: r.number } as never,
+      r,
+      o,
+    );
+    // A card that stays but gets a priority or a move says so.
+    const word =
+      a === "keep" && steps.some((s) => s.kind === "move")
+        ? "move"
+        : a === "keep" && steps.length
+          ? "priority"
+          : BACKLOG_BADGE[a];
+    return {
+      tint: unsure ? "BORDERLINE" : a === "keep" && steps.length ? "MOVE" : BACKLOG_TINT[a],
+      text: unsure ? `${word}?` : word,
+    };
+  },
+  recommended(item, r, _fields, o) {
+    if (!o.action && !decideBacklog(r).auto) return null;
+    const a = chosenBacklog(r, o);
+    const steps = chosenBacklogSteps(item, r, o);
+    return steps.length ? { tint: BACKLOG_TINT[a], steps, kind: a === "keep" ? "labels" : a } : null;
+  },
+  steps: (item, r, _fields, o) => chosenBacklogSteps(item, r, o),
+  override(r, o, key, value) {
+    const rest = omit(o, key);
+    const d = decideBacklog(r);
+    if (key === "action") return value === d.action && d.auto ? rest : { ...rest, action: value };
+    return key === "priority" && value === r.priority ? rest : { ...rest, [key]: value };
+  },
+  needsHuman: (r, o) => !o.action && !decideBacklog(r).auto,
+  hover: (c) =>
+    renderBacklogHoverCard({
+      fix: c.fix,
+      item: c.item,
+      result: c.result,
+      overrides: c.overrides,
+      setOverride: c.setOverride,
+      applied: c.applied,
+      canApply: c.canApply,
+      scope: c.scope,
+      apply: () => c.apply("chosen"),
+      skip: c.skip,
+    }),
+  hoverKey: (r) => {
+    const d = decideBacklog(r);
+    return `${d.action}|${d.auto}|${r.priority}|${r.duplicate?.number ?? ""}|${r.answers?.resolved.noul ?? ""}`;
+  },
+  pane: (adapter, item, st, rejudge) =>
+    renderBacklogEvidence(
+      adapter,
+      item,
+      st.state === "done" ? { state: "done", result: st.result } : st,
+      rejudge,
+      SECTION_TITLE,
+    ),
+  runTip: (column) =>
+    `Ask Jev whether each bug in ${column} is already fixed, a duplicate, or held by a quiet assignee, and check its priority's column`,
+  acceptTip: (n) => {
+    const c = (k: string) => n[k] ?? 0;
+    return [
+      c("close_fixed") && `${c("close_fixed")} closed as fixed`,
+      c("close_duplicate") && `${c("close_duplicate")} closed as duplicates`,
+      c("nudge") && `${c("nudge")} assignees nudged`,
+      c("unassign") && `${c("unassign")} unassigned`,
+      c("labels") && `${c("labels")} given a priority or moved to their priority's column`,
+      c("to_info") + c("to_triage") &&
+        `${c("to_info") + c("to_triage")} moved back to Needs Information or Triage`,
+      c("done") && `${c("done")} closed, moved to Done`,
+      c("KEEP") && `${c("KEEP")} with Prow fixes only`,
     ]
       .filter(Boolean)
       .join(", ");
@@ -596,4 +709,6 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   author: authorWorkflow as ColumnWorkflow<unknown>,
   bugs: bugsWorkflow as ColumnWorkflow<unknown>,
   info: infoWorkflow as ColumnWorkflow<unknown>,
+  backlog: backlogWorkflow as ColumnWorkflow<unknown>,
+  high: backlogWorkflow as ColumnWorkflow<unknown>,
 };

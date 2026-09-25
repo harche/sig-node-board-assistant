@@ -14,6 +14,8 @@ import { decideApprove, type ApproveResult } from "../core/approver";
 import type { AuthorResult } from "../core/author";
 import { judgeBug } from "../core/bugs";
 import { judgeInfo } from "../core/needsinfo";
+import { judgeBacklog, shortlist } from "../core/backlog";
+import { BUG_DUPLICATE_QUESTIONS } from "../core/prompts/backlog";
 import { noulReading } from "../core/readings";
 import {
   blend,
@@ -120,6 +122,61 @@ async function duplicates(
       survivor: answers[k]!.survivor.choice === "A" ? "A" : "B",
     })),
     new Set(targets.map((t) => t.restId)),
+  );
+  const out: Record<number, DuplicateOf | null> = {};
+  for (const t of targets) out[t.restId] = closing.get(t.restId) ?? null;
+  return out;
+}
+
+/** The duplicate pass for the SIG Node Bugs backlog: each target against the open cards in Triaged and High
+ *  Priority, only for the pairs whose words overlap most (backlog.ts shortlist). */
+async function bugDuplicates(
+  gh: GitHubClient,
+  jev: JevClient,
+  board: BoardRef,
+  targets: BoardItem[],
+): Promise<Record<number, DuplicateOf | null>> {
+  const open = (i: BoardItem) => i.type === "Issue" && i.state === "open";
+  const cols = ["Triaged", "High Priority"];
+  const pool0 = (await Promise.all(cols.map((c) => gh.itemsIn(board, c)))).flat().filter(open);
+  const pairs = shortlist(targets.filter(open), pool0, (i) => i.title);
+  const facet = async (i: BoardItem) => {
+    const d = await gh.itemDetail(i.repository, "Issue", i.number);
+    return {
+      number: i.number,
+      repository: i.repository,
+      created: d.createdAt.slice(0, 10),
+      title: d.title,
+      author: d.author.login,
+      assignees: i.assignees,
+      body: d.body.slice(0, 3000),
+    };
+  };
+  const answers = await pool(
+    8,
+    pairs.map(([a, b]) => async () => {
+      const [fa, fb] = await Promise.all([facet(a), facet(b)]);
+      const s = {
+        issue_A: fa,
+        issue_B: fb,
+        "precomputed (use as given)": {
+          same_author: fa.author === fb.author,
+          shared_assignee: fa.assignees.some((x) => fb.assignees.includes(x)),
+        },
+      };
+      return (await jev.askCached<{ duplicate: JevNoul; survivor: JevChoice }>(s, BUG_DUPLICATE_QUESTIONS))
+        .answers;
+    }),
+  );
+  const closing = closeDuplicates(
+    pairs.map(([a, b], k) => ({
+      a,
+      b,
+      p: answers[k]!.duplicate.noul,
+      survivor: answers[k]!.survivor.choice === "A" ? "A" : "B",
+    })),
+    new Set(targets.map((t) => t.restId)),
+    { working: "", closable: cols },
   );
   const out: Record<number, DuplicateOf | null> = {};
   for (const t of targets) out[t.restId] = closing.get(t.restId) ?? null;
@@ -402,6 +459,27 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       const r = await judgeInfo(req.item, detail, tl, jev, req.refresh);
       r.prow_fixes = await fixes(detail, jev, req.refresh);
       return r as Out;
+    }
+    case "backlog.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const { repository: repo, number: num } = req.item;
+      const [detail, prs] = await Promise.all([
+        gh.itemDetail(repo, "Issue", num, req.refresh),
+        gh.linkedPrs(repo, num, req.refresh),
+      ]);
+      const f = {
+        timeline: (r: string, n: number) => gh.timeline(r, n, req.refresh),
+        prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n, req.refresh),
+      };
+      const r = await judgeBacklog(req.item, detail, prs, f, jev, req.refresh);
+      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      return r as Out;
+    }
+    case "backlog.duplicates": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      return (await bugDuplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "todo.duplicates": {
       const { gh, jev } = await clients();

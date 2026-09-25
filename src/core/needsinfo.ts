@@ -5,8 +5,8 @@
  *  Code reads the dates (when the label went on, who wrote what since). Jev reads the thread: has the request been
  *  answered, and which later comments are a reminder to the reporter. Answered → Jev judges the report again with
  *  the Triage questions and, when there is now enough to start, it is accepted at a priority. Unanswered → after 20
- *  days (the community triage guide's wait) the reporter is nudged once, and 14 days after an unanswered nudge the
- *  issue is closed with a comment inviting them to reopen it with the details. */
+ *  days (the community triage guide's wait) the reporter is reminded once. After that the card stays: the Kubernetes
+ *  lifecycle bot marks the issue stale, then rotten, then closes it, and the extension leaves that to it. */
 import { isBot } from "./boards";
 import {
   acceptBody,
@@ -28,19 +28,17 @@ import type { ProwFix } from "./prowcmds";
 import { choiceReading, noulReading, type Reading } from "./readings";
 import type { ActionStep, BoardItem, ItemDetail, JevNoul, JevScore, JevUsage } from "./types";
 
-export const WAIT_DAYS = 20; // the community issue-triage guide: close after 20 days without a response
-export const NUDGE_WAIT_DAYS = 14; // after a reminder, before closing
+export const WAIT_DAYS = 20; // the community issue-triage guide's wait for a response
 export const ANSWERED_AT = 0.65;
 export const UNANSWERED_AT = 0.35;
 export const REMINDER_AT = 0.65;
 
-export const INFO_ACTIONS = ["accept", "nudge", "close", "to_triage", "done", "keep"] as const;
+export const INFO_ACTIONS = ["accept", "nudge", "to_triage", "done", "keep"] as const;
 export type InfoAction = (typeof INFO_ACTIONS)[number];
 
 export const INFO_LABEL: Record<InfoAction, string> = {
   accept: "Accept",
   nudge: "Remind the reporter",
-  close: "Close: no answer",
   to_triage: "Back to Triage",
   done: "Move to Done",
   keep: "Keep waiting",
@@ -49,7 +47,6 @@ export const INFO_LABEL: Record<InfoAction, string> = {
 export const INFO_TINT: Record<InfoAction, "KEEP" | "REMOVE" | "BORDERLINE" | "MOVE"> = {
   accept: "KEEP",
   nudge: "BORDERLINE",
-  close: "REMOVE",
   to_triage: "MOVE",
   done: "REMOVE",
   keep: "KEEP",
@@ -139,15 +136,9 @@ export function decideInfo(r: InfoResult): { action: InfoAction; why: string; au
       why: `asked ${asked}d ago, no answer and nobody reminded the reporter`,
       auto: true,
     };
-  if (reminded < NUDGE_WAIT_DAYS)
-    return {
-      action: "keep",
-      why: `the reporter was reminded ${reminded}d ago; waiting ${NUDGE_WAIT_DAYS}d`,
-      auto: true,
-    };
   return {
-    action: "close",
-    why: `asked ${asked}d ago, reminded ${reminded}d ago, still no answer`,
+    action: "keep",
+    why: `the reporter was reminded ${reminded}d ago; if nobody answers, the lifecycle bot closes it in time`,
     auto: true,
   };
 }
@@ -158,18 +149,11 @@ export function infoActions(r: InfoResult): InfoAction[] {
 }
 
 export const INFO_PREFIX = {
-  nudge:
-    "could you share the details asked for above? Without them this cannot be investigated. If there is no update in two weeks this will be closed; it can be reopened any time with the details.",
-  close:
-    "Closing, since the details asked for above did not come. If this still happens, please reopen it with them.",
+  nudge: "could you share the details asked for above? Without them this cannot be investigated.",
 } as const;
 
 export function nudgeInfoBody(reporter: string): string {
   return `@${reporter} ${INFO_PREFIX.nudge}`;
-}
-
-export function closeInfoBody(): string {
-  return `${INFO_PREFIX.close}\n\n/close`;
 }
 
 /** Accept: the information label comes off, /triage accepted and the priority go on. */
@@ -200,8 +184,6 @@ export function infoSteps(
       return [move("Triage")];
     case "nudge":
       return comment(nudgeInfoBody(r.reporter));
-    case "close":
-      return [...comment(closeInfoBody()), move(LANE.done)];
     case "accept": {
       const prio = priority ?? r.labels.priority;
       if (!prio) return [];
@@ -217,7 +199,6 @@ const LOGIN = /^@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 export function isInfoComment(body: string): boolean {
   const [first, ...rest] = body.split(" ");
   if (LOGIN.test(first ?? "") && rest.join(" ") === INFO_PREFIX.nudge) return true;
-  if (body === closeInfoBody()) return true;
   const lines = body.split("\n");
   const off = lines.filter((l) => /^\/remove-triage (needs-information|not-reproducible)$/.test(l));
   if (!off.length) return false;

@@ -24,7 +24,10 @@ On the Bugs board:
   (redirect and close), a feature filed as a bug, another SIG's code (hand it over), or too thin to act on (ask the
   reporter); and move it to the column its labels call for.
 - **Needs Information**: was the request answered (accept it at a priority), or has the reporter gone quiet (remind
-  them after 20 days, close 14 days after an unanswered reminder).
+  them once after 20 days, then leave it to the lifecycle bot).
+- **Triaged** and **High Priority**: is the bug already fixed (close it), a duplicate of another card (close it in
+  favour of that one), held by someone who assigned themselves and went quiet (nudge, then unassign); does it have a
+  priority, and is it in that priority's column.
 
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
@@ -189,9 +192,30 @@ maintainer reproducing it; and which later comments remind the reporter.
 - Answered, and Jev's Triage questions now read enough to start → `/remove-triage needs-information`,
   `/triage accepted`, `/priority`, move to Triaged or High Priority. Answered but still thin → your call.
 - Unanswered: under 20 days (the community triage guide's wait) → keep; past it and nobody reminded the reporter →
-  remind them (@-mention); an unanswered reminder older than 14 days → close with a comment inviting them to reopen
-  with the details.
+  remind them (@-mention); after a reminder the card stays, and the Kubernetes lifecycle bot marks the issue stale,
+  rotten and closes it in time.
 - `triage/accepted` already set → move only; the information label gone → back to Triage; closed → Done.
+
+## SIG Node Bugs: Triaged and High Priority
+
+The accepted backlog. Nothing moves a card out but a person, so it goes stale: on kubernetes/185, 32 of 171 Triaged
+cards had no priority and 64 were referenced by a merged PR while still open.
+
+- Labels (code): closed → Done; no `triage/accepted` → Needs Information (with `triage/needs-information`) or Triage;
+  a missing priority is added (Jev's pick, editable); `critical-urgent` and `important-soon` belong in High Priority,
+  the rest in Triaged, and the card moves there.
+- Fixed? Jev reads the thread and the linked PRs: P ≥ 0.8 closes it with a comment naming the fix; 0.5–0.8 is your call.
+- Duplicate? The column's pass asks Jev about each card and the three cards whose titles share the most words; a
+  duplicate closes in favour of the other, never an assigned card.
+- Quiet assignee: only people who assigned themselves (`/assign`) are nudged, then unassigned after an unanswered
+  check-in, as in Issues - In progress. An owner a triager assigned is left alone.
+- High Priority with nobody assigned: flagged for you.
+
+## What the lifecycle bot does, the extension leaves alone
+
+The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
+and asks for a re-triage of accepted issues untouched for a year. No column closes or re-triages something only for
+being quiet: after one reminder or nudge, the card waits for the bot.
 
 ## Broken Prow commands (every column)
 
@@ -204,13 +228,13 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 
 ## Boards
 
-| board                         | project        | what the extension does today                   |
-| ----------------------------- | -------------- | ----------------------------------------------- |
-| SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only)     |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing              |
-| SIG Node Bugs                 | kubernetes/185 | judges Triage and Needs Information (read-only) |
-| SIG Node Bugs (test)          | harche/6       | the same, with writes, for testing              |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)             |
+| board                         | project        | what the extension does today               |
+| ----------------------------- | -------------- | ------------------------------------------- |
+| SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only) |
+| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing          |
+| SIG Node Bugs                 | kubernetes/185 | judges all four active columns (read-only)  |
+| SIG Node Bugs (test)          | harche/6       | the same, with writes, for testing          |
+| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)         |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.

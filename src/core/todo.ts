@@ -480,7 +480,16 @@ export interface DupPair {
  *    strongly (sum of P over the pairs it won; ties go to the newer issue);
  *  - every other member that is an unassigned To-do card among `targets` closes in favour of it. In-progress and
  *    assigned members are never closed: two held duplicates are a human's call. */
-export function closeDuplicates(pairs: DupPair[], targets: Set<number>): Map<number, DuplicateOf> {
+export function closeDuplicates(
+  pairs: DupPair[],
+  targets: Set<number>,
+  /** The column whose cards count as being worked on, and the columns a card may be closed from. The SIG Node Bugs
+   *  backlog has no In-progress column: there an assignee alone holds a card. */
+  cols: { working: string; closable: string[] } = {
+    working: "Issues - In progress",
+    closable: ["Issues - To do"],
+  },
+): Map<number, DuplicateOf> {
   const edges = pairs.filter((x) => x.p >= DUPLICATE_AT);
   const parent = new Map<number, number>();
   const find = (id: number): number => {
@@ -498,24 +507,19 @@ export function closeDuplicates(pairs: DupPair[], targets: Set<number>): Map<num
   }
   const groups = new Map<number, BoardItem[]>();
   for (const i of items.values()) groups.set(find(i.restId), [...(groups.get(find(i.restId)) ?? []), i]);
-  const held = (i: BoardItem) => i.status === "Issues - In progress" || i.assignees.length > 0;
+  const held = (i: BoardItem) => i.status === cols.working || i.assignees.length > 0;
   const out = new Map<number, DuplicateOf>();
   for (const members of groups.values()) {
     const score = (i: BoardItem) =>
       edges.filter((e) => (e.survivor === "A" ? e.a : e.b).restId === i.restId).reduce((s, e) => s + e.p, 0);
-    const rank = (i: BoardItem) => [
-      i.status === "Issues - In progress" ? 1 : 0,
-      held(i) ? 1 : 0,
-      score(i),
-      i.number,
-    ];
+    const rank = (i: BoardItem) => [i.status === cols.working ? 1 : 0, held(i) ? 1 : 0, score(i), i.number];
     const keeper = members.reduce((best, i) => {
       const [x, y] = [rank(i), rank(best)];
       for (let k = 0; k < x.length; k++) if (x[k] !== y[k]) return x[k]! > y[k]! ? i : best;
       return best;
     });
     for (const m of members) {
-      if (m === keeper || held(m) || m.status !== "Issues - To do" || !targets.has(m.restId)) continue;
+      if (m === keeper || held(m) || !cols.closable.includes(m.status) || !targets.has(m.restId)) continue;
       const p = Math.max(
         ...edges.filter((e) => e.a.restId === m.restId || e.b.restId === m.restId).map((e) => e.p),
       );

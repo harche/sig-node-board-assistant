@@ -154,13 +154,33 @@ A human `/sig node` keeps a hand-over from being suggested over them, as in the 
 
 `src/core/needsinfo.ts`. On kubernetes/185 the column held 19 cards, 17 asked 57–575 days ago: 10 reporters never
 answered, 7 answered and sat unread, one card was already `triage/accepted`. By the board owner's decision an answered
-card is accepted from here (not sent back to Triage), and a quiet reporter is reminded once before the card is closed.
+card is accepted from here (not sent back to Triage), and a quiet reporter is reminded once; after that the card is the
+lifecycle bot's, which stales, rots and closes quiet issues (the owner's rule for every column: what the bot does, the
+extension leaves alone).
 
 Jev first missed answers: the label is often applied by a bare `/triage needs-information` after the real question, and
 answers come from other users too. Giving Jev the request text and the replies separately, and counting "a maintainer
 reproduced it" as answered, fixed that. On the 19 cards, against a reading of each thread: Accept would apply 14 (8
 accepted, 6 reminders, all right), 5 stay the reviewer's call (partial or thin answers, two borderline), none wrongly
-reminded or closed. Dates are code: when the label went on (timeline), the reporter's last reply, the latest reminder.
+reminded. Dates are code: when the label went on (timeline), the reporter's last reply, the latest reminder.
+
+## SIG Node Bugs: Triaged and High Priority
+
+`src/core/backlog.ts` and `src/core/prompts/backlog.ts`, reusing To do's state builder (no TestGrid: product bugs),
+duplicate grouping (`closeDuplicates`, now per column) and In progress's assignee reading.
+
+- Fixed: the To-do question is about a failing test; this one about product behaviour. Evaluated on the board's
+  history, each closed bug cut 10 minutes before it closed. 69 of 87 accepted bugs closed when their fix PR merged
+  (nothing for the extension to do); of the 18 a person closed as fixed, P ≥ 0.8 caught 3 and P ≥ 0.5 caught 11. Of
+  171 open Triaged cards, P ≥ 0.8 flagged 2 (both with the fix merged) and 0.5–0.8 flagged 13, most with the fix merged,
+  a few with work left (a temporary fix, a rollout). Hence ≥ 0.8 on Accept, 0.5–0.8 the reviewer's call.
+- Duplicates: every pair of a 176-card column is 15,000 questions, so each card is compared with the three whose titles
+  share the most words (126 pairs on 185); two pairs scored ≥ 0.65, both plausibly the same bug.
+- Assignees: of 78 quiet assignees on 49 cards, 57 had assigned themselves and 21 were owners a triager assigned, often
+  maintainers holding a bug for the long run. By the board owner's decision only the self-assigned are nudged and
+  unassigned (34 nudges, 5 unassigns on 185).
+- Old and quiet bugs are left to the lifecycle bot, which asks for a re-triage of accepted issues untouched for a
+  year. Frozen issues get the same checks: past ones were closed by people as fixed, duplicate or not SIG Node's.
 
 ## Broken Prow commands
 

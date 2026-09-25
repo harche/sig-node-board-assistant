@@ -40,7 +40,8 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
   `triage/not-reproducible`, `priority/critical-urgent`, `kind/regression`, `wg/device-management`, `sig/network`.
 - **Items:** fake bug issues #29–36, one per Triage decision, based on real 185 issues: a clear bug (#29), a support
   question (#30), a feature (#31), co-owned storage code (#32), too thin to act on (#33), already `triage/accepted`
-  (#34), DRA (#35), already `triage/needs-information` (#36), and for Needs Information an answered request (#37).
+  (#34), DRA (#35), already `triage/needs-information` (#36), for Needs Information an answered request (#37), and
+  for Triaged a bug the thread says is fixed (#38). The labels Prow would set are set directly on these issues.
   Reminders and closing need an ask 20+ days old, which cannot be backdated: unit tests cover those. Add more the
   same way as other columns are built. A reply posted within a minute of the label counts as part of the ask.
 
