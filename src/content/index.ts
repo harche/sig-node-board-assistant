@@ -355,14 +355,14 @@ class BoardAssistant<R> {
   }
 
   private makeAcceptButton(col: HTMLElement): HTMLElement {
-    const b = tackleButton(col, () => void this.accept(), CHECK, "Accept");
+    const b = tackleButton(col, () => void this.accept(), CHECK, "Accept", true);
     b.classList.add("snba-accept");
     b.hidden = true;
     return b;
   }
 
   private makeCancelButton(col: HTMLElement): HTMLElement {
-    const b = tackleButton(col, () => this.cancel(), X, "Cancel");
+    const b = tackleButton(col, () => this.cancel(), X, "Cancel", true);
     b.hidden = true;
     return b;
   }
@@ -455,6 +455,8 @@ class BoardAssistant<R> {
     ].filter(Boolean);
     const settled = this.batch.filter((id) => this.applied.get(id)?.state !== "pending").length;
     setText(accept, this.applying ? `${settled}/${this.batch.length}` : "Accept");
+    // Icon only, except for the progress count while Accept applies.
+    accept.querySelector(".snba-run-text")?.classList.toggle("snba-sr-only", !this.applying);
     accept.dataset.state = this.applying ? "applying" : "ready";
     accept.setAttribute("aria-disabled", String(this.applying || !plan.length));
     accept.dataset.tip = this.applying
@@ -792,10 +794,21 @@ function idleButton(col: HTMLElement, name: string): HTMLElement {
 }
 
 /** The column header's button, drawn with GitHub's own button classes where possible. */
-function tackleButton(col: HTMLElement, onClick: () => void, icon = PLAY, text = "Tackle"): HTMLElement {
+/** A column header button. `iconOnly` keeps the text for screen readers only (Accept and Cancel sit next to the
+ *  column's name and count, and with their words a long name like "PRs Waiting on Author" broke mid-word); the
+ *  tooltip says what the button does. The hidden text stays the button's name, so Accept's progress count
+ *  ("3/7") is read out too. */
+function tackleButton(
+  col: HTMLElement,
+  onClick: () => void,
+  icon = PLAY,
+  text = "Tackle",
+  iconOnly = false,
+): HTMLElement {
   const { root: b, label, native } = nativeButton(col, octicon(icon), text);
   b.classList.add("snba-run");
   label.classList.add("snba-run-text");
+  if (iconOnly) label.classList.add("snba-sr-only");
   if (!native) b.classList.add("snba-run-plain");
   attachTooltip(b, col);
   b.addEventListener("click", (e) => {
