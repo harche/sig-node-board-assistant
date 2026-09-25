@@ -3,6 +3,7 @@
  *  mention anyone, one assignee each; every other shape is refused if it mentions someone. */
 import { PROGRESS_PREFIX } from "./inprogress";
 import { isFixComment } from "./prowcmds";
+import { APPROVE_PREFIX } from "./approver";
 import { REVIEW_PREFIX } from "./reviewer";
 import { PRIORITY_CHOICES } from "./policy";
 import { COMMENT_PREFIX } from "./todo";
@@ -34,7 +35,7 @@ export function isDraftedComment(body: string): boolean {
     if (!cc.length || cc.length > 3 || !cc.every((x) => LOGIN.test(x))) return false;
     const reasons = lines.slice(1, -1);
     return (
-      lines.at(-1) === REVIEW_PREFIX.ask &&
+      (lines.at(-1) === REVIEW_PREFIX.ask || lines.at(-1) === APPROVE_PREFIX.ask) &&
       reasons.length === cc.length &&
       reasons.every((l, i) => l.startsWith(`${cc[i]}: `) && !MENTION.test(l.slice(cc[i]!.length + 2)))
     );
@@ -55,7 +56,9 @@ export function isDraftedComment(body: string): boolean {
   // Needs Reviewer: a re-ping of one reviewer.
   if (
     LOGIN.test(first ?? "") &&
-    [REVIEW_PREFIX.reping, REVIEW_PREFIX.asked, REVIEW_PREFIX.hold].includes(after as never)
+    [REVIEW_PREFIX.reping, REVIEW_PREFIX.asked, REVIEW_PREFIX.hold, APPROVE_PREFIX.reping].includes(
+      after as never,
+    )
   )
     return true;
   // To do and In progress: asking the thread what is left.

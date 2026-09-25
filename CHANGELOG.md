@@ -11,6 +11,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
   Jev's reading of the thread and linked PRs; cards without an assignee go back to To do.
 - PRs - Needs Reviewer: plain rules, then Jev on whose move it is, who reviews, who declined, whether a hold is
   met; re-pings after 14 quiet days; new reviewers found from review history and picked by Jev, asked with `/cc`.
+- PRs - Needs Approver: back to Needs Reviewer without lgtm, Waiting on Author when approved but failing; asked
+  approvers get 14 days; otherwise `/cc` approvers for the OWNERS files Prow still lists, ranked by recent approvals.
+- Asks include comments Jev reads as asking someone to review or approve.
 - Broken Prow commands in any column: flagged by code, read by Jev, fixed on Apply / Accept.
 - The header's Accept applies every suggestion, comments included, in every column.
 - Board columns are workflows (`src/content/workflows.ts`): Triage and Issues - To do share the column

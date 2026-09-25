@@ -53,6 +53,7 @@ const base = (over: Partial<ReviewResult> = {}): ReviewResult => ({
   engaged: [],
   declined: [],
   asked: [],
+  asked_all: [],
   pinged: {},
   author_last_days_ago: 3,
   candidates: [],
@@ -227,12 +228,13 @@ describe("OWNERS", () => {
 });
 
 describe("blend", () => {
-  const pr = (n: number, reviewers: string[], author = "someone") => ({
+  const pr = (n: number, reviewers: string[], author = "someone", approvers: string[] = []) => ({
     number: n,
     title: `pr ${n}`,
     author,
     created: ago(n),
     reviewers,
+    approvers,
   });
   it("ranks same-file reviewers first, drops the author, excluded people and emeritus, and names the evidence", () => {
     const out = blend(

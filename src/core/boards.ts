@@ -22,6 +22,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       todo: "Issues - To do",
       progress: "Issues - In progress",
       review: "PRs - Needs Reviewer",
+      approve: "PRs - Needs Approver",
     },
   },
   {
@@ -50,6 +51,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       todo: "Issues - To do",
       progress: "Issues - In progress",
       review: "PRs - Needs Reviewer",
+      approve: "PRs - Needs Approver",
     },
     writable: true,
   },

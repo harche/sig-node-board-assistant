@@ -8,15 +8,17 @@ import {
   type ProgressAction,
   type ProgressResult,
 } from "../core/inprogress";
-import {
-  decideReview,
-  REVIEW_TINT,
-  reviewSteps,
-  type ReviewAction,
-  type ReviewResult,
-} from "../core/reviewer";
+import type { ApproveResult } from "../core/approver";
+import type { ReviewResult } from "../core/reviewer";
 import { decideTodo, type TodoResult } from "../core/todo";
-import { chosenReview, renderReviewEvidence, renderReviewHoverCard } from "./reviewercard";
+import {
+  APPROVE_SPEC,
+  chosenPr,
+  renderReviewEvidence,
+  renderReviewHoverCard,
+  REVIEW_SPEC,
+  type PrSpec,
+} from "./reviewercard";
 import { chosenProgress, renderProgressEvidence, renderProgressHoverCard } from "./progresscard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -305,79 +307,94 @@ export const progressWorkflow: ColumnWorkflow<ProgressResult> = {
 
 // ---------------------------------------------------------------------------------------------------- Needs Reviewer
 
-const REVIEW_BADGE: Record<ReviewAction, string> = {
-  keep: "reviewing",
+const PR_BADGE: Record<string, string> = {
   new_ask: "ask",
   reping: "re-ping",
   to_author: "author",
   to_approver: "approver",
+  to_reviewer: "reviewer",
   to_done: "done",
 };
 
-export const reviewWorkflow: ColumnWorkflow<ReviewResult> = {
-  judge: (item, refresh) => send({ type: "review.judge", item, refresh }),
-  badge(r, o) {
-    const a = chosenReview(r, o);
-    // A kept card says what it waits on.
-    const keep = r.holder
-      ? "held"
-      : r.engaged.length
-        ? "reviewing"
-        : r.asked.length
-          ? "asked"
-          : r.whose_move.choice === "blocked"
-            ? "blocked"
-            : "no reviewer";
-    return { tint: REVIEW_TINT[a], text: a === "keep" ? keep : REVIEW_BADGE[a] };
-  },
-  recommended(item, r, _fields, o) {
-    const a = chosenReview(r, o);
-    const steps = reviewSteps(item, r, a);
-    return steps.length ? { tint: REVIEW_TINT[a], steps } : null;
-  },
-  steps: (item, r, _fields, o) => reviewSteps(item, r, chosenReview(r, o)),
-  override(r, o, key, value) {
-    const rest = omit(o, key);
-    return key === "action" && value === decideReview(r).action ? rest : { ...rest, [key]: value };
-  },
-  needsHuman: () => false,
-  hover: (c) =>
-    renderReviewHoverCard({
-      fix: c.fix,
-      item: c.item,
-      result: c.result,
-      overrides: c.overrides,
-      setOverride: c.setOverride,
-      applied: c.applied,
-      canApply: c.canApply,
-      scope: c.scope,
-      apply: () => c.apply("chosen"),
-      skip: c.skip,
-    }),
-  hoverKey: (r) => `${decideReview(r).action}|${r.candidates.map((c) => c.login).join(",")}`,
-  pane: (adapter, item, st, rejudge) =>
-    renderReviewEvidence(
-      adapter,
-      item,
-      st.state === "done" ? { state: "done", result: st.result } : st,
-      rejudge,
-      SECTION_TITLE,
-    ),
-  runTip: (column) =>
-    `Ask Jev whose move each PR in ${column} is, and find reviewers for the ones nobody is reviewing`,
-  acceptTip: (n) =>
-    [
-      n.MOVE && `${n.MOVE} moved to Waiting on Author or Needs Approver`,
-      n.REMOVE && `${n.REMOVE} moved to Done`,
-      n.BORDERLINE && `${n.BORDERLINE} reviewers asked or re-pinged`,
-    ]
-      .filter(Boolean)
-      .join(", "),
-};
+/** Needs Reviewer and Needs Approver: same facts and hover card, each with its own rules and actions. */
+function prWorkflow<R extends ReviewResult | ApproveResult>(
+  spec: PrSpec,
+  type: "review.judge" | "approve.judge",
+  what: string,
+): ColumnWorkflow<R> {
+  return {
+    judge: (item, refresh) => send({ type, item, refresh }) as Promise<R>,
+    badge(r, o) {
+      const a = chosenPr(spec, r, o);
+      // A kept card says what it waits on.
+      const keep = r.holder
+        ? "held"
+        : r.pr.labels.includes("approved")
+          ? "approved"
+          : r.engaged.length && type === "review.judge"
+            ? "reviewing"
+            : r.asked.length
+              ? "asked"
+              : r.whose_move.choice === "blocked"
+                ? "blocked"
+                : "nobody";
+      return { tint: spec.tint[a]!, text: a === "keep" ? keep : (PR_BADGE[a] ?? a) };
+    },
+    recommended(item, r, _fields, o) {
+      const a = chosenPr(spec, r, o);
+      const steps = spec.steps(item, r, a);
+      return steps.length ? { tint: spec.tint[a]!, steps } : null;
+    },
+    steps: (item, r, _fields, o) => spec.steps(item, r, chosenPr(spec, r, o)),
+    override(r, o, key, value) {
+      const rest = omit(o, key);
+      return key === "action" && value === spec.decide(r).action ? rest : { ...rest, [key]: value };
+    },
+    needsHuman: () => false,
+    hover: (c) =>
+      renderReviewHoverCard({
+        spec,
+        fix: c.fix,
+        item: c.item,
+        result: c.result,
+        overrides: c.overrides,
+        setOverride: c.setOverride,
+        applied: c.applied,
+        canApply: c.canApply,
+        scope: c.scope,
+        apply: () => c.apply("chosen"),
+        skip: c.skip,
+      }),
+    hoverKey: (r) => `${spec.decide(r).action}|${r.candidates.map((c) => c.login).join(",")}`,
+    pane: (adapter, item, st, rejudge) =>
+      renderReviewEvidence(
+        spec,
+        adapter,
+        item,
+        st.state === "done" ? { state: "done", result: st.result } : st,
+        rejudge,
+        SECTION_TITLE,
+      ),
+    runTip: (column) =>
+      `Ask Jev whose move each PR in ${column} is, and find ${what} for the ones nobody was asked about`,
+    acceptTip: (n) =>
+      [
+        n.MOVE && `${n.MOVE} moved to another PR lane`,
+        n.REMOVE && `${n.REMOVE} moved to Done`,
+        n.BORDERLINE && `${n.BORDERLINE} ${what} asked or re-pinged`,
+      ]
+        .filter(Boolean)
+        .join(", "),
+  };
+}
+
+export const reviewWorkflow = prWorkflow<ReviewResult>(REVIEW_SPEC, "review.judge", "reviewers");
+export const approveWorkflow = prWorkflow<ApproveResult>(APPROVE_SPEC, "approve.judge", "approvers");
 
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
   progress: progressWorkflow as ColumnWorkflow<unknown>,
   review: reviewWorkflow as ColumnWorkflow<unknown>,
+  approve: approveWorkflow as ColumnWorkflow<unknown>,
 };

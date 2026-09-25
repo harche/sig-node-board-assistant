@@ -1,5 +1,14 @@
-/** What a reviewer sees for a 'PRs - Needs Reviewer' card: whose move it is, who is reviewing or was asked, the
- *  candidates to /cc with their reasons, and one action, the suggested one preselected, that can be changed. */
+/** What a reviewer sees for a 'PRs - Needs Reviewer' or 'PRs - Needs Approver' card: whose move it is, who is
+ *  reviewing or was asked, the people to /cc with their reasons, and one action, the suggested one preselected,
+ *  that can be changed. The two columns share facts and layout; a PrSpec gives each its rules and actions. */
+import {
+  APPROVE_LABEL,
+  APPROVE_TINT,
+  approveActions,
+  approveSteps,
+  decideApprove,
+  type ApproveResult,
+} from "../core/approver";
 import { f2 } from "../core/policy";
 import {
   decideReview,
@@ -16,9 +25,43 @@ import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { h } from "./ui";
 
-export function chosenReview(r: ReviewResult, o: { action?: string }): ReviewAction {
-  const a = o.action as ReviewAction | undefined;
-  return a && reviewActions(r).includes(a) ? a : decideReview(r).action;
+type PrResult = ReviewResult | ApproveResult;
+
+/** One PR column's rules and actions. */
+export interface PrSpec {
+  decide(r: PrResult): { action: string; why: string };
+  actions(r: PrResult): string[];
+  steps(item: BoardItem, r: PrResult, action: string): ActionStep[];
+  label: Record<string, string>;
+  tint: Record<string, string>;
+  /** Who the candidates are, for the facts row. */
+  asks: string;
+  /** Candidates carry Jev's probability (reviewers) or a ranking score (approvers). */
+  showP: boolean;
+}
+
+export const REVIEW_SPEC: PrSpec = {
+  decide: (r) => decideReview(r as ReviewResult),
+  actions: (r) => reviewActions(r as ReviewResult),
+  steps: (item, r, a) => reviewSteps(item, r as ReviewResult, a as ReviewAction),
+  label: REVIEW_LABEL,
+  tint: REVIEW_TINT,
+  asks: "Would /cc",
+  showP: true,
+};
+
+export const APPROVE_SPEC: PrSpec = {
+  decide: (r) => decideApprove(r as ApproveResult),
+  actions: (r) => approveActions(r as ApproveResult),
+  steps: (item, r, a) => approveSteps(item, r as ApproveResult, a as never),
+  label: APPROVE_LABEL,
+  tint: APPROVE_TINT,
+  asks: "Would /cc (approvers)",
+  showP: false,
+};
+
+export function chosenPr(spec: PrSpec, r: PrResult, o: { action?: string }): string {
+  return o.action && spec.actions(r).includes(o.action) ? o.action : spec.decide(r).action;
 }
 
 function describe(steps: ActionStep[]): string {
@@ -32,7 +75,7 @@ function describe(steps: ActionStep[]): string {
 
 const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
-function facts(r: ReviewResult): [string, Node | string][] {
+function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
   const out: [string, Node | string][] = [];
   const m = r.whose_move;
   out.push([
@@ -75,22 +118,25 @@ function facts(r: ReviewResult): [string, Node | string][] {
   if (r.author_last_days_ago !== null)
     out.push(["Author", `${r.pr.author}, last moved ${r.author_last_days_ago}d ago`]);
   if (r.candidates.length)
-    out.push(["Would /cc", lines(r.candidates.map((c) => `${c.login} (P ${f2(c.p)}): ${c.reason}`))]);
+    out.push([
+      spec.asks,
+      lines(r.candidates.map((c) => `${c.login}${spec.showP ? ` (P ${f2(c.p)})` : ""}: ${c.reason}`)),
+    ]);
   else if (r.candidates_note) out.push(["Candidates", r.candidates_note]);
   return out;
 }
 
-function heading(r: ReviewResult, action: ReviewAction): HTMLElement {
-  const d = decideReview(r);
+function heading(spec: PrSpec, r: PrResult, action: string): HTMLElement {
+  const d = spec.decide(r);
   return h(
     "div.snba-decision",
     {},
     h(
       "div",
       {},
-      h(`span.snba-verdict.snba-${REVIEW_TINT[action].toLowerCase()}`, {}, REVIEW_LABEL[action]),
+      h(`span.snba-verdict.snba-${spec.tint[action]!.toLowerCase()}`, {}, spec.label[action]),
       action !== d.action
-        ? h("span.snba-muted", {}, ` (suggested: ${REVIEW_LABEL[d.action].toLowerCase()})`)
+        ? h("span.snba-muted", {}, ` (suggested: ${spec.label[d.action]!.toLowerCase()})`)
         : null,
     ),
     h("p.snba-why", {}, d.why),
@@ -98,10 +144,11 @@ function heading(r: ReviewResult, action: ReviewAction): HTMLElement {
 }
 
 export interface ReviewHoverContent {
+  spec: PrSpec;
   /** The action\'s steps with the Prow fixes added. */
   fix(steps: ActionStep[]): ActionStep[];
   item: BoardItem;
-  result: ReviewResult;
+  result: PrResult;
   overrides: { action?: string };
   setOverride(key: string, value: string): void;
   applied: Applied | undefined;
@@ -112,18 +159,18 @@ export interface ReviewHoverContent {
 }
 
 export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
-  const r = c.result;
+  const { spec, result: r } = c;
   const locked = c.applied?.state === "pending" || c.applied?.state === "done" || !c.canApply;
-  const action = chosenReview(r, c.overrides);
-  const suggested = decideReview(r).action;
+  const action = chosenPr(spec, r, c.overrides);
+  const suggested = spec.decide(r).action;
   const sel = h(
     "select.snba-hc-select",
     { "aria-label": "Action", "data-focus-key": "action" },
-    ...reviewActions(r).map((a) => {
+    ...spec.actions(r).map((a) => {
       const o = h(
         "option",
         { value: a },
-        a === suggested ? `${REVIEW_LABEL[a]} (suggested)` : REVIEW_LABEL[a],
+        a === suggested ? `${spec.label[a]} (suggested)` : spec.label[a],
       ) as HTMLOptionElement;
       o.selected = a === action;
       return o;
@@ -136,11 +183,11 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
     "div.snba-hc-body",
     {},
     h("div.snba-hc-title", {}, h("span.snba-muted", {}, `${r.repo}#${r.number} `), r.title),
-    heading(r, action),
+    heading(spec, r, action),
     h(
       "dl.snba-hc-scores.snba-hc-facts",
       {},
-      ...facts(r).flatMap(([k, v]) => [h("dt", {}, k), h("dd.snba-hc-text", {}, v)]),
+      ...facts(spec, r).flatMap(([k, v]) => [h("dt", {}, k), h("dd.snba-hc-text", {}, v)]),
       h("dt", {}, "Action"),
       h("dd.snba-hc-text", {}, h("span.snba-hc-prio", {}, sel)),
     ),
@@ -149,7 +196,7 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
   if (c.applied?.state === "done") {
     box.append(h("p.snba-hc-status", {}, "Applied."));
   } else {
-    const steps = c.fix(reviewSteps(c.item, r, action));
+    const steps = c.fix(spec.steps(c.item, r, action));
     const apply = nativeButton(c.scope, null, "Apply", "primary").root;
     apply.classList.add("snba-hc-btn");
     if (locked || !steps.length) apply.setAttribute("aria-disabled", "true");
@@ -171,7 +218,7 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
       h(
         "ul.snba-hc-steps",
         {},
-        h("li", {}, h("b", {}, REVIEW_LABEL[action]), h("span.snba-muted", {}, `: ${describe(steps)}`)),
+        h("li", {}, h("b", {}, spec.label[action]), h("span.snba-muted", {}, `: ${describe(steps)}`)),
         h(
           "li",
           {},
@@ -190,9 +237,10 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
 }
 
 export type ReviewPaneState =
-  { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: ReviewResult };
+  { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: PrResult };
 
 export function renderReviewEvidence(
+  spec: PrSpec,
   adapter: SidebarAdapter,
   item: BoardItem,
   st: ReviewPaneState,
@@ -221,12 +269,12 @@ export function renderReviewEvidence(
     return root;
   }
   const r = st.result;
-  const action = decideReview(r).action;
+  const action = spec.decide(r).action;
   body.append(
-    heading(r, action),
-    ...facts(r).map(([k, v]) => adapter.row(k, v)),
+    heading(spec, r, action),
+    ...facts(spec, r).map(([k, v]) => adapter.row(k, v)),
     h("div.snba-subhead", {}, "What the suggested action does"),
-    h("p.snba-muted", {}, describe(reviewSteps(item, r, action))),
+    h("p.snba-muted", {}, describe(spec.steps(item, r, action))),
     h("div.snba-foot", {}, again),
   );
   return root;

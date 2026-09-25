@@ -18,6 +18,8 @@ interface HistPr {
   author: string;
   created: string;
   reviewers: string[];
+  /** Non-author humans who commented /approve. */
+  approvers: string[];
 }
 
 interface RawPr {
@@ -47,6 +49,13 @@ function toHist(p: RawPr | null | undefined): HistPr | null {
     author: p.author.login,
     created: p.createdAt,
     reviewers: [...who].filter((u) => lower(u) !== a && !isBot(u)),
+    approvers: [
+      ...new Set(
+        p.comments.nodes
+          .filter((c) => c.author && /^\s*\/approve(?!\s+(cancel|no-issue))/im.test(c.body))
+          .map((c) => c.author!.login),
+      ),
+    ].filter((u) => lower(u) !== a && !isBot(u)),
   };
 }
 
@@ -337,4 +346,117 @@ export async function pickReviewers(
     picks: ranked.slice(0, 3).map(({ c, p }) => ({ login: c.login, reason: c.best, p })),
     usage: r.usage,
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Approvers. Only an OWNERS approver of a changed file (at any level up to the repository root) can /approve, so
+// OWNERS decides who is eligible; who approved this code lately decides the order. Measured on 343 PRs merged on
+// 151 since 2025-10 with a human /approve: approvers of the nearest OWNERS put the actual approver in the top 3 for
+// 56%; a blend of recent approvals of the same files, directories and author, plus OWNERS, 73%. Jev picking from
+// that blend (150 PRs) did no better (75% top 3, but a worse first pick), so the blend's order is used as is.
+
+/** Approvers and emeritus approvers of every OWNERS file from `dir` up to the root, aliases expanded. */
+export async function ownersChain(
+  r: OwnersReader,
+  repo: string,
+  dir: string,
+): Promise<{ approvers: Map<string, string>; emeritus: Set<string> }> {
+  const approvers = new Map<string, string>();
+  const emeritus = new Set<string>();
+  let cur = dir;
+  for (;;) {
+    const o = await nearestOwners(r, repo, cur);
+    for (const u of o.approvers) if (!approvers.has(lower(u))) approvers.set(lower(u), o.dir || "/");
+    for (const u of o.emeritus) emeritus.add(lower(u));
+    if (!o.dir) break;
+    cur = o.dir.includes("/") ? o.dir.slice(0, o.dir.lastIndexOf("/")) : "";
+  }
+  return { approvers, emeritus };
+}
+
+const WA = { file: 3, dir: 2, author: 2, owners: 1.5 };
+
+/** Up to three eligible approvers, strongest first, each with one checkable reason. */
+export function blendApprovers(
+  author: string,
+  files: string[],
+  dirs: string[],
+  hist: { byPath: Record<string, HistPr[]>; byAuthor: HistPr[] },
+  eligible: Map<string, string>,
+  emeritus: Set<string>,
+  exclude: string[],
+): Candidate[] {
+  const sig = new Map<string, { file: Map<string, number>; dir: Map<string, number>; author: number }>();
+  const get = (u: string) => {
+    let x = sig.get(u);
+    if (!x) sig.set(u, (x = { file: new Map(), dir: new Map(), author: 0 }));
+    return x;
+  };
+  for (const f of files)
+    for (const p of hist.byPath[f] ?? [])
+      for (const u of p.approvers) get(u).file.set(f, (get(u).file.get(f) ?? 0) + 1);
+  for (const d of dirs)
+    for (const p of hist.byPath[d] ?? [])
+      for (const u of p.approvers) get(u).dir.set(d, (get(u).dir.get(d) ?? 0) + 1);
+  for (const p of hist.byAuthor) for (const u of p.approvers) get(u).author++;
+  for (const u of eligible.keys()) get(u);
+  const skip = new Set([author, ...exclude].map(lower));
+  const rows = [...sig].filter(
+    ([u]) => eligible.has(lower(u)) && !emeritus.has(lower(u)) && !skip.has(lower(u)) && !isBot(u),
+  );
+  const total = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+  const mx = (f: (x: { file: Map<string, number>; dir: Map<string, number>; author: number }) => number) =>
+    Math.max(1, ...rows.map(([, x]) => f(x)));
+  const [mf, md, ma] = [mx((x) => total(x.file)), mx((x) => total(x.dir)), mx((x) => x.author)];
+  const n = (k: number) => `${k} recent PR${k === 1 ? "" : "s"}`;
+  return rows
+    .map(([u, x]) => {
+      const score =
+        (WA.file * total(x.file)) / mf +
+        (WA.dir * total(x.dir)) / md +
+        (WA.author * x.author) / ma +
+        WA.owners;
+      const f = [...x.file].sort((a, b) => b[1] - a[1])[0];
+      const d = [...x.dir].sort((a, b) => b[1] - a[1])[0];
+      const reason = f
+        ? `you approved ${n(f[1])} touching \`${f[0]}\``
+        : d
+          ? `you approved ${n(d[1])} in \`${d[0]}/\``
+          : x.author
+            ? `you approved ${n(x.author)} by the same author`
+            : `you are an OWNERS approver for \`${eligible.get(lower(u))}\``;
+      return { login: u, reason, p: score, active: Boolean(f || d || x.author) };
+    })
+    .sort((a, b) => b.p - a.p);
+}
+
+/** The OWNERS directories Prow's approval notifier still wants an approver for ("Needs approval from an approver in
+ *  each of these files"), from its latest comment; null when there is no notifier comment. */
+export function unapprovedOwners(comments: { author: { login: string }; body: string }[]): string[] | null {
+  const note = [...comments]
+    .reverse()
+    .find((c) => isBot(c.author.login) && c.body.includes("[APPROVALNOTIFIER]"));
+  if (!note) return null;
+  const dirs = [...note.body.matchAll(/^- \*\*\[([^\]]*?)OWNERS\]/gm)].map((m) => m[1]!.replace(/\/$/, ""));
+  return dirs;
+}
+
+/** Up to `k` approvers from `ranked` so that every still-unapproved OWNERS directory has one who can approve it
+ *  (an approver of that directory or a parent), best-ranked first; then the next best fill the rest. */
+export function coverApprovers(
+  ranked: Candidate[],
+  canApprove: Map<string, Set<string>>,
+  k = 3,
+): { picks: Candidate[]; uncovered: string[] } {
+  const out: Candidate[] = [];
+  const uncovered: string[] = [];
+  for (const [dir, who] of canApprove) {
+    if (out.some((c) => who.has(lower(c.login)))) continue;
+    const pick = out.length < k ? ranked.find((c) => who.has(lower(c.login)) && !out.includes(c)) : undefined;
+    if (pick) out.push(pick);
+    else uncovered.push(dir);
+  }
+  for (const c of ranked) if (out.length < k && !out.includes(c) && c.active !== false) out.push(c);
+  // The /cc names at most k people (the worker refuses more); OWNERS files left over are reported, not dropped.
+  return { picks: out.slice(0, k), uncovered };
 }

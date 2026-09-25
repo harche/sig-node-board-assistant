@@ -10,7 +10,17 @@ import { TestGridClient } from "../core/testgrid";
 import { judge } from "../core/triage";
 import { isDraftedComment } from "../core/comments";
 import { prowFixes, type ProwFix } from "../core/prowcmds";
-import { blend, nearestOwners, pickReviewers, reviewHistory } from "../core/candidates";
+import { decideApprove, type ApproveResult } from "../core/approver";
+import {
+  blend,
+  blendApprovers,
+  coverApprovers,
+  nearestOwners,
+  ownersChain,
+  pickReviewers,
+  reviewHistory,
+  unapprovedOwners,
+} from "../core/candidates";
 import { judgeProgress } from "../core/inprogress";
 import { decideReview, judgeReview, type Candidate, type ReviewResult } from "../core/reviewer";
 import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
@@ -32,6 +42,19 @@ async function fixes(detail: ItemDetail, jev: JevClient, refresh?: boolean): Pro
   } catch {
     return [];
   }
+}
+
+const dirOf = (f: string) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : "");
+
+/** The directories with the most changed files, at most three. */
+function topDirs(files: string[]): string[] {
+  const count = new Map<string, number>();
+  for (const f of files) count.set(dirOf(f), (count.get(dirOf(f)) ?? 0) + 1);
+  return [...count]
+    .sort((a, b) => b[1] - a[1])
+    .map(([d]) => d)
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 /** At most `n` of `jobs` at once, in order. */
@@ -248,6 +271,73 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         }
       }
       const out: ReviewResult = {
+        ...base,
+        candidates,
+        candidates_note: note,
+        prow_fixes: await fixes(detail, jev, req.refresh),
+      };
+      return out as Out;
+    }
+    case "approve.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const { repository: repo, number: num } = req.item;
+      const [detail, ps, tl] = await Promise.all([
+        gh.itemDetail(repo, "PullRequest", num, req.refresh),
+        gh.pullState(repo, num, req.refresh),
+        gh.timeline(repo, num, req.refresh),
+      ]);
+      const r = await judgeReview(req.item, detail, ps, tl, (x, n) => gh.refState(x, n), jev, req.refresh);
+      const base = { ...r, kind: "approve" as const };
+      let candidates: Candidate[] = [];
+      let note = "";
+      if (decideApprove(base).action === "new_ask") {
+        try {
+          const files = (detail.files ?? []).map((f) => f.path);
+          const dirs = topDirs(files);
+          const reader = { raw: (x: string, p: string) => gh.rawFile(x, p) };
+          // Prow's notifier says which OWNERS files still need an approver; without it, every changed file's.
+          const required = unapprovedOwners(detail.comments) ?? [...new Set(files.map(dirOf))].slice(0, 6);
+          const [hist, chains] = await Promise.all([
+            reviewHistory(gh, repo, ps.author, files, dirs, Date.now()),
+            Promise.all(required.map((d) => ownersChain(reader, repo, d))),
+          ]);
+          const eligible = new Map<string, string>();
+          const emeritus = new Set<string>();
+          const canApprove = new Map<string, Set<string>>();
+          chains.forEach((c, i) => {
+            canApprove.set(required[i]!, new Set(c.approvers.keys()));
+            for (const [u, d] of c.approvers) if (!eligible.has(u)) eligible.set(u, d);
+            c.emeritus.forEach((u) => emeritus.add(u));
+          });
+          const exclude = [
+            ...base.declined,
+            ...base.asked_all.map((a) => a.login),
+            ...base.engaged.map((e) => e.login),
+          ];
+          const ranked = blendApprovers(
+            ps.author,
+            files.slice(0, 5),
+            dirs,
+            hist,
+            eligible,
+            emeritus,
+            exclude,
+          );
+          const cover = coverApprovers(ranked, canApprove);
+          candidates = cover.picks;
+          const owners = (x: string) => (x ? `${x}/OWNERS` : "/OWNERS");
+          note = candidates.length
+            ? `${eligible.size} approvers can approve ${required.length ? required.map(owners).join(", ") : "these files"}; ranked by who approved this code lately` +
+              (cover.uncovered.length
+                ? `; the /cc does not cover ${cover.uncovered.map(owners).join(", ")}`
+                : "")
+            : "no OWNERS approver found for these files";
+        } catch (e) {
+          note = `approver search failed: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+      const out: ApproveResult = {
         ...base,
         candidates,
         candidates_note: note,

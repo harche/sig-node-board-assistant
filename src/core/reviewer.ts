@@ -157,6 +157,8 @@ export function references(
 export interface ReviewFacts {
   state: Record<string, unknown>;
   asks: Map<string, { by: string; days_ago: number }>;
+  /** The latest comment @-mentioning each person who was not asked otherwise: Jev says whether it is an ask. */
+  mentions: { login: string; by: string; days_ago: number; text: string }[];
   events: PrEvent[];
   /** Non-author humans who commented or reviewed, most recent last. */
   participants: string[];
@@ -180,8 +182,23 @@ export function reviewFacts(
       participants.push(e.who);
     }
   const h = holder(ps, d);
+  const asked = asks(events, tl, now);
+  const mentions = new Map<string, { login: string; by: string; days_ago: number; text: string }>();
+  for (const e of events.filter((x) => x.kind === "comment" && x.text).slice(-10))
+    for (const m of e.text!.matchAll(/(?:^|[^\w`/])@([A-Za-z0-9][\w-]*)/g)) {
+      const who = m[1]!;
+      if (lower(who) === lower(e.who) || lower(who) === lower(ps.author) || isBot(who) || asked.has(who))
+        continue;
+      mentions.set(lower(who), {
+        login: who,
+        by: e.who,
+        days_ago: e.days_ago ?? 0,
+        text: e.text!.slice(0, 600),
+      });
+    }
   return {
-    asks: asks(events, tl, now),
+    asks: asked,
+    mentions: [...mentions.values()].slice(-5),
     events,
     participants: participants.slice(-6),
     holder: h,
@@ -282,6 +299,29 @@ export function reviewQuestions(f: ReviewFacts): Record<string, unknown> {
       },
     };
   });
+  f.mentions.forEach((m, j) => {
+    q[`mention_${j}`] = {
+      type: "noul",
+      instructions: {
+        comment: { by: m.by, days_ago: m.days_ago, text: m.text },
+        question: `Does this comment ask ${m.login} to review or approve this pull request (or to take another look at it)?`,
+      },
+      criteria: {
+        true: {
+          what: `It asks ${m.login} to review, approve, or look at the PR.`,
+          examples: [`@${m.login} for approval`, `@${m.login} PTAL`, `@${m.login} could you take a look?`],
+        },
+        false: {
+          what: "Anything else.",
+          examples: [
+            `thanks @${m.login}`,
+            `as @${m.login} said above`,
+            `@${m.login} is this still failing on your side?`,
+          ],
+        },
+      },
+    };
+  });
   if (f.holder && f.holder !== "unknown")
     q.hold_met = {
       type: "noul",
@@ -323,6 +363,9 @@ export const REVIEW_TINT: Record<ReviewAction, "KEEP" | "REMOVE" | "BORDERLINE" 
 
 export interface Candidate {
   login: string;
+  /** False for an approver known only from OWNERS, with no recent approvals seen: offered only to cover an OWNERS
+   *  file nobody active can approve. */
+  active?: boolean;
   /** One checkable reason for the /cc. */
   reason: string;
   /** Jev's P(this one reviews if asked), among the candidates shown. */
@@ -345,6 +388,15 @@ export interface ReviewResult {
   declined: string[];
   /** People asked to review who have not engaged or declined: who asked, how long ago, and the latest ping. */
   asked: { login: string; by: string; days_ago: number; pinged_days_ago: number | null }[];
+  /** Everyone asked (not the author, not someone who declined), engaged or not, with the days since their own last
+   *  activity: Needs Approver keeps waiting on an asked approver who commented without approving. */
+  asked_all: {
+    login: string;
+    by: string;
+    days_ago: number;
+    pinged_days_ago: number | null;
+    active_days_ago: number | null;
+  }[];
   /** Latest ping to each engaged reviewer, in days. */
   pinged: Record<string, number | null>;
   /** Days since the author's last push or comment. */
@@ -514,9 +566,24 @@ export async function judgeReview(
   const declined = f.participants.filter((_, i) => ((a[`declined_${i}`] as JevNoul)?.noul ?? 0) >= 0.6);
   const authorEv = f.events.filter((e) => e.by_author && e.kind !== "review_request").at(-1);
   const involved = new Set([...engaged.map((e) => e.login), ...declined].map(lower));
-  const asked = [...f.asks]
+  // A comment Jev reads as asking someone to review or approve counts like a /cc.
+  const allAsks = new Map(f.asks);
+  f.mentions.forEach((m, j) => {
+    if (((a[`mention_${j}`] as JevNoul)?.noul ?? 0) >= 0.6)
+      allAsks.set(m.login, { by: m.by, days_ago: m.days_ago });
+  });
+  const asked = [...allAsks]
     .filter(([who]) => !involved.has(lower(who)) && lower(who) !== lower(ps.author))
     .map(([login, v]) => ({ login, ...v, pinged_days_ago: lastPing(f.events, login) }));
+  const declinedL = new Set(declined.map(lower));
+  const asked_all = [...allAsks]
+    .filter(([who]) => !declinedL.has(lower(who)) && lower(who) !== lower(ps.author))
+    .map(([login, v]) => ({
+      login,
+      ...v,
+      pinged_days_ago: lastPing(f.events, login),
+      active_days_ago: lastOf(login),
+    }));
   const pinged = Object.fromEntries(engaged.map((e) => [e.login, lastPing(f.events, e.login)]));
   return {
     kind: "review",
@@ -539,6 +606,7 @@ export async function judgeReview(
     engaged,
     declined,
     asked,
+    asked_all,
     pinged,
     author_last_days_ago: authorEv?.days_ago ?? null,
     usage: r.usage,

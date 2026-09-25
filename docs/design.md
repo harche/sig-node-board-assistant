@@ -109,6 +109,18 @@ their reviewers (one small GraphQL query per path; one large query timed out), p
 blends them with OWNERS as a small bonus, and lets Jev pick three of the best eight given each candidate's counts and
 the titles they reviewed lately.
 
+## PRs - Needs Approver
+
+`src/core/approver.ts` reuses Needs Reviewer's facts and Jev call. Asks now include comments that @-mention someone
+and that Jev reads as asking them to review or approve ("@x @y for approval"): only counting `/cc` and `/assign`
+proposed a new ask on a PR the board owner had asked about a week earlier. Approvers: only an approver of an OWNERS
+file covering the change can approve, so Prow's notifier comment ("Needs approval from an approver in each of these
+files") gives the OWNERS files still open, `candidates.ts ownersChain` their approvers up to the root, and
+`blendApprovers` ranks them by recent `/approve` comments on the same files, directories and author (from the same
+history query as reviewers). On 150 PRs Jev picking among the ranked approvers matched the ranking's top 3 (75% vs
+74%) with a worse first pick, so unlike reviewers the order is code. `coverApprovers` makes sure every open OWNERS
+file has someone on the `/cc`.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

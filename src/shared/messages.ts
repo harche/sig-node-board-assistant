@@ -2,6 +2,7 @@
  *  Every request is a read except `item.apply`, which the worker only runs on boards marked writable. */
 import type { Placement } from "../core/lookup";
 import type { ProgressResult } from "../core/inprogress";
+import type { ApproveResult } from "../core/approver";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -32,6 +33,7 @@ export type Request =
   | { type: "todo.duplicates"; board: BoardRef; targets: BoardItem[] }
   | { type: "progress.judge"; item: BoardItem; refresh?: boolean }
   | { type: "review.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "approve.judge"; item: BoardItem; refresh?: boolean }
   | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
 
 export interface ResponseMap {
@@ -49,6 +51,7 @@ export interface ResponseMap {
   "todo.duplicates": Record<number, DuplicateOf | null>;
   "progress.judge": ProgressResult;
   "review.judge": ReviewResult;
+  "approve.judge": ApproveResult;
   "item.apply": { ok: true };
 }
 

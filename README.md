@@ -11,6 +11,8 @@ use, for two columns:
   check-in, or send the card back to To do.
 - **PRs - Needs Reviewer**: is the PR really waiting on a reviewer (or on its author, an approver, a hold); re-ping
   a quiet reviewer, or `/cc` new ones picked from who actually reviews that code.
+- **PRs - Needs Approver**: does the PR have lgtm and wait on an approver; re-ping an asked approver, or `/cc`
+  approvers who can approve the OWNERS files Prow says still need it, picked from who approves that code lately.
 
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
@@ -128,6 +130,17 @@ from that history, given each candidate's counts and the titles they reviewed la
 77% on 39 recent k/k PRs with repository-wide history). The comment `/cc`s up to three people with one checkable
 reason each, so they can decide whether they have the bandwidth.
 
+## PRs - Needs Approver
+
+The same facts and Jev call as Needs Reviewer, with its own rules: no `lgtm` → back to Needs Reviewer; `lgtm` and
+`approved` but not merged → Prow's `tide` status says what blocks it (failing checks → Waiting on Author). Anyone
+already asked (a `/cc`, an `/assign`, a review request, or a comment Jev reads as asking them) gets 14 days before a
+re-ping. When nobody was asked, only approvers who can approve the OWNERS files Prow's approval notifier still lists
+(at that level or above) are eligible, ranked by who approved PRs touching the same files, directories and author
+lately: on 343 PRs merged on 151 that put the actual approver in the top 3 for 73%, against 56% for the OWNERS list
+alone. The `/cc` covers every unapproved OWNERS file first; approvers with no recent approvals are named only when
+nobody active can approve a file. (Jev picking among them did no better, so the ranking is code.)
+
 ## Broken Prow commands (every column)
 
 A comment line Prow ignored (`/assing @x`, `/triage accept`, `triage/accept`, `/priority imporant-soon`) means the
@@ -139,12 +152,12 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 
 ## Boards
 
-| board                         | project        | what the extension does today                                                            |
-| ----------------------------- | -------------- | ---------------------------------------------------------------------------------------- |
-| SIG Node CI/Test Board        | kubernetes/151 | judges Triage, Issues - To do, Issues - In progress and PRs - Needs Reviewer (read-only) |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing                                                       |
-| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)                                                      |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)                                                      |
+| board                         | project        | what the extension does today                                                                 |
+| ----------------------------- | -------------- | --------------------------------------------------------------------------------------------- |
+| SIG Node CI/Test Board        | kubernetes/151 | judges Triage, the two issue lanes, PRs - Needs Reviewer and PRs - Needs Approver (read-only) |
+| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing                                                            |
+| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)                                                           |
+| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)                                                           |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.
@@ -178,7 +191,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/design.md](docs/design.md).
 ## Roadmap
 
 1. Writes on kubernetes/151, after testing on the test board and an explicit opt-in in settings.
-2. PRs - Needs Approver and PRs Waiting on Author.
+2. PRs Waiting on Author.
 3. The Bugs board (kubernetes/185) triage workflow.
 4. Chrome Web Store listing.
 
