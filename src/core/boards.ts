@@ -57,6 +57,16 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     },
     writable: true,
   },
+  {
+    // Private copy of kubernetes/185 (same Status columns, view and workflows) over fake items in
+    // harche/sig-node-board-test.
+    owner: "harche",
+    number: 6,
+    title: "SIG Node Bugs (test)",
+    about: "Test copy of kubernetes/185",
+    workflows: {},
+    writable: true,
+  },
 ];
 
 export function knownBoard(ref: BoardRef): KnownBoard | undefined {
