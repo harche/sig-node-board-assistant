@@ -13,10 +13,14 @@ import { renderEvidence, type EvidenceState } from "./evidence";
 import { Judged } from "./judged";
 import { h, octicon } from "./ui";
 
+/** Items judged or applied at once. */
+const PARALLEL = 8;
+
 class BoardAssistant {
   private items = new Map<number, BoardItem>();
-  /** Items are independent, so the whole column is judged at once; a rate limit is retried in the worker. */
-  private judged = new Judged(Infinity);
+  /** Items are independent, so the column is judged in parallel, 8 at a time: enough to be quick, few enough to keep
+   *  clear of GitHub's secondary rate limit. A rate limit that happens anyway is retried in the worker. */
+  private judged = new Judged(PARALLEL);
   private pill: HTMLElement;
   private pillText: HTMLElement;
   private configured = { github: false, typesafe: false };
@@ -38,8 +42,6 @@ class BoardAssistant {
   /** Accept's writes, per project item. */
   private applied = new Map<number, { state: "pending" | "done" } | { state: "error"; message: string }>();
   private applying = false;
-  /** Set after Accept moved items: the next Tackle re-reads the column instead of trusting the cache. */
-  private stale = false;
   /** What the last Accept did; the pill shows it until the next Tackle or Cancel. */
   private applySummary: string | null = null;
 
@@ -125,30 +127,29 @@ class BoardAssistant {
     this.syncPane();
   }
 
-  /** The column button: judge every item in the column, not only the cards the board has rendered. A second click
-   *  re-reads the column (new or moved items) and judges whatever is not judged yet or failed. */
+  /** The column button: judge every item in the column, not only the cards the board has rendered. Every click is
+   *  fresh: the column and each item are re-read from GitHub and Jev is asked again, skipping every cache. */
   private async run(): Promise<void> {
     if (!this.configured.github || !this.configured.typesafe) {
       void send({ type: "options.open" });
       return;
     }
     if (this.load.state === "loading" || this.running() || this.applying) return;
-    const again = this.started || this.stale;
     this.started = true;
-    this.stale = false;
     this.applied.clear();
     this.applySummary = null;
     this.paintRunButton();
-    await this.ensureColumn(again);
-    this.judgeAll();
+    await this.ensureColumn(true);
+    this.judgeAll(true);
     this.paintRunButton();
     this.scheduleScan();
   }
 
-  private judgeAll(): void {
+  /** `fresh` (a Tackle click) re-judges every item past the caches; otherwise only items not judged yet or failed. */
+  private judgeAll(fresh = false): void {
     for (const item of this.items.values()) {
       const slot = this.judged.slots.get(item.restId);
-      if (!slot || slot.state === "error") void this.judged.judge(item);
+      if (fresh || !slot || slot.state === "error") void this.judged.judge(item, fresh);
     }
   }
 
@@ -240,7 +241,7 @@ class BoardAssistant {
       [state, text, title] = [
         errors ? "error" : "done",
         "Tackle again",
-        `${ids.length - errors} judged${errors ? `, ${errors} failed` : ""}. Click to re-read the column and judge what is new or failed.`,
+        `${ids.length - errors} judged${errors ? `, ${errors} failed` : ""}. Click to judge the whole column again, fresh.`,
       ];
     }
     if (b.dataset.state !== state) {
@@ -267,7 +268,7 @@ class BoardAssistant {
     const [run, accept, cancel] = [this.runBtn, this.acceptBtn, this.cancelBtn];
     if (!run || !accept || !cancel) return;
     const review = this.reviewing();
-    // Tackle stays next to Accept while some items failed to judge: it retries them without discarding verdicts.
+    // Tackle stays next to Accept while some items failed to judge, so the column can be judged again without Cancel.
     const failedJudging = [...this.items.keys()].some((id) => this.judged.slots.get(id)?.state === "error");
     run.hidden = review && (this.applying || !failedJudging);
     accept.hidden = cancel.hidden = !review;
@@ -314,13 +315,12 @@ class BoardAssistant {
     return out;
   }
 
-  /** Accept: every recommendation at once. Each item's own steps run in order. */
+  /** Accept: the recommendations in parallel, 8 items at a time like judging. Each item's own steps run in order. */
   private async accept(): Promise<void> {
     if (!this.reviewing() || this.applying) return;
     const plan = this.plan();
     if (!plan.length) return;
     this.applying = true;
-    this.stale = true;
     for (const p of plan) this.applied.set(p.item.restId, { state: "pending" });
     this.repaintAll();
     const queue = [...plan];
@@ -339,7 +339,7 @@ class BoardAssistant {
         this.paintRunButton();
       }
     };
-    await Promise.all(plan.map(() => worker()));
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, plan.length) }, worker));
     this.applying = false;
     const failed = [...this.applied.values()].filter((a) => a.state === "error").length;
     this.applySummary = `Applied ${this.applied.size - failed}${failed ? `, ${failed} failed` : ""}`;

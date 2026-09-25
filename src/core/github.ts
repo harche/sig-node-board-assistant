@@ -30,6 +30,24 @@ const RETRY_DELAYS_MS = [500, 1000];
 const RATE_LIMIT_RETRIES = 3;
 const RATE_LIMIT_MAX_WAIT_MS = 60_000;
 
+/** GitHub's documented ceiling on concurrent requests. Callers fan out freely (a whole column at once); this keeps
+ *  the requests actually on the wire at or under it. Module-level because the worker builds a client per message. */
+const MAX_IN_FLIGHT = 100;
+let inFlight = 0;
+const waiting: (() => void)[] = [];
+async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  // A freed place is handed straight to the next waiter (the count stays up), so nothing can slip in between.
+  if (inFlight >= MAX_IN_FLIGHT) await new Promise<void>((r) => waiting.push(r));
+  else inFlight++;
+  try {
+    return await fn();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else inFlight--;
+  }
+}
+
 export class GitHubClient {
   readonly octokit: InstanceType<typeof Client>;
 
@@ -52,7 +70,7 @@ export class GitHubClient {
       let rateLimited = 0;
       for (;;) {
         try {
-          return await request(options);
+          return await limited(async () => request(options));
         } catch (e) {
           const wait = rateLimitWait(e, rateLimited);
           if (wait !== null && rateLimited < RATE_LIMIT_RETRIES) {
@@ -273,20 +291,23 @@ function isServerError(e: unknown): boolean {
 
 /** How long to wait before retrying a rate-limited request, or null when `e` is not a rate limit or the wait would
  *  be too long to hold the service worker for. Primary limit: until x-ratelimit-reset. Secondary limit: Retry-After
- *  if given, else GitHub's advice of a minute's wait, shortened here to an exponential 5s, 10s, 20s. */
+ *  if given, else GitHub's advice of a minute's wait, shortened here to an exponential 5s, 10s, 20s. Each wait is
+ *  stretched by up to half again at random. */
 function rateLimitWait(e: unknown, attempt: number): number | null {
   const err = e as RequestErrorLike;
   if (!err?.response || (err.status !== 429 && err.status !== 403)) return null;
   const h = err.response.headers ?? {};
   const message = (err.response.data as { message?: string } | undefined)?.message ?? "";
+  const backoff = 5000 * 2 ** attempt;
   let wait: number | null = null;
   if (h["retry-after"]) wait = Number(h["retry-after"]) * 1000;
   else if (h["x-ratelimit-remaining"] === "0" && h["x-ratelimit-reset"])
-    wait = Number(h["x-ratelimit-reset"]) * 1000 - Date.now() + 1000;
-  else if (err.status === 429 || /rate limit/i.test(message)) wait = 5000 * 2 ** attempt;
-  if (wait === null || !Number.isFinite(wait)) return null;
-  wait = Math.max(wait, 0);
-  return wait <= RATE_LIMIT_MAX_WAIT_MS ? wait : null;
+    // A local clock ahead of GitHub's makes this zero or negative; back off instead of retrying at once.
+    wait = Math.max(Number(h["x-ratelimit-reset"]) * 1000 - Date.now() + 1000, backoff);
+  else if (err.status === 429 || /rate limit/i.test(message)) wait = backoff;
+  if (wait === null || !Number.isFinite(wait) || wait > RATE_LIMIT_MAX_WAIT_MS) return null;
+  // Jitter, so a burst of requests limited together does not come back together and trip the limit again.
+  return Math.min(Math.max(wait, 0) * (1 + Math.random() / 2), RATE_LIMIT_MAX_WAIT_MS);
 }
 
 /** Octokit's RequestError -> GitHubError, keeping the message format and the rate-limit reset time. */
