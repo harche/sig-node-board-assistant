@@ -131,7 +131,7 @@ describe("findSidebar + renderEvidence", () => {
     expect(el.querySelector(".snba-verdict")!.textContent).toMatch(/Keep|Remove|Borderline/);
     expect(el.querySelectorAll(".snba-choice")).toHaveLength(2);
     expect(el.querySelector(".snba-rec")).not.toBeNull();
-    expect(el.textContent).toContain("Nothing here writes to GitHub");
+    expect(el.textContent).toMatch(/Jev read \d+ chars/);
     expect(el.textContent).toContain("gh project item-edit");
     expect(el.querySelectorAll("button, a")).toHaveLength(1); // only "Judge again"
   });
