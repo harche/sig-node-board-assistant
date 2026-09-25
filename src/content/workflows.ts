@@ -1,7 +1,15 @@
 /** What differs between the columns the board assistant works on. The assistant (index.ts) owns the column button,
  *  badges, tints, the header's Accept and Cancel, Skip and the writes; a workflow says how an item is judged, what
  *  its badge reads, what Accept would do to it and how its hover card and pane section look. */
+import {
+  decideProgressCard,
+  PROGRESS_TINT,
+  progressSteps,
+  type ProgressAction,
+  type ProgressResult,
+} from "../core/inprogress";
 import { decideTodo, type TodoResult } from "../core/todo";
+import { chosenProgress, renderProgressEvidence, renderProgressHoverCard } from "./progresscard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
@@ -148,8 +156,6 @@ export const todoWorkflow: ColumnWorkflow<TodoResult> = {
     return { tint: ACTION_TINT[a], text: BADGE_TEXT[a] };
   },
   recommended(item, r, _fields, o) {
-    // Asking the thread writes on someone's issue: only when the reviewer picked it, never by default.
-    if (!o.action && decideTodo(r).action === "ask_thread") return null;
     const steps = chosenSteps(item, r, o as TodoOverrides);
     return steps.length ? { tint: ACTION_TINT[chosenAction(r, o as TodoOverrides)], steps } : null;
   },
@@ -159,7 +165,7 @@ export const todoWorkflow: ColumnWorkflow<TodoResult> = {
     const suggested = key === "action" ? decideTodo(r).action : key === "priority" ? r.priority : null;
     return value === suggested ? rest : { ...rest, [key]: value };
   },
-  needsHuman: (r, o) => !o.action && decideTodo(r).action === "ask_thread",
+  needsHuman: () => false,
   hover: (c) =>
     renderTodoHoverCard({
       item: c.item,
@@ -194,7 +200,70 @@ export const todoWorkflow: ColumnWorkflow<TodoResult> = {
       .join(", "),
 };
 
+// ---------------------------------------------------------------------------------------------------- In progress
+
+const PROGRESS_BADGE: Record<ProgressAction, string> = {
+  keep: "active",
+  nudge: "nudge",
+  unassign: "unassign",
+  ask_thread: "ask",
+  back_to_todo: "to do",
+  archive: "archive",
+};
+
+export const progressWorkflow: ColumnWorkflow<ProgressResult> = {
+  judge: (item, refresh) => send({ type: "progress.judge", item, refresh }),
+  badge(r, o) {
+    const a = chosenProgress(r, o);
+    const waiting = a === "keep" && r.assignees.some((x) => x.verdict === "wait");
+    return { tint: PROGRESS_TINT[a], text: waiting ? "wait" : PROGRESS_BADGE[a] };
+  },
+  recommended(item, r, _fields, o) {
+    const a = chosenProgress(r, o);
+    const steps = progressSteps(item, r, a);
+    return steps.length ? { tint: PROGRESS_TINT[a], steps } : null;
+  },
+  steps: (item, r, _fields, o) => progressSteps(item, r, chosenProgress(r, o)),
+  override(r, o, key, value) {
+    const rest = omit(o, key);
+    return key === "action" && value === decideProgressCard(r).action ? rest : { ...rest, [key]: value };
+  },
+  needsHuman: () => false,
+  hover: (c) =>
+    renderProgressHoverCard({
+      item: c.item,
+      result: c.result,
+      overrides: c.overrides,
+      setOverride: c.setOverride,
+      applied: c.applied,
+      canApply: c.canApply,
+      scope: c.scope,
+      apply: () => c.apply("chosen"),
+      skip: c.skip,
+    }),
+  hoverKey: (r) => r.assignees.map((a) => `${a.login}:${a.verdict}`).join(",") + `|${r.sig_node}`,
+  pane: (adapter, item, st, rejudge) =>
+    renderProgressEvidence(
+      adapter,
+      item,
+      st.state === "done" ? { state: "done", result: st.result } : st,
+      rejudge,
+      SECTION_TITLE,
+    ),
+  runTip: (column) =>
+    `Ask Jev whether each assignee in ${column} is still on it, and what to do about the quiet ones`,
+  acceptTip: (n) =>
+    [
+      n.MOVE && `${n.MOVE} back to To do`,
+      n.REMOVE && `${n.REMOVE} unassigned or archived`,
+      n.BORDERLINE && `${n.BORDERLINE} nudged or asked what is left`,
+    ]
+      .filter(Boolean)
+      .join(", "),
+};
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
+  progress: progressWorkflow as ColumnWorkflow<unknown>,
 };

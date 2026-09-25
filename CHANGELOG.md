@@ -7,6 +7,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
 - Issues - To do: per-card suggestion to keep, move to In progress, close as fixed, ask the thread, close as
   duplicate or archive, from the thread, linked PRs and TestGrid run history, with a fresh-fix guard and a
   grouped duplicate pass. The reviewer can change the action (and a missing priority) on the hover card.
+- Issues - In progress: per assignee, active / wait / nudge / unassign / ask the thread, from plain facts and
+  Jev's reading of the thread and linked PRs; cards without an assignee go back to To do.
+- The header's Accept applies every suggestion, comments included, in every column.
 - Board columns are workflows (`src/content/workflows.ts`): Triage and Issues - To do share the column
   button, badges, tints, hover card, Accept, Cancel and Skip.
 - Apply / Accept on boards marked writable (the test board), checked against an allow-list in the worker.

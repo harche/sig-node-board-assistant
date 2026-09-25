@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isDraftedComment } from "../src/core/comments";
 import type { JobSignal } from "../src/core/testgrid";
 import {
   askThreadBody,
@@ -7,7 +8,6 @@ import {
   decideTodo,
   duplicateBody,
   freshFixGuard,
-  isTodoComment,
   prowTypos,
   todoSteps,
   type TodoResult,
@@ -270,19 +270,20 @@ describe("todoSteps and the comment allow-list", () => {
       "/triage accepted",
       "/priority backlog",
     ])
-      expect(isTodoComment(body), body).toBe(true);
+      expect(isDraftedComment(body), body).toBe(true);
   });
 
   it.each([
     ["an arbitrary comment", "hello"],
     ["another Prow command", "/lgtm"],
     ["a close without the drafted text", "/close"],
-    ["a mention", "This looks resolved: @someone. Closing.\n/close"],
     ["an ask that closes", "Checking in from the SIG Node CI board. Anything left?\n/close"],
     ["a close with extra commands", "This looks resolved. Closing.\n/close\n/lgtm"],
     ["an invalid priority", "/priority whenever"],
+    ["a mention", "This looks resolved: @someone. Closing.\n/close"],
+    ["an empty comment", "   "],
   ])("refuses %s", (_what, body) => {
-    expect(isTodoComment(body)).toBe(false);
+    expect(isDraftedComment(body)).toBe(false);
   });
 });
 

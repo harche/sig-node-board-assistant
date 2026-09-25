@@ -242,6 +242,33 @@ export class GitHubClient {
     return s.has("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : s.has("APPROVED") ? "APPROVED" : null;
   }
 
+  /** An issue's or PR's timeline (REST), oldest first: assignments, comments, cross-references, labels, and on a
+   *  PR its commits, reviews and force-pushes. */
+  timeline(repo: string, num: number, refresh = false): Promise<TimelineEvent[]> {
+    return this.cache.cached(
+      `tl:${repo}#${num}`,
+      30 * MINUTE,
+      async () => slim(await this.paged<TimelineEvent>(`/repos/${repo}/issues/${num}/timeline`)),
+      refresh,
+    );
+  }
+
+  /** When a PR's newest commit was committed, or null. */
+  prLastCommit(repo: string, num: number, refresh = false): Promise<string | null> {
+    return this.cache.cached(
+      `prcommit:${repo}#${num}`,
+      30 * MINUTE,
+      async () => {
+        const cs = await this.paged<{ commit: { committer: { date: string } | null } }>(
+          `/repos/${repo}/pulls/${num}/commits`,
+        );
+        const dates = cs.map((c) => c.commit.committer?.date).filter((d): d is string => Boolean(d));
+        return dates.length ? dates.sort().at(-1)! : null;
+      },
+      refresh,
+    );
+  }
+
   /** PRs that reference an issue (cross-referenced timeline events), newest reference last, deduped. */
   linkedPrs(repo: string, num: number, refresh = false): Promise<LinkedPr[]> {
     return this.cache.cached(
@@ -249,7 +276,7 @@ export class GitHubClient {
       30 * MINUTE,
       async () => {
         const out = new Map<string, LinkedPr>();
-        for (const e of await this.paged<RawTimelineEvent>(`/repos/${repo}/issues/${num}/timeline`)) {
+        for (const e of await this.timeline(repo, num, refresh)) {
           const src = e.event === "cross-referenced" ? e.source?.issue : undefined;
           if (!src?.pull_request) continue;
           out.delete(src.html_url);
@@ -389,8 +416,65 @@ interface RawIssue {
   created_at: string;
   html_url: string;
 }
-interface RawTimelineEvent {
+/** Timeline events the extension reads, cut to the fields it reads: raw events carry full user objects and the
+ *  whole cross-referenced issue, and the cache lives in chrome.storage.local's 10 MB (overflow clears it all). */
+const KEPT_EVENTS = new Set([
+  "assigned",
+  "unassigned",
+  "cross-referenced",
+  "committed",
+  "head_ref_force_pushed",
+  "commented",
+  "reviewed",
+  "labeled",
+  "unlabeled",
+]);
+const who = (u?: { login: string } | null) => (u ? { login: u.login } : u);
+export function slim(events: TimelineEvent[]): TimelineEvent[] {
+  return events
+    .filter((e) => KEPT_EVENTS.has(e.event))
+    .map((e) => {
+      const i = e.source?.issue;
+      return {
+        event: e.event,
+        created_at: e.created_at,
+        submitted_at: e.submitted_at,
+        state: e.state,
+        actor: who(e.actor),
+        user: who(e.user),
+        assignee: who(e.assignee),
+        label: e.label && { name: e.label.name },
+        body: e.body?.slice(0, 300),
+        committer: e.committer && { date: e.committer.date },
+        source: i && {
+          issue: {
+            number: i.number,
+            title: i.title,
+            state: i.state,
+            html_url: i.html_url,
+            created_at: i.created_at,
+            body: i.body?.slice(0, 1000) ?? null,
+            user: who(i.user) ?? undefined,
+            pull_request: i.pull_request && { merged_at: i.pull_request.merged_at },
+          },
+        },
+      };
+    });
+}
+
+/** A REST timeline event; only the fields the extension reads. */
+export interface TimelineEvent {
   event: string;
+  created_at?: string;
+  submitted_at?: string;
+  /** A review's state: APPROVED, CHANGES_REQUESTED, COMMENTED. */
+  state?: string;
+  actor?: { login: string } | null;
+  user?: { login: string } | null;
+  assignee?: { login: string } | null;
+  label?: { name: string };
+  body?: string | null;
+  committer?: { date: string } | null;
   source?: {
     issue?: {
       number: number;
@@ -401,6 +485,7 @@ interface RawTimelineEvent {
       body: string | null;
       user?: { login: string };
       pull_request?: { merged_at: string | null };
+      updated_at?: string;
     };
   };
 }

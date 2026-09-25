@@ -7,6 +7,8 @@ use, for two columns:
 - **Triage**: does the item belong on the board (keep, remove, borderline), and at which priority.
 - **Issues - To do**: is the issue already resolved, a duplicate, being worked on, or someone else's; read
   from the thread, the PRs that link to it and its tests' TestGrid history.
+- **Issues - In progress**: is each assignee still on it; nudge the quiet ones, unassign after an unanswered
+  check-in, or send the card back to To do.
 
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
@@ -16,8 +18,8 @@ do and the same evidence is there as one more section in GitHub's own sidebar.
 works on boards marked `writable` in `src/core/boards.ts`, today only the private test copy of 151. On
 kubernetes/151 the extension reads and suggests; it never comments, labels or moves a card there. The worker
 checks every write against an allow-list: Status moves of the one item, and only the comments the extension
-drafts (`/triage accepted` with a priority, and the To-do close / duplicate / check-in comments), never an
-@-mention.
+drafts (`/triage accepted` with a priority, the To-do close / duplicate / check-in comments, and the
+In-progress nudge, `/unassign` and check-in comments).
 
 | on the board                                         | in GitHub's item pane (issues)                                   | on the PR page (pull requests)                       |
 | ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
@@ -88,16 +90,35 @@ The column holds accepted issues nobody is working on yet. For each card the ext
 Earlier rows win. The **fresh-fix guard** holds a close while the tracked tests have not been quiet for 3+ days
 and for three times their usual gap between failures, so a fix merged today is not closed on 7 green runs.
 Duplicates are grouped and one issue per group always stays: an In-progress or assigned one first. The header's
-Accept applies every suggestion except "Ask the thread", which only goes out when you pick it.
+Accept applies every card's suggestion (or your pick), as in every column.
+
+## Issues - In progress
+
+For each assignee the code gathers plain facts (when they were assigned, their comments, their own PRs' merges,
+commits and recent review events) and Jev answers the judgement calls: is each comment since the assignee last
+acted a check-in to them, is the assignee still on it, and is the work moving through other people. Own activity
+within 30 days counts as active without asking. Then:
+
+| action              | when                                                    | what Apply does                                                             |
+| ------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Archive             | no `sig/node` label                                     | move to Archive-it                                                          |
+| Move back to To do  | nobody is assigned                                      | move to To do                                                               |
+| Unassign            | a check-in to the assignee went unanswered for 14+ days | `/unassign @x` with a note; back to To do unless an active assignee remains |
+| Nudge the assignee  | quiet for 30+ days and nobody has checked in            | "@x are you still working on this?"                                         |
+| Ask the thread      | nobody active, and the work moves through others        | "what is left here, and who is driving it?"                                 |
+| Keep in In progress | everyone active, or a check-in is younger than 14 days  | nothing                                                                     |
+
+On kubernetes/151 this reproduced the nudges and waits the board owner applied on 2026-09-20 from the state a
+day earlier, and matched a hand-checked reading of all 26 assignees on 2026-09-25.
 
 ## Boards
 
-| board                         | project        | what the extension does today                |
-| ----------------------------- | -------------- | -------------------------------------------- |
-| SIG Node CI/Test Board        | kubernetes/151 | judges Triage and Issues - To do (read-only) |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing           |
-| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)          |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)          |
+| board                         | project        | what the extension does today                                      |
+| ----------------------------- | -------------- | ------------------------------------------------------------------ |
+| SIG Node CI/Test Board        | kubernetes/151 | judges Triage, Issues - To do and Issues - In progress (read-only) |
+| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing                                 |
+| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)                                |
+| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)                                |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.
@@ -131,10 +152,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/design.md](docs/design.md).
 ## Roadmap
 
 1. Writes on kubernetes/151, after testing on the test board and an explicit opt-in in settings.
-2. Issues - In progress: stale assignees (nudge, then unassign and move back to To do), as the CLI's sweep.
-3. The PR lanes: lane hygiene and reviewer finding, as the CLI has them.
-4. The Bugs board (kubernetes/185) triage workflow.
-5. Chrome Web Store listing.
+2. The PR lanes: lane hygiene and reviewer finding, as the CLI has them.
+3. The Bugs board (kubernetes/185) triage workflow.
+4. Chrome Web Store listing.
 
 ## License
 

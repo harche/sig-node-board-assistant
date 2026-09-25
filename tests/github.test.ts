@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Cache, MemoryStore } from "../src/core/cache";
-import { GitHubClient, GitHubError } from "../src/core/github";
+import { GitHubClient, GitHubError, slim } from "../src/core/github";
 
 function fakeFetch(
   routes: Record<string, unknown | ((url: URL) => unknown)>,
@@ -128,5 +128,38 @@ describe("GitHubClient", () => {
     const gh = new GitHubClient("tok", new Cache(new MemoryStore()), fakeFetch({}));
     await expect(gh.viewer()).rejects.toThrow(GitHubError);
     await expect(gh.viewer()).rejects.toThrow(/404 for \/user: Not Found/);
+  });
+});
+
+describe("slim (cached timelines)", () => {
+  it("keeps only the events and fields the extension reads, with bodies cut", () => {
+    const raw = [
+      { event: "subscribed", created_at: "t", actor: { login: "a", id: 1, avatar_url: "x" } },
+      {
+        event: "cross-referenced",
+        created_at: "t",
+        actor: { login: "a", id: 1 },
+        source: {
+          issue: {
+            number: 5,
+            title: "fix",
+            state: "closed",
+            html_url: "https://github.com/o/r/pull/5",
+            created_at: "c",
+            body: "b".repeat(5000),
+            user: { login: "u", id: 2 },
+            pull_request: { merged_at: "m", url: "x" },
+            labels: [{ name: "big" }],
+          },
+        },
+      },
+      { event: "commented", created_at: "t", user: { login: "u", site_admin: false }, body: "c".repeat(900) },
+    ];
+    const s = slim(raw as never);
+    expect(s.map((e) => e.event)).toEqual(["cross-referenced", "commented"]);
+    expect(s[0]!.source!.issue!.body).toHaveLength(1000);
+    expect(s[0]!.source!.issue).not.toHaveProperty("labels");
+    expect(s[0]!.actor).toEqual({ login: "a" });
+    expect(s[1]!.body).toHaveLength(300);
   });
 });

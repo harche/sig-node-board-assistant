@@ -8,21 +8,12 @@ import { findOnBoards } from "../core/lookup";
 import { DUPLICATE_QUESTIONS } from "../core/prompts/todo";
 import { TestGridClient } from "../core/testgrid";
 import { judge } from "../core/triage";
-import {
-  closeDuplicates,
-  dupFacets,
-  dupState,
-  isTodoComment,
-  judgeTodo,
-  type DuplicateOf,
-} from "../core/todo";
+import { isDraftedComment } from "../core/comments";
+import { judgeProgress } from "../core/inprogress";
+import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
 import type { BoardItem, BoardRef, JevChoice, JevNoul } from "../core/types";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
 import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
-
-/** Comments a write may post: Triage's acceptance with a priority (replacing a different one if set), or one of
- *  the To-do comments (core/todo.ts isTodoComment). */
-const PROW_TRIAGE = /^\/triage accepted\n(\/remove-priority [a-z-]+\n)?\/priority [a-z-]+$/;
 
 /** At most `n` of `jobs` at once, in order. */
 async function pool<T>(n: number, jobs: (() => Promise<T>)[]): Promise<T[]> {
@@ -170,6 +161,17 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       ]);
       return (await judgeTodo(req.item, detail, prs, new TestGridClient(tgCache), jev, req.refresh)) as Out;
     }
+    case "progress.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const { repository: repo, number: num } = req.item;
+      const detail = await gh.itemDetail(repo, "Issue", num, req.refresh);
+      const f = {
+        timeline: (r: string, n: number) => gh.timeline(r, n, req.refresh),
+        prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n, req.refresh),
+      };
+      return (await judgeProgress(req.item, detail, f, jev, req.refresh)) as Out;
+    }
     case "todo.duplicates": {
       const { gh, jev } = await clients();
       if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
@@ -192,7 +194,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
             : st.kind === "comment" &&
               st.repo === target.repository &&
               st.number === target.number &&
-              (PROW_TRIAGE.test(st.body) || isTodoComment(st.body));
+              isDraftedComment(st.body);
         if (!ok) throw new Error(`refusing a step outside ${target.repository}#${target.number}`);
       }
       // In order: comments first, then the move, as the CLI runs them.

@@ -81,6 +81,18 @@ In-progress issues. On 2,145 pairs of 151 issues the four pairs humans closed as
 Pairs at or above 0.65 are grouped and each group keeps one issue (In progress, then assigned, then Jev's
 strongest survivor), so pairwise picks that go round in a circle can never close them all.
 
+## Issues - In progress
+
+The CLI's stale pass decided with a regex for its own nudge wording, a window of comments, a "whose court is the
+PR in" heuristic and a days-quiet sum, and each misfired somewhere: a "/assign" someone posted on a PR read as a
+review, so a 171-day-quiet assignee counted as active. `src/core/inprogress.ts` keeps only plain facts in code
+(assignment and comment dates, each assignee's latest own comment, commit or merge, and each linked PR's last
+events marked by who made them) and asks Jev, in one call per card: for each comment since an assignee last acted,
+is it a check-in to them (the comment's text goes in the question itself; pointing at it by index gave false
+positives); is the assignee still on it (asked only past 30 days of quiet, since Jev is unreliable at date
+comparisons); is the work moving through others. Code then does only date arithmetic: a check-in under 14 days
+waits, 14 or more unassigns, none nudges, and asking the thread needs P ≥ 0.65 and no active assignee.
+
 ## Writes
 
 The CLI proposes, the human approves, then the CLI executes from an allow-list. The extension does the same:
@@ -88,8 +100,10 @@ the hover card shows the action with its exact comment and move, and nothing is 
 clicks Apply (one card) or Accept (the column's suggestions). Writes go through one message, `item.apply`, and
 the worker refuses it unless the board is marked `writable` (today only the private test copy of 151), every
 move names that one project item, and every comment is on that item's issue and is one the extension drafts:
-Triage's `/triage accepted` + `/priority`, or To do's label fix, close-as-fixed, close-as-duplicate and
-check-in comments, with no @-mention and no other Prow command.
+Triage's `/triage accepted` + `/priority`, To do's label fix, close-as-fixed, close-as-duplicate and
+check-in comments, or In progress's nudge, `/unassign @x` and check-in comments (`src/core/comments.ts`), and no
+other Prow command. The header's Accept applies every suggestion in its column, comments included: clicking it
+means the reviewer has read the cards and agrees.
 
 ## Parity with the reference
 

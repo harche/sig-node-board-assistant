@@ -488,23 +488,6 @@ export function dupState(a: DupFacets, b: DupFacets) {
   };
 }
 
-/** The worker's allow-list for To-do comments: a label fix (Prow command lines only), or one of the three drafted
- *  comments. Command lines are limited to /close, /triage accepted and a valid /priority, and nobody is
- *  @-mentioned. */
-export function isTodoComment(body: string): boolean {
-  if (/@[\w-]/.test(body)) return false;
-  const lines = body.split("\n");
-  const commands = lines.filter((l) => l.startsWith("/"));
-  const validCommand = (l: string) =>
-    l === "/close" || l === "/triage accepted" || PRIORITY_CHOICES.some((p) => l === `/priority ${p}`);
-  if (!commands.every(validCommand)) return false;
-  if (commands.length === lines.length) return !commands.includes("/close");
-  const text = lines.filter((l) => !l.startsWith("/")).join("\n");
-  if (text.startsWith(COMMENT_PREFIX.fixed) || text.startsWith(COMMENT_PREFIX.duplicate))
-    return lines.length === 2 && lines[1] === "/close";
-  return text.startsWith(COMMENT_PREFIX.ask) && !commands.includes("/close");
-}
-
 export interface DupPair {
   a: BoardItem;
   b: BoardItem;
