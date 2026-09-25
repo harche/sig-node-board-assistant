@@ -9,10 +9,12 @@ import {
   type ProgressResult,
 } from "../core/inprogress";
 import type { ApproveResult } from "../core/approver";
+import type { AuthorResult } from "../core/author";
 import type { ReviewResult } from "../core/reviewer";
 import { decideTodo, type TodoResult } from "../core/todo";
 import {
   APPROVE_SPEC,
+  AUTHOR_SPEC,
   chosenPr,
   renderReviewEvidence,
   renderReviewHoverCard,
@@ -96,13 +98,14 @@ export interface ColumnWorkflow<R> {
   afterJudge?(board: BoardRef, items: BoardItem[], results: Map<number, R>): Promise<Map<number, R>>;
   /** Tint family (KEEP / REMOVE / BORDERLINE / MOVE) and the badge's word. */
   badge(r: R, o: Overrides): { tint: string; text: string };
-  /** What the header's Accept applies to this item, or null when it needs the reviewer (borderline, ask). */
+  /** What the header's Accept applies to this item, or null when it needs the reviewer (borderline, ask). `kind` is
+   *  what acceptTip counts by (the action), when the tint alone would lump different actions together. */
   recommended(
     item: BoardItem,
     r: R,
     fields: BoardFields,
     o: Overrides,
-  ): { tint: string; steps: ActionStep[] } | null;
+  ): { tint: string; steps: ActionStep[]; kind?: string } | null;
   /** The steps of one hover-card button. */
   steps(item: BoardItem, r: R, fields: BoardFields, o: Overrides, choice: string): ActionStep[] | null;
   /** The overrides after the reviewer picks `value` for `key`; a pick equal to the suggestion drops the key. */
@@ -313,14 +316,16 @@ const PR_BADGE: Record<string, string> = {
   to_author: "author",
   to_approver: "approver",
   to_reviewer: "reviewer",
+  nudge: "nudge",
+  archive: "archive",
   to_done: "done",
 };
 
 /** Needs Reviewer and Needs Approver: same facts and hover card, each with its own rules and actions. */
-function prWorkflow<R extends ReviewResult | ApproveResult>(
+function prWorkflow<R extends ReviewResult | ApproveResult | AuthorResult>(
   spec: PrSpec,
-  type: "review.judge" | "approve.judge",
-  what: string,
+  type: "review.judge" | "approve.judge" | "author.judge",
+  tips: { run: (column: string) => string; asked: string },
 ): ColumnWorkflow<R> {
   return {
     judge: (item, refresh) => send({ type, item, refresh }) as Promise<R>,
@@ -329,21 +334,27 @@ function prWorkflow<R extends ReviewResult | ApproveResult>(
       // A kept card says what it waits on.
       const keep = r.holder
         ? "held"
-        : r.pr.labels.includes("approved")
-          ? "approved"
-          : r.engaged.length && type === "review.judge"
-            ? "reviewing"
-            : r.asked.length
-              ? "asked"
-              : r.whose_move.choice === "blocked"
-                ? "blocked"
-                : "nobody";
+        : type === "author.judge"
+          ? r.whose_move.choice === "blocked"
+            ? "blocked"
+            : r.author_checkin_days_ago != null
+              ? "checked in"
+              : "author"
+          : r.pr.labels.includes("approved")
+            ? "approved"
+            : r.engaged.length && type === "review.judge"
+              ? "reviewing"
+              : r.asked.length
+                ? "asked"
+                : r.whose_move.choice === "blocked"
+                  ? "blocked"
+                  : "nobody";
       return { tint: spec.tint[a]!, text: a === "keep" ? keep : (PR_BADGE[a] ?? a) };
     },
     recommended(item, r, _fields, o) {
       const a = chosenPr(spec, r, o);
       const steps = spec.steps(item, r, a);
-      return steps.length ? { tint: spec.tint[a]!, steps } : null;
+      return steps.length ? { tint: spec.tint[a]!, steps, kind: a } : null;
     },
     steps: (item, r, _fields, o) => spec.steps(item, r, chosenPr(spec, r, o)),
     override(r, o, key, value) {
@@ -375,21 +386,41 @@ function prWorkflow<R extends ReviewResult | ApproveResult>(
         rejudge,
         SECTION_TITLE,
       ),
-    runTip: (column) =>
-      `Ask Jev whose move each PR in ${column} is, and find ${what} for the ones nobody was asked about`,
-    acceptTip: (n) =>
-      [
-        n.MOVE && `${n.MOVE} moved to another PR lane`,
-        n.REMOVE && `${n.REMOVE} moved to Done`,
-        n.BORDERLINE && `${n.BORDERLINE} ${what} asked or re-pinged`,
+    runTip: tips.run,
+    acceptTip: (n) => {
+      const c = (...ks: string[]) => ks.reduce((sum, k) => sum + (n[k] ?? 0), 0);
+      const lanes = c("to_reviewer", "to_approver", "to_author");
+      return [
+        lanes && `${lanes} moved to another PR lane`,
+        c("to_done") && `${c("to_done")} moved to Done`,
+        c("archive") && `${c("archive")} archived (not SIG Node CI work)`,
+        c("new_ask") && `${c("new_ask")} with ${tips.asked} asked`,
+        c("reping") && `${c("reping")} re-pinged`,
+        c("nudge") && `${c("nudge")} authors nudged`,
+        // Kept cards reach Accept only for their Prow fixes, counted by tint (the page adds them without an action).
+        c("keep", "KEEP") && `${c("keep", "KEEP")} with Prow fixes only`,
       ]
         .filter(Boolean)
-        .join(", "),
+        .join(", ");
+    },
   };
 }
 
-export const reviewWorkflow = prWorkflow<ReviewResult>(REVIEW_SPEC, "review.judge", "reviewers");
-export const approveWorkflow = prWorkflow<ApproveResult>(APPROVE_SPEC, "approve.judge", "approvers");
+export const reviewWorkflow = prWorkflow<ReviewResult>(REVIEW_SPEC, "review.judge", {
+  run: (column) =>
+    `Ask Jev whose move each PR in ${column} is, and find reviewers for the ones nobody is reviewing`,
+  asked: "reviewers",
+});
+export const approveWorkflow = prWorkflow<ApproveResult>(APPROVE_SPEC, "approve.judge", {
+  run: (column) =>
+    `Ask Jev whose move each PR in ${column} is, and find approvers for the ones nobody was asked about`,
+  asked: "approvers",
+});
+export const authorWorkflow = prWorkflow<AuthorResult>(AUTHOR_SPEC, "author.judge", {
+  run: (column) =>
+    `Ask Jev whether each PR in ${column} still waits on its author, belongs on the board, or has an author gone quiet`,
+  asked: "authors",
+});
 
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
@@ -397,4 +428,5 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   progress: progressWorkflow as ColumnWorkflow<unknown>,
   review: reviewWorkflow as ColumnWorkflow<unknown>,
   approve: approveWorkflow as ColumnWorkflow<unknown>,
+  author: authorWorkflow as ColumnWorkflow<unknown>,
 };

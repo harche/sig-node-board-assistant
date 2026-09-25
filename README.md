@@ -13,6 +13,8 @@ use, for two columns:
   a quiet reviewer, or `/cc` new ones picked from who actually reviews that code.
 - **PRs - Needs Approver**: does the PR have lgtm and wait on an approver; re-ping an asked approver, or `/cc`
   approvers who can approve the OWNERS files Prow says still need it, picked from who approves that code lately.
+- **PRs Waiting on Author**: did the author act (back to reviewers or approvers), has the author gone quiet (nudge
+  them), or is the PR not SIG Node CI work at all (archive).
 
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
@@ -141,6 +143,15 @@ lately: on 343 PRs merged on 151 that put the actual approver in the top 3 for 7
 alone. The `/cc` covers every unapproved OWNERS file first; approvers with no recent approvals are named only when
 nobody active can approve a file. (Jev picking among them did no better, so the ranking is code.)
 
+## PRs Waiting on Author
+
+Nothing moves a card out of this column when the author acts, so it goes stale like the others. Merged or closed →
+Done; Triage's verdict says it is not SIG Node CI work → Archive; `lgtm` and nothing blocking → Needs Approver; Jev reads
+the author as having answered or pushed since the last review request → Needs Reviewer. Otherwise it is the author's
+move, counted from the later of their own last activity and the last review: quiet 30+ days with nobody checking in →
+nudge the author; a check-in Jev finds under 14 days → wait; an unanswered one → the card stays, and the Kubernetes
+lifecycle bot takes it from there (stale, rotten, closed).
+
 ## Broken Prow commands (every column)
 
 A comment line Prow ignored (`/assing @x`, `/triage accept`, `triage/accept`, `/priority imporant-soon`) means the
@@ -152,12 +163,12 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 
 ## Boards
 
-| board                         | project        | what the extension does today                                                                 |
-| ----------------------------- | -------------- | --------------------------------------------------------------------------------------------- |
-| SIG Node CI/Test Board        | kubernetes/151 | judges Triage, the two issue lanes, PRs - Needs Reviewer and PRs - Needs Approver (read-only) |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing                                                            |
-| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)                                                           |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)                                                           |
+| board                         | project        | what the extension does today               |
+| ----------------------------- | -------------- | ------------------------------------------- |
+| SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only) |
+| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing          |
+| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)         |
+| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)         |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.
@@ -191,9 +202,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/design.md](docs/design.md).
 ## Roadmap
 
 1. Writes on kubernetes/151, after testing on the test board and an explicit opt-in in settings.
-2. PRs Waiting on Author.
-3. The Bugs board (kubernetes/185) triage workflow.
-4. Chrome Web Store listing.
+2. The Bugs board (kubernetes/185) triage workflow.
+3. Chrome Web Store listing.
 
 ## License
 

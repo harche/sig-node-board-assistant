@@ -13,6 +13,8 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
   met; re-pings after 14 quiet days; new reviewers found from review history and picked by Jev, asked with `/cc`.
 - PRs - Needs Approver: back to Needs Reviewer without lgtm, Waiting on Author when approved but failing; asked
   approvers get 14 days; otherwise `/cc` approvers for the OWNERS files Prow still lists, ranked by recent approvals.
+- PRs Waiting on Author: Done, Archive (Triage's scope verdict), Needs Approver on lgtm, Needs Reviewer when the
+  author answered; nudge an author quiet 30+ days, wait on a check-in, then leave it to the lifecycle bot.
 - Asks include comments Jev reads as asking someone to review or approve.
 - Broken Prow commands in any column: flagged by code, read by Jev, fixed on Apply / Accept.
 - The header's Accept applies every suggestion, comments included, in every column.

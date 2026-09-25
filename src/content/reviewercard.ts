@@ -9,6 +9,15 @@ import {
   decideApprove,
   type ApproveResult,
 } from "../core/approver";
+import {
+  AUTHOR_LABEL,
+  AUTHOR_TINT,
+  authorActions,
+  authorSteps,
+  decideAuthor,
+  type AuthorAction,
+  type AuthorResult,
+} from "../core/author";
 import { f2 } from "../core/policy";
 import {
   decideReview,
@@ -25,7 +34,7 @@ import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { h } from "./ui";
 
-type PrResult = ReviewResult | ApproveResult;
+type PrResult = ReviewResult | ApproveResult | AuthorResult;
 
 /** One PR column's rules and actions. */
 export interface PrSpec {
@@ -38,6 +47,8 @@ export interface PrSpec {
   asks: string;
   /** Candidates carry Jev's probability (reviewers) or a ranking score (approvers). */
   showP: boolean;
+  /** Column-specific rows, shown before the rest. */
+  extra?(r: PrResult): [string, string][];
 }
 
 export const REVIEW_SPEC: PrSpec = {
@@ -60,6 +71,23 @@ export const APPROVE_SPEC: PrSpec = {
   showP: false,
 };
 
+export const AUTHOR_SPEC: PrSpec = {
+  decide: (r) => decideAuthor(r as AuthorResult),
+  actions: () => authorActions(),
+  steps: (item, r, a) => authorSteps(item, r as AuthorResult, a as AuthorAction),
+  label: AUTHOR_LABEL,
+  tint: AUTHOR_TINT,
+  asks: "Would /cc",
+  showP: false,
+  extra: (r) => {
+    const a = r as AuthorResult;
+    const rows: [string, string][] = [["On the board", `${a.scope.verdict.toLowerCase()}: ${a.scope.why}`]];
+    if (a.author_checkin_days_ago != null)
+      rows.push(["Checked in", `${a.author_checkin_days_ago}d ago, unanswered`]);
+    return rows;
+  },
+};
+
 export function chosenPr(spec: PrSpec, r: PrResult, o: { action?: string }): string {
   return o.action && spec.actions(r).includes(o.action) ? o.action : spec.decide(r).action;
 }
@@ -76,7 +104,7 @@ function describe(steps: ActionStep[]): string {
 const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
 function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
-  const out: [string, Node | string][] = [];
+  const out: [string, Node | string][] = [...(spec.extra?.(r) ?? [])];
   const m = r.whose_move;
   out.push([
     "Whose move",

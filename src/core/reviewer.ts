@@ -236,7 +236,16 @@ export interface ReviewAnswers {
   [k: string]: JevChoice | JevNoul | undefined;
 }
 
-export function reviewQuestions(f: ReviewFacts): Record<string, unknown> {
+/** Comments by others since the PR author's own last activity (push, comment or review), newest last: the ones
+ *  that could be an unanswered check-in to the author. */
+export function sinceAuthor(f: ReviewFacts, author: string): PrEvent[] {
+  const last = f.events.filter((e) => e.by_author && e.kind !== "review_request").at(-1)?.at ?? "";
+  return f.events
+    .filter((e) => e.kind === "comment" && !e.by_author && e.at > last && e.who !== author)
+    .slice(-4);
+}
+
+export function reviewQuestions(f: ReviewFacts, author?: string): Record<string, unknown> {
   const q: Record<string, unknown> = {
     whose_move: {
       type: "choice",
@@ -322,6 +331,32 @@ export function reviewQuestions(f: ReviewFacts): Record<string, unknown> {
       },
     };
   });
+  // Waiting on Author asks, like In progress does for assignees, which later comments check in with the author.
+  if (author)
+    sinceAuthor(f, author).forEach((c, k) => {
+      q[`author_checkin_${k}`] = {
+        type: "noul",
+        instructions: {
+          comment: { author: c.who, days_ago: c.days_ago, text: c.text },
+          question: `Is \`comment\` a check-in to ${author}, the PR's author: does it ask whether they are still working on this PR, or for an update?`,
+        },
+        criteria: {
+          true: {
+            what: `It asks ${author} about their progress or whether they are still on it.`,
+            examples: [`@${author} are you still working on this?`, `@${author} any update here?`],
+          },
+          false: {
+            what: "Anything else.",
+            examples: [
+              "a review comment asking for a change",
+              "/retest",
+              "thanks!",
+              "a question to another reviewer",
+            ],
+          },
+        },
+      };
+    });
   if (f.holder && f.holder !== "unknown")
     q.hold_met = {
       type: "noul",
@@ -399,6 +434,10 @@ export interface ReviewResult {
   }[];
   /** Latest ping to each engaged reviewer, in days. */
   pinged: Record<string, number | null>;
+  /** Days since the latest review by someone other than the author: when the ball last went to the author. */
+  last_review_days_ago?: number | null;
+  /** Days since the newest comment Jev reads as an unanswered check-in with the author (Waiting on Author only). */
+  author_checkin_days_ago?: number | null;
   /** Days since the author's last push or comment. */
   author_last_days_ago: number | null;
   /** Filled when the PR needs a new reviewer ask. */
@@ -543,6 +582,7 @@ export async function judgeReview(
   jev: JevClient,
   refresh = false,
   now = Date.now(),
+  opts: { authorCheckins?: boolean } = {},
 ): Promise<Omit<ReviewResult, "candidates" | "candidates_note">> {
   const refs = await Promise.all(
     references(item.repository, item.number, [d.body, ...d.comments.map((c) => c.body)]).map(async (x) => ({
@@ -551,7 +591,12 @@ export async function judgeReview(
     })),
   );
   const f = reviewFacts(item, d, ps, tl, refs, now);
-  const r = await jev.askCached<ReviewAnswers>(f.state, reviewQuestions(f), 4, refresh);
+  const r = await jev.askCached<ReviewAnswers>(
+    f.state,
+    reviewQuestions(f, opts.authorCheckins ? ps.author : undefined),
+    4,
+    refresh,
+  );
   const a = r.answers;
   const lastOf = (who: string) =>
     f.events.filter((e) => e.who === who && e.kind !== "review_request").at(-1)?.days_ago ?? null;
@@ -609,6 +654,14 @@ export async function judgeReview(
     asked_all,
     pinged,
     author_last_days_ago: authorEv?.days_ago ?? null,
+    last_review_days_ago:
+      f.events.filter((e) => e.kind === "review" && !e.by_author).at(-1)?.days_ago ?? null,
+    author_checkin_days_ago: opts.authorCheckins
+      ? (sinceAuthor(f, ps.author)
+          .map((c, k) => ({ c, p: (a[`author_checkin_${k}`] as JevNoul)?.noul ?? 0 }))
+          .filter((x) => x.p >= 0.6)
+          .at(-1)?.c.days_ago ?? null)
+      : null,
     usage: r.usage,
   };
 }

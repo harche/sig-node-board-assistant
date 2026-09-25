@@ -11,6 +11,7 @@ import { judge } from "../core/triage";
 import { isDraftedComment } from "../core/comments";
 import { prowFixes, type ProwFix } from "../core/prowcmds";
 import { decideApprove, type ApproveResult } from "../core/approver";
+import type { AuthorResult } from "../core/author";
 import {
   blend,
   blendApprovers,
@@ -341,6 +342,32 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         ...base,
         candidates,
         candidates_note: note,
+        prow_fixes: await fixes(detail, jev, req.refresh),
+      };
+      return out as Out;
+    }
+    case "author.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const { repository: repo, number: num } = req.item;
+      const [detail, ps, tl] = await Promise.all([
+        gh.itemDetail(repo, "PullRequest", num, req.refresh),
+        gh.pullState(repo, num, req.refresh),
+        gh.timeline(repo, num, req.refresh),
+      ]);
+      // Triage's verdict on whether the PR belongs on the board at all.
+      const [r, scope] = await Promise.all([
+        judgeReview(req.item, detail, ps, tl, (x, n) => gh.refState(x, n), jev, req.refresh, Date.now(), {
+          authorCheckins: true,
+        }),
+        judge(req.item, detail, jev, req.refresh),
+      ]);
+      const out: AuthorResult = {
+        ...r,
+        kind: "author",
+        scope: { verdict: scope.verdict, why: scope.why },
+        candidates: [],
+        candidates_note: "",
         prow_fixes: await fixes(detail, jev, req.refresh),
       };
       return out as Out;

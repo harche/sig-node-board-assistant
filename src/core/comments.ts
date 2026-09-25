@@ -4,6 +4,7 @@
 import { PROGRESS_PREFIX } from "./inprogress";
 import { isFixComment } from "./prowcmds";
 import { APPROVE_PREFIX } from "./approver";
+import { AUTHOR_PREFIX } from "./author";
 import { REVIEW_PREFIX } from "./reviewer";
 import { PRIORITY_CHOICES } from "./policy";
 import { COMMENT_PREFIX } from "./todo";
@@ -53,6 +54,8 @@ export function isDraftedComment(body: string): boolean {
   const [first, ...rest] = text.split(" ");
   const after = rest.join(" ");
   if (LOGIN.test(first ?? "") && after.startsWith(PROGRESS_PREFIX.nudge)) return !MENTION.test(after);
+  // Waiting on Author: the nudge to the PR's author.
+  if (LOGIN.test(first ?? "") && after.startsWith(AUTHOR_PREFIX.nudge)) return !MENTION.test(after);
   // Needs Reviewer: a re-ping of one reviewer.
   if (
     LOGIN.test(first ?? "") &&

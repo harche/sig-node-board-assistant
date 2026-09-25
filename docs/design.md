@@ -121,6 +121,15 @@ history query as reviewers). On 150 PRs Jev picking among the ranked approvers m
 74%) with a worse first pick, so unlike reviewers the order is code. `coverApprovers` makes sure every open OWNERS
 file has someone on the `/cc`.
 
+## PRs Waiting on Author
+
+`src/core/author.ts`, on Needs Reviewer's facts and Jev call plus two things: Jev's reading of which comments since the
+author's last activity are a check-in with them (as for In-progress assignees), and Triage's scope verdict (`judge()`).
+On 151 the scope verdict called 11 of 22 Waiting on Author PRs not SIG Node CI work (KEPs and other SIGs' features that
+had been moved past Triage); by the board owner's decision those are suggested for Archive-it. Quiet time counts from
+the later of the author's own last activity and the last review, so a change request made today is not the author
+going quiet. An unanswered check-in leaves the card alone: the lifecycle bot already stales, rots and closes PRs.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

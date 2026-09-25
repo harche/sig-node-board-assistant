@@ -23,6 +23,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       progress: "Issues - In progress",
       review: "PRs - Needs Reviewer",
       approve: "PRs - Needs Approver",
+      author: "PRs Waiting on Author",
     },
   },
   {
@@ -52,6 +53,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       progress: "Issues - In progress",
       review: "PRs - Needs Reviewer",
       approve: "PRs - Needs Approver",
+      author: "PRs Waiting on Author",
     },
     writable: true,
   },

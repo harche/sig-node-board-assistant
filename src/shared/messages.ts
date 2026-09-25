@@ -3,6 +3,7 @@
 import type { Placement } from "../core/lookup";
 import type { ProgressResult } from "../core/inprogress";
 import type { ApproveResult } from "../core/approver";
+import type { AuthorResult } from "../core/author";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -34,6 +35,7 @@ export type Request =
   | { type: "progress.judge"; item: BoardItem; refresh?: boolean }
   | { type: "review.judge"; item: BoardItem; refresh?: boolean }
   | { type: "approve.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "author.judge"; item: BoardItem; refresh?: boolean }
   | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
 
 export interface ResponseMap {
@@ -52,6 +54,7 @@ export interface ResponseMap {
   "progress.judge": ProgressResult;
   "review.judge": ReviewResult;
   "approve.judge": ApproveResult;
+  "author.judge": AuthorResult;
   "item.apply": { ok: true };
 }
 

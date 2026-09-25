@@ -436,7 +436,7 @@ class BoardAssistant<R> {
     if (!review) return;
     const plan = this.plan();
     const counts: Record<string, number> = {};
-    for (const p of plan) counts[p.tint] = (counts[p.tint] ?? 0) + 1;
+    for (const p of plan) counts[p.kind ?? p.tint] = (counts[p.kind ?? p.tint] ?? 0) + 1;
     const borderline = [...this.items.keys()].filter((id) => {
       const slot = this.judged.slots.get(id);
       return (
@@ -474,7 +474,7 @@ class BoardAssistant<R> {
 
   /** The recommended action for every item with a clear verdict that is not applied yet (or being applied);
    *  borderline, failed and nothing-to-do items are left out. */
-  private plan(): { item: BoardItem; tint: string; steps: ActionStep[] }[] {
+  private plan(): { item: BoardItem; tint: string; steps: ActionStep[]; kind?: string }[] {
     const fields = this.judged.fields;
     if (!fields) return [];
     const out = [];
@@ -489,7 +489,8 @@ class BoardAssistant<R> {
       const base = rec ?? (this.wf.needsHuman(slot.result, o) ? null : { tint: "KEEP", steps: [] });
       if (!base) continue;
       const steps = withFixes(item, slot.result as { prow_fixes?: { fix: string }[] }, base.steps);
-      if (steps.length) out.push({ item, tint: base.tint, steps });
+      if (steps.length)
+        out.push({ item, tint: base.tint, steps, kind: "kind" in base ? base.kind : undefined });
     }
     return out;
   }
