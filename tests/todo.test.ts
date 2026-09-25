@@ -198,6 +198,20 @@ describe("decideTodo", () => {
       "archive",
     ],
     [0.1, { duplicate: dup }, "close_duplicate"],
+    [
+      0.8,
+      {
+        guard: "fixed today",
+        rules: {
+          assignees: ["x"],
+          sig_node: true,
+          triage_accepted: true,
+          priority_label: "backlog",
+          prow_typos: [],
+        },
+      },
+      "in_progress",
+    ],
   ] as [number, Partial<TodoResult>, string][])("P %s %j -> %s", (p, over, want) => {
     expect(decideTodo(result(p, over)).action).toBe(want);
   });

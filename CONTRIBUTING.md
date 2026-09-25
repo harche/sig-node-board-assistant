@@ -4,9 +4,10 @@ Thanks for helping keep the SIG Node boards tidy.
 
 ## Ground rules
 
-- **Read-only stays read-only** until the approve step lands as an explicit, opt-in feature. A pull request
-  that adds a write call to `src/core/github.ts` or a write request to `src/shared/messages.ts` will be
-  asked to move it behind that feature.
+- **Writes go through one door.** `item.apply` is the only write request, and the worker runs it only on
+  boards marked `writable` in `src/core/boards.ts` (today the private test board) and only for moves of that
+  item and comments the extension drafts. A new kind of write extends that allow-list and its tests; it does
+  not add a second path.
 - **Prompts and policy live here.** `tests/parity.test.ts` checks them against `tests/fixtures/parity.json`, a
   frozen snapshot of the original CLI's outputs. An intended behaviour change updates the affected fixture
   entries in the same commit and says why.

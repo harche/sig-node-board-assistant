@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SIG Node Board Assistant",
   "version": "0.1.0",
-  "description": "Jev-judged triage hints on the SIG Node GitHub project boards. Read-only: it never writes to GitHub.",
+  "description": "Jev-judged triage and to-do suggestions on the SIG Node GitHub project boards, with the evidence behind each.",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],
   "host_permissions": ["https://api.github.com/*", "https://api.typesafe.ai/*", "https://testgrid.k8s.io/*"],

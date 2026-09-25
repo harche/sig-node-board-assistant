@@ -273,19 +273,18 @@ export function decideTodo(r: Pick<TodoResult, "answers" | "rules" | "duplicate"
       action: "close_duplicate",
       why: `Tracks the same failure as #${r.duplicate.number} (${r.duplicate.status}), P ${f2(r.duplicate.p)}`,
     };
-  if (p >= RESOLVED_AT) {
-    if (r.guard)
-      return {
-        action: "keep",
-        why: `Looks resolved (P ${f2(p)}), but the CI history is too fresh to close it yet`,
-      };
+  const assigned = r.rules.assignees.join(", ");
+  if (p >= RESOLVED_AT && !r.guard)
     return { action: "close_fixed", why: `Resolved: P ${f2(p)} at or above ${RESOLVED_AT}` };
-  }
-  if (r.rules.assignees.length)
+  const fresh =
+    p >= RESOLVED_AT ? `Looks resolved (P ${f2(p)}), but the CI history is too fresh to close it yet` : "";
+  // Held open by the guard, it is still someone's work if it is assigned.
+  if (assigned)
     return {
       action: "in_progress",
-      why: `Assigned to ${r.rules.assignees.join(", ")}: someone is working on it`,
+      why: fresh ? `${fresh}; assigned to ${assigned}` : `Assigned to ${assigned}: someone is working on it`,
     };
+  if (fresh) return { action: "keep", why: fresh };
   if (p > OPEN_AT) return { action: "ask_thread", why: `May be resolved (P ${f2(p)}): ask what is left` };
   return { action: "keep", why: `Still open: P(resolved) ${f2(p)}` };
 }

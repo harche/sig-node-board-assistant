@@ -5,14 +5,16 @@
 ```
 GitHub Projects board page                 issue / PR page
  └─ content script (board)                  └─ content script (item)
-     badge per Triage card                      is this item in a judged column?
-     evidence section in GitHub's item pane     evidence section in the page sidebar
-      │  typed messages (read requests only)     │
- └─ background worker       tokens, cache, GitHub REST (GET only), Jev
-      └─ src/core           pure functions: signals, state, prompts, policy, lookup
+     Tackle, badge, tint, hover card            is this item in a judged column?
+     per card of a workflow column              evidence section in the page sidebar
+     evidence section in GitHub's item pane
+      │  typed messages (reads; one checked write request, item.apply)
+ └─ background worker       tokens, cache, GitHub REST, Jev, TestGrid; the write allow-list
+      └─ src/core           pure functions: signals, state, prompts, policy, testgrid, triage, todo
 ```
 
-There is no UI of our own beyond the badge and a status pill. The evidence is one more section in the
+There is little UI of our own: the column's Tackle / Accept / Cancel buttons, a badge per card, a hover card
+and a status pill, all drawn with GitHub's own button classes and Primer colours. The evidence is one more section in the
 sidebar GitHub already shows: the project pane for issues, the PR page for pull requests (GitHub has no PR
 pane; a PR card opens a new tab). `src/content/adapters.ts` builds that section from the host page's own
 markup: in the React pane it clones GitHub's "Fields" section header and field row and swaps the text, on the
@@ -20,13 +22,15 @@ classic PR page it uses `discussion-sidebar-item` and `discussion-sidebar-headin
 Primer CSS variables, so the block follows the page's theme without a stylesheet of its own.
 
 The content script owns nothing but DOM. It knows the board from the URL, finds cards by
-`data-board-card-id` (the project item's REST id) inside `data-board-column="Triage"`, and asks the
-background worker for the column's items and each item's verdict. GitHub's board is a React app with hashed
+`data-board-card-id` (the project item's REST id) inside `data-board-column="<column>"` for each column that
+has a workflow (`src/content/workflows.ts`: Triage, Issues - To do), and asks the background worker for the
+column's items and each item's verdict. GitHub's board is a React app with hashed
 class names; those two data attributes are the only DOM contract, kept in `src/content/dom.ts`.
 
 The background worker holds the tokens and makes every network call. The content script never sees a
 token. `chrome.storage.local` is the cache (10 minutes for a column, 30 for an item, forever for a Jev
-answer, the same TTLs as the CLI).
+answer, the same TTLs as the CLI). TestGrid tables stay in the worker's memory for 30 minutes instead: they are
+tens of KB each, and overflowing storage's 10 MB quota would clear the whole cache.
 
 ## Jev decides, code computes
 
@@ -45,13 +49,47 @@ JSON state. It does not generate text and it is not asked to. The split, inherit
   KEEP where Jev is at least 0.6 confident another SIG owns the component becomes BORDERLINE. The section
   draws the band with a marker, so the reviewer sees the mechanism, not just the word.
 
-## Read-only, on purpose
+## Issues - To do
 
-The CLI proposes, the human approves, then the CLI executes from an allow-list. This first version of the
-extension stops at "proposes": it shows the accept and archive alternatives with the exact `gh` commands. The
-GitHub client (Octokit) only issues GETs and the message protocol has no write request. When the approve step is
-added it will be a separate, opt-in path with the same allow-list (Status moves and Prow comments), never
-a default.
+The To-do question is whether the problem an issue tracks is already resolved. The split holds:
+
+- **Code computes** the thread (bots, Prow-only comments and email-reply spam dropped), the PRs that link to
+  the issue with their merge dates, the assignees and labels, malformed Prow commands (`triage/accept`,
+  `/priority imporant-soon`), and the CI run history. `src/core/testgrid.ts` reads TestGrid's JSON (a port of
+  the CLI's `lib/testgrid.py`): the tabs come from the issue's TestGrid links, or from the Prow jobs it names,
+  found by name among the SIG Node and release dashboards and confirmed by the tab's GCS query. Jobs named only
+  in comments are used only when the title and description name none: a job someone mentions later is often
+  a different one. Per job the state carries the named tests' rows (`tracked_tests`), the job's Overall row
+  (`whole_job`, which also fails for tests the issue is not about) and the runs since the latest merged
+  linked PR (`runs_after_fix`). TestGrid keeps about two weeks.
+- **Jev answers** `resolved` (a noul) and `resolution` (fixed by a change, went green, obsolete, still open),
+  in `src/core/prompts/todo.ts`, and, for a card missing its priority label, Triage's priority question.
+- **The policy is code** (`src/core/todo.ts` `decideTodo`): archive without `sig/node`, then a duplicate, then
+  P(resolved) ≥ 0.65 closes as fixed, then an assignee moves the card to In progress, then 0.35–0.65 asks the
+  thread, else keep. The fresh-fix guard (`freshFixGuard`) holds a close until the tracked tests (or the
+  title's job when no test was found) have been quiet for 3 days and for 3× their usual gap between failures.
+
+The question was tuned offline on 66 kubernetes/151 issues: the 35 open ones in To do and In progress, and 31
+closed in the two months before, each cut just before its closing comment with TestGrid seen as of then. Of
+seven wordings the one kept scored no open issue ≥ 0.65 and 8 of 15 evidenced fixes ≥ 0.65 (5 more in the ask
+band); longer criteria lists and a four-question decomposition scored worse. Injecting failures after the fix
+into `ci_signal` pushed every resolved issue below 0.35, so Jev reads the run history rather than a
+commenter's "seems green now".
+
+Duplicates reuse the CLI's pairwise question after judging: each To-do card against the other To-do and
+In-progress issues. On 2,145 pairs of 151 issues the four pairs humans closed as duplicates scored 0.69–0.90.
+Pairs at or above 0.65 are grouped and each group keeps one issue (In progress, then assigned, then Jev's
+strongest survivor), so pairwise picks that go round in a circle can never close them all.
+
+## Writes
+
+The CLI proposes, the human approves, then the CLI executes from an allow-list. The extension does the same:
+the hover card shows the action with its exact comment and move, and nothing is written until the reviewer
+clicks Apply (one card) or Accept (the column's suggestions). Writes go through one message, `item.apply`, and
+the worker refuses it unless the board is marked `writable` (today only the private test copy of 151), every
+move names that one project item, and every comment is on that item's issue and is one the extension drafts:
+Triage's `/triage accepted` + `/priority`, or To do's label fix, close-as-fixed, close-as-duplicate and
+check-in comments, with no @-mention and no other Prow command.
 
 ## Parity with the reference
 
@@ -77,10 +115,10 @@ owner question), the description-trimming loop terminates when the description i
 ownership guard above is restored. The Python CLI is the historical reference; this repository is where the
 policy lives now.
 
-## What the section shows and why
+## What the section shows and why (Triage)
 
 Top to bottom, in the order a reviewer needs it: the verdict word and the band (the answer and the
 mechanism), the one-sentence why, Jev's answers and the facts the code checked as label/value rows, then the
 two things a reviewer could do with the recommended one first and marked, each with its commands behind a
-disclosure, and a read-only note. The one element that is ours rather than GitHub's is the band: it is the
+disclosure. The one element that is ours rather than GitHub's is the band: it is the
 policy's thresholds drawn to scale with the item's probability on it.
