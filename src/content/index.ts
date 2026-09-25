@@ -15,9 +15,8 @@ import { h, octicon } from "./ui";
 
 class BoardAssistant {
   private items = new Map<number, BoardItem>();
-  /** Items are independent, so the column is judged in parallel; the cap keeps GitHub's secondary rate limit
-   *  (which penalises bursts of concurrent requests) and Jev out of the way. */
-  private judged = new Judged(8);
+  /** Items are independent, so the whole column is judged at once; a rate limit is retried in the worker. */
+  private judged = new Judged(Infinity);
   private pill: HTMLElement;
   private pillText: HTMLElement;
   private configured = { github: false, typesafe: false };
@@ -315,7 +314,7 @@ class BoardAssistant {
     return out;
   }
 
-  /** Accept: every recommendation at once, capped like judging. Each item's own steps run in order. */
+  /** Accept: every recommendation at once. Each item's own steps run in order. */
   private async accept(): Promise<void> {
     if (!this.reviewing() || this.applying) return;
     const plan = this.plan();
@@ -340,7 +339,7 @@ class BoardAssistant {
         this.paintRunButton();
       }
     };
-    await Promise.all(Array.from({ length: Math.min(8, plan.length) }, worker));
+    await Promise.all(plan.map(() => worker()));
     this.applying = false;
     const failed = [...this.applied.values()].filter((a) => a.state === "error").length;
     this.applySummary = `Applied ${this.applied.size - failed}${failed ? `, ${failed} failed` : ""}`;

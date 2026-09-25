@@ -12,27 +12,6 @@ import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
 /** The only comment Accept may post: the triage acceptance and a priority. */
 const PROW_TRIAGE = /^\/triage accepted\n\/priority [a-z-]+$/;
 
-/** GitHub's secondary rate limit wants content-creating requests sent one at a time with about a second between
- *  them, so every write from every tab goes through this queue while reads stay parallel. */
-class WriteQueue {
-  private tail: Promise<unknown> = Promise.resolve();
-  private last = 0;
-  run<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.tail.then(async () => {
-      const wait = this.last + 1000 - Date.now();
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      try {
-        return await fn();
-      } finally {
-        this.last = Date.now();
-      }
-    });
-    this.tail = next.catch(() => {});
-    return next;
-  }
-}
-const writes = new WriteQueue();
-
 const store = new ChromeLocalStore();
 const cache = new Cache(store);
 
@@ -123,8 +102,8 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       }
       // In order: the Prow comment first, then the move, as the CLI runs them.
       for (const st of req.steps) {
-        if (st.kind === "comment") await writes.run(() => gh.comment(st.repo, st.number, st.body));
-        else await writes.run(() => gh.moveItem(req.board, st.restId, st.lane));
+        if (st.kind === "comment") await gh.comment(st.repo, st.number, st.body);
+        else await gh.moveItem(req.board, st.restId, st.lane);
       }
       return { ok: true } as Out;
     }

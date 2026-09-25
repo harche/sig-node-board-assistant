@@ -22,9 +22,13 @@ export const GITHUB_API_VERSION = "2026-03-10";
 const Client = Octokit.plugin(paginateRest);
 type Params = Record<string, string | number>;
 
-/** Waits between attempts on a 5xx. Short on purpose: Chrome stops the extension's service worker after ~30s
- *  idle. Rate limits (403/429) and network failures are not retried; they surface at once with their cause. */
+/** Waits between attempts on a 5xx (reads only). Short on purpose: Chrome stops the extension's service worker
+ *  after ~30s idle unless a request is in flight. Network failures are not retried. */
 const RETRY_DELAYS_MS = [500, 1000];
+/** Rate limits (429, or a 403 that says so) are retried for reads and writes alike: GitHub rejected the request,
+ *  so repeating it cannot double a write. Waits follow Retry-After / the reset time, up to this long. */
+const RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_MAX_WAIT_MS = 60_000;
 
 export class GitHubClient {
   readonly octokit: InstanceType<typeof Client>;
@@ -41,16 +45,24 @@ export class GitHubClient {
       request: { fetch: fetchFn },
       headers: { "X-GitHub-Api-Version": GITHUB_API_VERSION },
     });
-    // Wraps every request, including each page octokit.paginate fetches. Only reads are retried: a write that
-    // answers 5xx may still have happened, and repeating it would post a second comment.
+    // Wraps every request, including each page octokit.paginate fetches. A 5xx is retried only for reads: a
+    // write that answers 5xx may still have happened, and repeating it would post a second comment.
     this.octokit.hook.wrap("request", async (request, options) => {
-      if (options.method !== "GET") return request(options);
-      for (let attempt = 0; ; attempt++) {
+      let serverErrors = 0;
+      let rateLimited = 0;
+      for (;;) {
         try {
           return await request(options);
         } catch (e) {
-          const delay = RETRY_DELAYS_MS[attempt];
-          if (delay === undefined || !isServerError(e)) throw e;
+          const wait = rateLimitWait(e, rateLimited);
+          if (wait !== null && rateLimited < RATE_LIMIT_RETRIES) {
+            rateLimited++;
+            await sleep(wait);
+            continue;
+          }
+          const delay = RETRY_DELAYS_MS[serverErrors];
+          if (options.method !== "GET" || delay === undefined || !isServerError(e)) throw e;
+          serverErrors++;
           await sleep(delay);
         }
       }
@@ -257,6 +269,24 @@ type RequestErrorLike = {
 function isServerError(e: unknown): boolean {
   const err = e as RequestErrorLike;
   return Boolean(err?.response) && typeof err.status === "number" && err.status >= 500;
+}
+
+/** How long to wait before retrying a rate-limited request, or null when `e` is not a rate limit or the wait would
+ *  be too long to hold the service worker for. Primary limit: until x-ratelimit-reset. Secondary limit: Retry-After
+ *  if given, else GitHub's advice of a minute's wait, shortened here to an exponential 5s, 10s, 20s. */
+function rateLimitWait(e: unknown, attempt: number): number | null {
+  const err = e as RequestErrorLike;
+  if (!err?.response || (err.status !== 429 && err.status !== 403)) return null;
+  const h = err.response.headers ?? {};
+  const message = (err.response.data as { message?: string } | undefined)?.message ?? "";
+  let wait: number | null = null;
+  if (h["retry-after"]) wait = Number(h["retry-after"]) * 1000;
+  else if (h["x-ratelimit-remaining"] === "0" && h["x-ratelimit-reset"])
+    wait = Number(h["x-ratelimit-reset"]) * 1000 - Date.now() + 1000;
+  else if (err.status === 429 || /rate limit/i.test(message)) wait = 5000 * 2 ** attempt;
+  if (wait === null || !Number.isFinite(wait)) return null;
+  wait = Math.max(wait, 0);
+  return wait <= RATE_LIMIT_MAX_WAIT_MS ? wait : null;
 }
 
 /** Octokit's RequestError -> GitHubError, keeping the message format and the rate-limit reset time. */
