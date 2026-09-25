@@ -2,7 +2,8 @@
  *  every item in the column is judged (like the CLI's `triage`), each card gets a verdict badge and tint, and
  *  GitHub's own item pane gets the evidence section when it opens for one of those cards. Once every item is
  *  judged the header offers Accept (apply every recommendation, in parallel) or Cancel (back to the plain board).
- *  Hovering a badge shows Jev's scores for that item with buttons to apply either action to it alone.
+ *  Every card also carries its own Tackle, which judges that one item. Hovering a judged card shows Jev's scores
+ *  for it with buttons to apply either action to it alone.
  *  Fetching, judging and writing happen in the background worker. */
 import { boardFromUrl, knownBoard } from "../core/boards";
 import { proposedActions } from "../core/triage";
@@ -43,7 +44,8 @@ class BoardAssistant {
   private cancelBtn: HTMLElement | null = null;
   /** Writes per project item, from the header's Accept or from an item's own hover card buttons. */
   private applied = new Map<number, Applied>();
-  /** Items skipped from their hover card (the CLI's `s`): the header's Accept passes over them. */
+  /** Items skipped from their hover card (the CLI's `s`): verdict dropped, card back to its own Tackle. Kept so
+   *  nothing judges them again behind the user's back; their own Tackle (or the header's) clears it. */
   private skipped = new Set<number>();
   /** The header's Accept is running. */
   private applying = false;
@@ -77,7 +79,6 @@ class BoardAssistant {
           slot?.state,
           slot?.state === "done" ? slot.result.verdict + slot.result.why : "",
           a?.state,
-          this.skipped.has(restId),
           a?.state === "error" ? a.message : "",
           this.applying,
           Boolean(this.judged.fields),
@@ -129,7 +130,7 @@ class BoardAssistant {
         placeRunButton(col.el, b);
       }
     }
-    if (!this.started) return;
+    // Every card gets its badge from the start: before it is judged the badge is the card's own Tackle.
     const cards = cardsIn(document, this.column);
     for (const c of cards) {
       let badge = c.el.querySelector<HTMLElement>(SEL.badge);
@@ -144,8 +145,9 @@ class BoardAssistant {
       this.watchHover(c.el);
       this.paintBadge(c.restId);
     }
-    // Only against a finished read: while the first one is in flight every card looks missing.
-    const missing = this.load.state === "loaded" ? cards.filter((c) => !this.items.has(c.restId)) : [];
+    // Only against a finished read of a column-wide Tackle: while the first one is in flight every card looks missing.
+    const missing =
+      this.started && this.load.state === "loaded" ? cards.filter((c) => !this.items.has(c.restId)) : [];
     if (missing.length && !this.refreshedOnce) {
       this.refreshedOnce = true; // a card the 10-minute column cache does not know: refresh once, then accept staleness
       await this.ensureColumn(true);
@@ -176,10 +178,37 @@ class BoardAssistant {
   }
 
   /** `fresh` (a Tackle click) re-judges every item past the caches; otherwise only items not judged yet or failed. */
+  /** One card's own Tackle: judge just that item, fresh. The column is read first only if the item is not known yet
+   *  (its node id, repo and number come from there); the header's state is left alone. */
+  private async tackleOne(restId: number): Promise<void> {
+    if (
+      this.applying ||
+      this.judged.slots.get(restId)?.state === "pending" ||
+      this.applied.get(restId)?.state === "pending"
+    )
+      return;
+    this.judged.slots.set(restId, { state: "pending" });
+    this.paintBadge(restId);
+    this.updatePill();
+    if (!this.items.has(restId)) await this.ensureColumn(true);
+    const item = this.items.get(restId);
+    if (!item) {
+      this.judged.fail(
+        restId,
+        this.load.state === "failed" ? this.load.message : `Not found in ${this.column} any more`,
+      );
+      return;
+    }
+    this.applied.delete(restId);
+    this.skipped.delete(restId);
+    await this.judged.judge(item, true);
+  }
+
   private judgeAll(fresh = false): void {
     for (const item of this.items.values()) {
       const slot = this.judged.slots.get(item.restId);
-      if (fresh || !slot || slot.state === "error") void this.judged.judge(item, fresh);
+      if (fresh || ((!slot || slot.state === "error") && !this.skipped.has(item.restId)))
+        void this.judged.judge(item, fresh);
     }
   }
 
@@ -242,7 +271,8 @@ class BoardAssistant {
 
   private paintRunButton(b: HTMLElement | null = this.runBtn): void {
     if (!b) return;
-    const ids = [...this.items.keys()];
+    // Skipped items have no verdict on purpose; they are not "still judging".
+    const ids = [...this.items.keys()].filter((id) => this.judged.slots.has(id) || !this.skipped.has(id));
     const slots = ids.map((id) => this.judged.slots.get(id));
     const settled = slots.filter((s) => s && s.state !== "pending").length;
     const errors = slots.filter((s) => s?.state === "error").length;
@@ -320,7 +350,7 @@ class BoardAssistant {
         !this.skipped.has(id)
       );
     }).length;
-    const skipped = [...this.skipped].filter((id) => this.items.has(id) && !this.applied.has(id)).length;
+    const skipped = [...this.skipped].filter((id) => this.items.has(id) && !this.judged.slots.has(id)).length;
     const failed = [...this.items.keys()].filter((id) => this.judged.slots.get(id)?.state === "error").length;
     const left = [
       skipped && `${skipped} skipped`,
@@ -418,24 +448,33 @@ class BoardAssistant {
     this.paintRunButton();
   }
 
+  /** Skip: no write, as in the CLI. The verdict is dropped, so the card reads Tackle again, loses its tint and
+   *  falls out of the header's Accept. */
+  private skip(restId: number): void {
+    // Only this item's own write, or the header's Accept, holds it; another item's write does not.
+    if (this.applying || this.applied.get(restId)?.state === "pending") return;
+    this.skipped.add(restId);
+    this.judged.slots.delete(restId);
+    this.applied.delete(restId);
+    this.hover.close();
+    this.paintBadge(restId);
+    this.updatePill();
+    this.paintRunButton();
+    this.syncPane();
+  }
+
   private hoverContent(restId: number): HTMLElement | null {
     const item = this.items.get(restId);
     const slot = this.judged.slots.get(restId);
     const col = columns(document).find((c) => c.name === this.column)?.el;
-    if (!this.started || !item || slot?.state !== "done" || !col) return null;
+    if (!item || slot?.state !== "done" || !col) return null;
     return renderHoverCard({
       item,
       result: slot.result,
       fields: this.judged.fields,
       applied: this.applied.get(restId),
       canApply: !this.applying,
-      skipped: this.skipped.has(restId),
-      toggleSkip: () => {
-        if (this.applying) return;
-        if (!this.skipped.delete(restId)) this.skipped.add(restId);
-        this.paintBadge(restId);
-        this.paintRunButton();
-      },
+      skip: () => this.skip(restId),
       scope: col,
       apply: (choice) => void this.applyOne(restId, choice),
     });
@@ -480,6 +519,12 @@ class BoardAssistant {
         void send({ type: "options.open" });
         return;
       }
+      // Not judged yet (or judging failed): the badge is this item's own Tackle.
+      const slot = this.judged.slots.get(restId);
+      if (!slot || slot.state === "error") {
+        void this.tackleOne(restId);
+        return;
+      }
       // Same as clicking the title: GitHub opens the pane for an issue and a new tab for a PR.
       itemLink(card)?.click();
     });
@@ -516,19 +561,19 @@ class BoardAssistant {
     let text: string;
     let title: string;
     const slot = this.judged.slots.get(restId);
-    if (!slot || slot.state === "pending") {
-      [verdict, text, title] = ["pending", slot ? "judging" : "…", "Asking Jev"];
+    if (!slot) {
+      [verdict, text, title] = ["idle", "Tackle", "Judge this item with Jev"];
+    } else if (slot.state === "pending") {
+      [verdict, text, title] = ["pending", "judging", "Asking Jev"];
     } else if (slot.state === "error") {
-      [verdict, text, title] = ["error", "error", slot.message];
+      [verdict, text, title] = ["error", "error", `${slot.message}. Click to try again.`];
     } else {
       const v = slot.result.verdict;
       // No native tooltip once judged: the hover card takes its place.
       [verdict, text, title] = [v, v === "BORDERLINE" ? "borderline" : v.toLowerCase(), ""];
     }
     const applied = this.applied.get(restId);
-    const skipped = this.skipped.has(restId) && !applied;
-    if (skipped) [verdict, text] = ["skipped", "skipped"];
-    else if (applied?.state === "pending") text = "applying";
+    if (applied?.state === "pending") text = "applying";
     else if (applied?.state === "done") text = "applied";
     else if (applied?.state === "error") [verdict, text] = ["error", "failed"];
     // Only touch the DOM when something changed: every write here is a mutation other observers see.
@@ -538,8 +583,7 @@ class BoardAssistant {
     if (b.title !== title) b.title = title;
     // Tint the whole card with the verdict's muted colour (content.css); only settled verdicts tint.
     const card = b.closest<HTMLElement>("[data-board-card-id]");
-    // A skipped card loses its tint: nothing will happen to it.
-    const tint = slot?.state === "done" && !skipped ? verdict : undefined;
+    const tint = slot?.state === "done" ? verdict : undefined;
     if (card && card.dataset.snbaVerdict !== tint) {
       if (tint) card.dataset.snbaVerdict = tint;
       else delete card.dataset.snbaVerdict;
@@ -550,7 +594,6 @@ class BoardAssistant {
   // ------------------------------------------------------------------ pane
   /** Keeps the evidence section in GitHub's pane in step with the pane's current item and our judging state. */
   private syncPane(): void {
-    if (!this.started) return;
     const restId = paneItemId();
     const existing = document.querySelector<HTMLElement>(".snba-evidence");
     if (!restId) {
@@ -565,6 +608,12 @@ class BoardAssistant {
     const side = findSidebar(document);
     if (!side || !side.el.matches(PANE_SIDEBAR)) return;
     const slot = this.judged.slots.get(restId);
+    // Before any Tackle the pane is GitHub's own; after a column-wide Tackle every Triage item gets the section,
+    // except one the user skipped.
+    if (!slot && (!this.started || this.skipped.has(restId))) {
+      existing?.remove();
+      return;
+    }
     const st: EvidenceState =
       !slot || slot.state === "pending"
         ? { state: "pending" }
@@ -577,7 +626,7 @@ class BoardAssistant {
     const section = renderEvidence(side.adapter, item, st, { rejudge: (it) => this.judged.judge(it, true) });
     section.dataset.snbaKey = key;
     placeSection(side.el, section);
-    if (!slot) void this.judged.judge(item);
+    if (!slot && !this.skipped.has(restId)) void this.judged.judge(item);
   }
 
   private updatePill(): void {
@@ -587,8 +636,8 @@ class BoardAssistant {
     }
     const done = [...this.judged.slots.values()].filter((s) => s.state === "done").length;
     const pending = [...this.judged.slots.values()].filter((s) => s.state === "pending").length;
-    if (!this.started) {
-      this.setPill(`Click Tackle on ${this.column} to start`);
+    if (!this.started && !this.judged.slots.size) {
+      this.setPill(`Click Tackle on ${this.column} or on a card to start`);
       return;
     }
     if (this.applySummary) {

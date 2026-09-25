@@ -17,12 +17,10 @@ export interface HoverContent {
   applied: Applied | undefined;
   /** False while the header's Accept is running: single-item buttons wait for it. */
   canApply: boolean;
-  /** Skipped, as the CLI's `s`: the header's Accept leaves it alone. Its own buttons still work. */
-  skipped: boolean;
   /** Where GitHub's button classes are borrowed from (the column). */
   scope: ParentNode;
   apply(choice: "accept" | "reject"): void;
-  toggleSkip(): void;
+  skip(): void;
 }
 
 export function renderHoverCard(c: HoverContent): HTMLElement {
@@ -105,35 +103,28 @@ function actions(c: HoverContent): HTMLElement {
     row.append(root);
     lines.append(h("li", {}, h("b", {}, name), h("span.snba-muted", {}, `: ${describe(action)}`)));
   }
-  // Skip, as in the CLI: no write, and the header's Accept passes over it. Clicking again takes it back.
-  const skip = nativeButton(c.scope, null, c.skipped ? "Unskip" : "Skip", "invisible").root;
+  // Skip, as in the CLI: no write. The verdict is dropped and the card goes back to its own Tackle.
+  const skip = nativeButton(c.scope, null, "Skip", "invisible").root;
   skip.classList.add("snba-hc-btn");
   if (busy) skip.setAttribute("aria-disabled", "true");
   skip.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (skip.getAttribute("aria-disabled") !== "true") c.toggleSkip();
+    if (skip.getAttribute("aria-disabled") !== "true") c.skip();
   });
   row.append(skip);
   lines.append(
     h(
       "li",
       {},
-      h("b", {}, c.skipped ? "Unskip" : "Skip"),
-      h(
-        "span.snba-muted",
-        {},
-        c.skipped
-          ? ": let Accept apply the recommendation again"
-          : ": leave it in Triage; Accept passes over it",
-      ),
+      h("b", {}, "Skip"),
+      h("span.snba-muted", {}, ": leave it in Triage untouched and drop the verdict; Accept passes over it"),
     ),
   );
   box.append(row, lines);
   if (c.applied?.state === "pending") box.append(h("p.snba-hc-status", {}, "Applying…"));
   else if (c.applied?.state === "error") box.append(h("p.snba-hc-status.snba-error", {}, c.applied.message));
   else if (!c.canApply) box.append(h("p.snba-hc-status.snba-muted", {}, "Waiting for Accept to finish."));
-  else if (c.skipped) box.append(h("p.snba-hc-status.snba-muted", {}, "Skipped."));
   return box;
 }
 
