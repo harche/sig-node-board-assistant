@@ -31,7 +31,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 185,
     title: "SIG Node Bugs",
     about: "kind/bug issues routed to SIG Node: triage, needs-information, priority",
-    workflows: { bugs: "Triage" },
+    workflows: { bugs: "Triage", info: "Needs Information" },
   },
   {
     owner: "kubernetes",
@@ -64,7 +64,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 6,
     title: "SIG Node Bugs (test)",
     about: "Test copy of kubernetes/185",
-    workflows: { bugs: "Triage" },
+    workflows: { bugs: "Triage", info: "Needs Information" },
     writable: true,
   },
 ];

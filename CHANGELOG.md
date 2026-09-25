@@ -18,6 +18,8 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
 - SIG Node Bugs (kubernetes/185) Triage: accept at a priority into Triaged or High Priority, ask for information,
   close support requests, relabel features, hand over to another SIG, add `/wg device-management` to DRA reports;
   cards with a triage label already set are only moved. Test copy at harche/6.
+- SIG Node Bugs Needs Information: accept a card whose request was answered, remind a reporter quiet 20+ days, close
+  14 days after an unanswered reminder, move cards whose labels already decided.
 - Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
   option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
 - Asks include comments Jev reads as asking someone to review or approve.

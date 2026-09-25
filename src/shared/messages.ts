@@ -5,6 +5,7 @@ import type { ProgressResult } from "../core/inprogress";
 import type { ApproveResult } from "../core/approver";
 import type { AuthorResult } from "../core/author";
 import type { BugResult } from "../core/bugs";
+import type { InfoResult } from "../core/needsinfo";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -38,6 +39,7 @@ export type Request =
   | { type: "approve.judge"; item: BoardItem; refresh?: boolean }
   | { type: "author.judge"; item: BoardItem; refresh?: boolean }
   | { type: "bugs.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "info.judge"; item: BoardItem; refresh?: boolean }
   | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
 
 export interface ResponseMap {
@@ -58,6 +60,7 @@ export interface ResponseMap {
   "approve.judge": ApproveResult;
   "author.judge": AuthorResult;
   "bugs.judge": BugResult;
+  "info.judge": InfoResult;
   "item.apply": { ok: true };
 }
 

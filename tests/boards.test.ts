@@ -17,8 +17,11 @@ describe("boardFromUrl", () => {
 describe("knownBoard", () => {
   it("151 has the triage workflow on the Triage column", () =>
     expect(knownBoard({ owner: "kubernetes", number: 151 })?.workflows.triage).toBe("Triage"));
-  it("185 and its test copy work on the Triage column", () => {
-    expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual({ bugs: "Triage" });
+  it("185 and its test copy work on Triage and Needs Information", () => {
+    expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual({
+      bugs: "Triage",
+      info: "Needs Information",
+    });
     expect(knownBoard({ owner: "harche", number: 6 })).toMatchObject({
       workflows: { bugs: "Triage" },
       writable: true,

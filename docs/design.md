@@ -150,6 +150,18 @@ needs-information, 24 another SIG, 21 support, 19 feature or other kind, 2 dupli
 
 A human `/sig node` keeps a hand-over from being suggested over them, as in the CI board's Triage.
 
+## SIG Node Bugs: Needs Information
+
+`src/core/needsinfo.ts`. On kubernetes/185 the column held 19 cards, 17 asked 57–575 days ago: 10 reporters never
+answered, 7 answered and sat unread, one card was already `triage/accepted`. By the board owner's decision an answered
+card is accepted from here (not sent back to Triage), and a quiet reporter is reminded once before the card is closed.
+
+Jev first missed answers: the label is often applied by a bare `/triage needs-information` after the real question, and
+answers come from other users too. Giving Jev the request text and the replies separately, and counting "a maintainer
+reproduced it" as answered, fixed that. On the 19 cards, against a reading of each thread: Accept would apply 14 (8
+accepted, 6 reminders, all right), 5 stay the reviewer's call (partial or thin answers, two borderline), none wrongly
+reminded or closed. Dates are code: when the label went on (timeline), the reporter's last reply, the latest reminder.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

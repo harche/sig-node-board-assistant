@@ -6,6 +6,7 @@ import { isFixComment } from "./prowcmds";
 import { APPROVE_PREFIX } from "./approver";
 import { AUTHOR_PREFIX } from "./author";
 import { isBugComment } from "./bugs";
+import { isInfoComment } from "./needsinfo";
 import { REVIEW_PREFIX } from "./reviewer";
 import { PRIORITY_CHOICES } from "./policy";
 import { COMMENT_PREFIX } from "./todo";
@@ -21,6 +22,8 @@ export function isDraftedComment(body: string): boolean {
   if (TRIAGE.test(body)) return true;
   // SIG Node Bugs' Triage: accept, ask for information, support, feature, hand to another SIG.
   if (isBugComment(body)) return true;
+  // SIG Node Bugs' Needs Information: remind the reporter, close without an answer, accept once answered.
+  if (isInfoComment(body)) return true;
   // Any column: a fix for Prow commands someone mistyped (routing, labels, assignment; never /lgtm or /approve).
   if (isFixComment(body)) return true;
   const lines = body.split("\n");

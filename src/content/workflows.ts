@@ -24,6 +24,8 @@ import {
 import { chosenProgress, renderProgressEvidence, renderProgressHoverCard } from "./progresscard";
 import { BUG_TINT, decideBug, type BugAction, type BugResult } from "../core/bugs";
 import { chosenBug, chosenBugSteps, renderBugEvidence, renderBugHoverCard } from "./bugcard";
+import { decideInfo, INFO_TINT, type InfoAction, type InfoResult } from "../core/needsinfo";
+import { chosenInfo, chosenInfoSteps, renderInfoEvidence, renderInfoHoverCard } from "./infocard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
@@ -511,6 +513,80 @@ export const bugsWorkflow: ColumnWorkflow<BugResult> = {
   },
 };
 
+// ---------------------------------------------------------------------------------------------------- Needs Information
+
+const INFO_BADGE: Record<InfoAction, string> = {
+  accept: "accept",
+  nudge: "remind",
+  close: "close",
+  to_triage: "to triage",
+  done: "done",
+  keep: "waiting",
+};
+
+/** The Needs Information column of the SIG Node Bugs board: answered → accept, quiet → remind, then close. */
+export const infoWorkflow: ColumnWorkflow<InfoResult> = {
+  judge: (item, refresh) => send({ type: "info.judge", item, refresh }),
+  badge(r, o) {
+    const a = chosenInfo(r, o);
+    const unsure = !o.action && !decideInfo(r).auto;
+    return { tint: unsure ? "BORDERLINE" : INFO_TINT[a], text: unsure ? `${INFO_BADGE[a]}?` : INFO_BADGE[a] };
+  },
+  recommended(item, r, _fields, o) {
+    if (!o.action && !decideInfo(r).auto) return null;
+    const a = chosenInfo(r, o);
+    const steps = chosenInfoSteps(item, r, o);
+    return steps.length ? { tint: INFO_TINT[a], steps, kind: a } : null;
+  },
+  steps: (item, r, _fields, o) => chosenInfoSteps(item, r, o),
+  override(r, o, key, value) {
+    const rest = omit(o, key);
+    const d = decideInfo(r);
+    if (key === "action") return value === d.action && d.auto ? rest : { ...rest, action: value };
+    return key === "priority" && value === r.priority ? rest : { ...rest, [key]: value };
+  },
+  needsHuman: (r, o) => !o.action && !decideInfo(r).auto,
+  hover: (c) =>
+    renderInfoHoverCard({
+      fix: c.fix,
+      item: c.item,
+      result: c.result,
+      overrides: c.overrides,
+      setOverride: c.setOverride,
+      applied: c.applied,
+      canApply: c.canApply,
+      scope: c.scope,
+      apply: () => c.apply("chosen"),
+      skip: c.skip,
+    }),
+  hoverKey: (r) => {
+    const d = decideInfo(r);
+    return `${d.action}|${d.auto}|${r.priority}|${r.p_answered}|${r.reminded_days_ago}`;
+  },
+  pane: (adapter, item, st, rejudge) =>
+    renderInfoEvidence(
+      adapter,
+      item,
+      st.state === "done" ? { state: "done", result: st.result } : st,
+      rejudge,
+      SECTION_TITLE,
+    ),
+  runTip: (column) => `Ask Jev whether each request in ${column} was answered, and who was already reminded`,
+  acceptTip: (n) => {
+    const c = (k: string) => n[k] ?? 0;
+    return [
+      c("accept") && `${c("accept")} accepted (move to Triaged or High Priority)`,
+      c("nudge") && `${c("nudge")} reporters reminded`,
+      c("close") && `${c("close")} closed for want of an answer`,
+      c("to_triage") && `${c("to_triage")} back to Triage`,
+      c("done") && `${c("done")} closed, moved to Done`,
+      c("keep") + c("KEEP") && `${c("keep") + c("KEEP")} with Prow fixes only`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  },
+};
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
@@ -519,4 +595,5 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   approve: approveWorkflow as ColumnWorkflow<unknown>,
   author: authorWorkflow as ColumnWorkflow<unknown>,
   bugs: bugsWorkflow as ColumnWorkflow<unknown>,
+  info: infoWorkflow as ColumnWorkflow<unknown>,
 };

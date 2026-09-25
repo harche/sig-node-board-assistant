@@ -23,6 +23,8 @@ On the Bugs board:
 - **Triage**: is the report a SIG Node bug a maintainer can start on (accept it at a priority), a support question
   (redirect and close), a feature filed as a bug, another SIG's code (hand it over), or too thin to act on (ask the
   reporter); and move it to the column its labels call for.
+- **Needs Information**: was the request answered (accept it at a priority), or has the reporter gone quiet (remind
+  them after 20 days, close 14 days after an unanswered reminder).
 
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
@@ -34,7 +36,7 @@ kubernetes/151 and kubernetes/185 the extension reads and suggests; it never com
 checks every write against an allow-list: Status moves of the one item, and only the comments the extension
 drafts (`/triage accepted` with a priority, the To-do close / duplicate / check-in comments, and the
 In-progress nudge, `/unassign` and check-in comments, the Needs Reviewer `/cc` and re-pings, and the Bugs board's
-accept, needs-information, support, feature and hand-over comments).
+accept, needs-information, support, feature and hand-over comments, and its Needs Information reminder and close).
 
 | on the board                                         | in GitHub's item pane (issues)                                   | on the PR page (pull requests)                       |
 | ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
@@ -176,6 +178,21 @@ suggestions Jev is sure of: accept, a sure support request (redirect, `/kind sup
 hardly any information (ask for the missing facts, `/triage needs-information`). A feature filed as a bug, another
 SIG's code and the less sure calls show as yellow with a question mark: you pick the action, then Apply or Accept.
 
+## SIG Node Bugs: Needs Information
+
+A card waits here for the reporter; nothing moves it when they answer. Code reads the dates: when
+`triage/needs-information` (or `not-reproducible`) last went on, when the reporter last wrote. Jev reads the request
+(the comment that applied the label, or the question just before a bare `/triage needs-information`) and every reply
+since: has what was asked been supplied, by the reporter or anyone who hits the problem, or made unnecessary by a
+maintainer reproducing it; and which later comments remind the reporter.
+
+- Answered, and Jev's Triage questions now read enough to start → `/remove-triage needs-information`,
+  `/triage accepted`, `/priority`, move to Triaged or High Priority. Answered but still thin → your call.
+- Unanswered: under 20 days (the community triage guide's wait) → keep; past it and nobody reminded the reporter →
+  remind them (@-mention); an unanswered reminder older than 14 days → close with a comment inviting them to reopen
+  with the details.
+- `triage/accepted` already set → move only; the information label gone → back to Triage; closed → Done.
+
 ## Broken Prow commands (every column)
 
 A comment line Prow ignored (`/assing @x`, `/triage accept`, `triage/accept`, `/priority imporant-soon`) means the
@@ -187,13 +204,13 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 
 ## Boards
 
-| board                         | project        | what the extension does today               |
-| ----------------------------- | -------------- | ------------------------------------------- |
-| SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only) |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing          |
-| SIG Node Bugs                 | kubernetes/185 | judges the Triage column (read-only)        |
-| SIG Node Bugs (test)          | harche/6       | the same, with writes, for testing          |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)         |
+| board                         | project        | what the extension does today                   |
+| ----------------------------- | -------------- | ----------------------------------------------- |
+| SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only)     |
+| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing              |
+| SIG Node Bugs                 | kubernetes/185 | judges Triage and Needs Information (read-only) |
+| SIG Node Bugs (test)          | harche/6       | the same, with writes, for testing              |
+| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)             |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.
