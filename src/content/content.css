@@ -452,15 +452,6 @@
 .snba-hovercard .snba-decision {
   padding: 8px 0 4px;
 }
-.snba-hc-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: var(--text-body-size-medium, 14px);
-  font-weight: var(--base-text-weight-semibold, 600);
-  line-height: 20px;
-}
 .snba-hc-scores {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -519,9 +510,6 @@
   background-color: var(--bgColor-disabled);
   cursor: not-allowed;
 }
-.snba-hc-title .snba-muted {
-  font-weight: var(--base-text-weight-normal, 400);
-}
 .snba-hc-meter {
   flex: 1;
   height: 6px;
@@ -563,4 +551,13 @@
 /* To-do cards carry more facts (CI lines, PRs): a little wider. */
 .snba-hovercard:has(.snba-hc-facts) {
   width: 380px;
+}
+/* The hover card's title is the decision: it is what the reviewer acts on. */
+.snba-hovercard .snba-decision > div:first-child {
+  margin-bottom: 2px;
+}
+.snba-hovercard .snba-verdict {
+  font-size: var(--text-title-size-medium, 20px);
+  font-weight: var(--base-text-weight-semibold, 600);
+  line-height: 1.25;
 }

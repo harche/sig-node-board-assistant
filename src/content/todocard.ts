@@ -158,7 +158,6 @@ export function renderTodoHoverCard(c: TodoHoverContent): HTMLElement {
   const body = h(
     "div.snba-hc-body",
     {},
-    h("div.snba-hc-title", {}, h("span.snba-muted", {}, `${r.repo}#${r.number} `), r.title),
     todoDecision(r, c.overrides),
     h(
       "dl.snba-hc-scores.snba-hc-facts",

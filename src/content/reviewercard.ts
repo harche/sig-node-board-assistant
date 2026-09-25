@@ -182,7 +182,6 @@ export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {
   const body = h(
     "div.snba-hc-body",
     {},
-    h("div.snba-hc-title", {}, h("span.snba-muted", {}, `${r.repo}#${r.number} `), r.title),
     heading(spec, r, action),
     h(
       "dl.snba-hc-scores.snba-hc-facts",
