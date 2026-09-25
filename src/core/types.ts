@@ -83,6 +83,18 @@ export interface Signals {
 }
 
 /** The JSON object Jev reads. */
+/** A PR that references an issue. */
+export interface LinkedPr {
+  repository: string;
+  number: number;
+  title: string;
+  author: string;
+  state: "open" | "closed" | "merged";
+  createdAt: string;
+  mergedAt: string | null;
+  body: string;
+}
+
 export interface TriageState {
   type: "issue" | "pull request";
   repository: string;

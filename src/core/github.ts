@@ -4,7 +4,15 @@
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
 import { DAY, MINUTE, type Cache } from "./cache";
-import type { BoardFields, BoardItem, BoardRef, ItemDetail, ItemKind, ReviewDecision } from "./types";
+import type {
+  LinkedPr,
+  BoardFields,
+  BoardItem,
+  BoardRef,
+  ItemDetail,
+  ItemKind,
+  ReviewDecision,
+} from "./types";
 
 export class GitHubError extends Error {
   constructor(
@@ -234,6 +242,34 @@ export class GitHubClient {
     return s.has("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : s.has("APPROVED") ? "APPROVED" : null;
   }
 
+  /** PRs that reference an issue (cross-referenced timeline events), newest reference last, deduped. */
+  linkedPrs(repo: string, num: number, refresh = false): Promise<LinkedPr[]> {
+    return this.cache.cached(
+      `linked:${repo}#${num}`,
+      30 * MINUTE,
+      async () => {
+        const out = new Map<string, LinkedPr>();
+        for (const e of await this.paged<RawTimelineEvent>(`/repos/${repo}/issues/${num}/timeline`)) {
+          const src = e.event === "cross-referenced" ? e.source?.issue : undefined;
+          if (!src?.pull_request) continue;
+          out.delete(src.html_url);
+          out.set(src.html_url, {
+            repository: src.html_url.split("/").slice(3, 5).join("/"),
+            number: src.number,
+            title: src.title,
+            author: src.user?.login ?? "ghost",
+            state: src.pull_request.merged_at ? "merged" : src.state === "closed" ? "closed" : "open",
+            createdAt: src.created_at,
+            mergedAt: src.pull_request.merged_at ?? null,
+            body: src.body ?? "",
+          });
+        }
+        return [...out.values()];
+      },
+      refresh,
+    );
+  }
+
   itemDetail(repo: string, kind: ItemKind, num: number, refresh = false): Promise<ItemDetail> {
     return this.cache.cached(
       `item:${repo}#${num}`,
@@ -352,6 +388,21 @@ interface RawIssue {
   user: { login: string };
   created_at: string;
   html_url: string;
+}
+interface RawTimelineEvent {
+  event: string;
+  source?: {
+    issue?: {
+      number: number;
+      title: string;
+      state: string;
+      html_url: string;
+      created_at: string;
+      body: string | null;
+      user?: { login: string };
+      pull_request?: { merged_at: string | null };
+    };
+  };
 }
 interface RawComment {
   user: { login: string };

@@ -55,6 +55,10 @@
   color: var(--fgColor-attention, #9a6700);
   border-color: var(--borderColor-attention-emphasis, #9a6700);
 }
+.snba-badge[data-verdict="MOVE"] {
+  color: var(--fgColor-accent, #0969da);
+  border-color: var(--borderColor-accent-emphasis, #0969da);
+}
 .snba-badge[data-verdict="pending"] .snba-dot {
   animation: snba-pulse 1.1s ease-in-out infinite;
 }
@@ -93,6 +97,10 @@
 [data-board-card-id][data-snba-verdict="BORDERLINE"] > [class*="__Box__"] {
   background-color: var(--bgColor-attention-muted, #fff8c5);
   border-color: var(--borderColor-attention-muted, #d4a72c66);
+}
+[data-board-card-id][data-snba-verdict="MOVE"] > [class*="__Box__"] {
+  background-color: var(--bgColor-accent-muted, #ddf4ff);
+  border-color: var(--borderColor-accent-muted, #54aeff66);
 }
 
 /* ---------- status pill (board) */
@@ -165,6 +173,9 @@
 .snba-borderline {
   color: var(--fgColor-attention, #9a6700);
 }
+.snba-move {
+  color: var(--fgColor-accent, #0969da);
+}
 .snba-band {
   position: relative;
   height: 8px;
@@ -175,6 +186,15 @@
     color-mix(in srgb, var(--bgColor-danger-emphasis, #cf222e) 55%, transparent) 0 35%,
     color-mix(in srgb, var(--bgColor-attention-emphasis, #9a6700) 35%, transparent) 35% 65%,
     color-mix(in srgb, var(--bgColor-success-emphasis, #1f883d) 55%, transparent) 65% 100%
+  );
+}
+/* To do: a low P(resolved) keeps the card (green), a high one closes it (red). */
+.snba-band.snba-band-todo {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--bgColor-success-emphasis, #1f883d) 55%, transparent) 0 35%,
+    color-mix(in srgb, var(--bgColor-attention-emphasis, #9a6700) 35%, transparent) 35% 65%,
+    color-mix(in srgb, var(--bgColor-danger-emphasis, #cf222e) 55%, transparent) 65% 100%
   );
 }
 .snba-marker {
@@ -462,6 +482,14 @@
 .snba-hc-scores dd.snba-hc-text {
   display: block;
 }
+.snba-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.snba-hc-facts dd.snba-hc-text {
+  overflow-wrap: anywhere;
+}
 .snba-hc-prio {
   display: flex;
   flex-direction: column;
@@ -531,4 +559,8 @@
 }
 .snba-hc-status {
   margin: 8px 0 0;
+}
+/* To-do cards carry more facts (CI lines, PRs): a little wider. */
+.snba-hovercard:has(.snba-hc-facts) {
+  width: 380px;
 }

@@ -3,16 +3,25 @@
 import type { BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
 
-export type Slot =
-  { state: "pending" } | { state: "done"; result: TriageResult } | { state: "error"; message: string };
+export type Slot<R = TriageResult> =
+  { state: "pending" } | { state: "done"; result: R } | { state: "error"; message: string };
 
-export class Judged {
-  readonly slots = new Map<number, Slot>();
+/** How one column's items are judged: Triage asks `item.judge`, To do `todo.judge`. */
+export type JudgeFn<R> = (item: BoardItem, refresh: boolean) => Promise<R>;
+
+export const judgeTriage: JudgeFn<TriageResult> = (item, refresh) =>
+  send({ type: "item.judge", item, refresh });
+
+export class Judged<R = TriageResult> {
+  readonly slots = new Map<number, Slot<R>>();
   fields: BoardFields | null = null;
   private queue: (() => Promise<void>)[] = [];
   private running = 0;
   private listeners = new Set<(restId: number) => void>();
-  constructor(private concurrency = 4) {}
+  constructor(
+    private concurrency = 4,
+    private judgeFn: JudgeFn<R> = judgeTriage as unknown as JudgeFn<R>,
+  ) {}
 
   onChange(fn: (restId: number) => void): void {
     this.listeners.add(fn);
@@ -35,7 +44,7 @@ export class Judged {
     return new Promise((resolve) => {
       this.queue.push(async () => {
         try {
-          const result = await send({ type: "item.judge", item, refresh });
+          const result = await this.judgeFn(item, refresh);
           this.slots.set(item.restId, { state: "done", result });
         } catch (e) {
           this.slots.set(item.restId, {
@@ -48,6 +57,12 @@ export class Judged {
       });
       this.pump();
     });
+  }
+
+  /** Replaces a settled result (e.g. with a duplicate found after judging) and tells the listeners. */
+  update(restId: number, result: R): void {
+    this.slots.set(restId, { state: "done", result });
+    this.emit(restId);
   }
 
   private emit(restId: number): void {

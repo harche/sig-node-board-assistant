@@ -1,11 +1,19 @@
 /** Issue and pull request pages: if this item sits in a judged column of a known board, add the evidence section
  *  to the page's sidebar. PRs never get GitHub's project pane, so this is where their verdict lives. */
+import { knownBoard } from "../core/boards";
 import type { Placement } from "../core/lookup";
+import type { BoardItem } from "../core/types";
 import { send } from "../shared/messages";
 import { findSidebar, placeSection } from "../content/adapters";
-import { renderEvidence, type EvidenceState } from "../content/evidence";
 import { Judged } from "../content/judged";
 import { isOurs } from "../content/dom";
+import { WORKFLOWS, type ColumnWorkflow, type PaneState } from "../content/workflows";
+
+/** The workflow of the column the item sits in. */
+function workflowFor(p: Placement): ColumnWorkflow<unknown> | null {
+  const name = Object.entries(knownBoard(p.board)?.workflows ?? {}).find(([, col]) => col === p.column)?.[0];
+  return (name && WORKFLOWS[name]) || null;
+}
 
 export function itemFromUrl(url: string): { repo: string; number: number } | null {
   const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:[/?#]|$)/.exec(url);
@@ -13,7 +21,8 @@ export function itemFromUrl(url: string): { repo: string; number: number } | nul
 }
 
 class ItemAssistant {
-  private judged = new Judged(1);
+  private judged: Judged<unknown> | null = null;
+  private wf: ColumnWorkflow<unknown> | null = null;
   private placement: Placement | null = null;
   /** "repo#number" of the item the page currently shows; hash and tab changes keep it the same. */
   private current = "";
@@ -21,7 +30,6 @@ class ItemAssistant {
   private timer: number | null = null;
 
   start(): void {
-    this.judged.onChange(() => this.sync());
     new MutationObserver((muts) => {
       if (muts.some((m) => !isOurs(m.target))) this.schedule();
     }).observe(document.body, { childList: true, subtree: true });
@@ -53,36 +61,59 @@ class ItemAssistant {
         if (!live() || !s.configured.github || !s.configured.typesafe) return;
         const placement = await send({ type: "item.lookup", repo: ref.repo, number: ref.number });
         if (!live() || !placement) return;
+        const wf = workflowFor(placement);
+        if (!wf) return;
         this.placement = placement;
+        this.wf = wf;
+        this.judged = new Judged<unknown>(1, wf.judge);
+        this.judged.onChange(() => this.sync());
         await this.judged.loadFields(placement.board);
         if (!live()) return;
-        void this.judged.judge(placement.item);
+        void this.judgeOne(placement.item);
       } catch (e) {
         if (live() && this.placement)
-          this.judged.fail(this.placement.item.restId, e instanceof Error ? e.message : String(e));
+          this.judged?.fail(this.placement.item.restId, e instanceof Error ? e.message : String(e));
         return;
       }
     }
     this.sync();
   }
 
+  /** Judges the item, then runs its workflow's pass over it (To do: the duplicate check), as the board does. */
+  private async judgeOne(item: BoardItem, refresh = false): Promise<void> {
+    const { judged, wf, placement } = this;
+    if (!judged || !wf || !placement) return;
+    await judged.judge(item, refresh);
+    const slot = judged.slots.get(item.restId);
+    if (!wf.afterJudge || slot?.state !== "done") return;
+    try {
+      const changed = await wf.afterJudge(placement.board, [item], new Map([[item.restId, slot.result]]));
+      const r = changed.get(item.restId);
+      // Only if nothing re-judged the item meanwhile.
+      if (r !== undefined && judged.slots.get(item.restId) === slot) judged.update(item.restId, r);
+    } catch {
+      // The verdict stands without the duplicate check; the board's pass reports its failures.
+    }
+  }
+
   private sync(): void {
-    if (!this.placement) return;
+    const { placement, judged, wf } = this;
+    if (!placement || !judged || !wf) return;
     const side = findSidebar(document);
     if (!side) return;
-    const item = this.placement.item;
-    const slot = this.judged.slots.get(item.restId);
-    const st: EvidenceState =
+    const item = placement.item;
+    const slot = judged.slots.get(item.restId);
+    const st: PaneState<unknown> =
       !slot || slot.state === "pending"
         ? { state: "pending" }
         : slot.state === "error"
           ? { state: "error", message: slot.message }
-          : { state: "done", result: slot.result, fields: this.judged.fields };
-    const key = `${item.restId}:${st.state}:${this.judged.fields ? 1 : 0}`;
+          : { state: "done", result: slot.result, fields: judged.fields };
+    const key = `${item.restId}:${st.state}:${judged.fields ? 1 : 0}`;
     const existing = document.querySelector<HTMLElement>(".snba-evidence");
     if (existing?.dataset.snbaKey === key && side.el.contains(existing)) return;
     existing?.remove();
-    const section = renderEvidence(side.adapter, item, st, { rejudge: (it) => this.judged.judge(it, true) });
+    const section = wf.pane(side.adapter, item, st, (it) => this.judgeOne(it, true));
     section.dataset.snbaKey = key;
     placeSection(side.el, section);
   }

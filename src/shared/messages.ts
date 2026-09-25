@@ -1,6 +1,7 @@
 /** Typed request/response protocol between the content script / options page and the background worker.
  *  Every request is a read except `item.apply`, which the worker only runs on boards marked writable. */
 import type { Placement } from "../core/lookup";
+import type { DuplicateOf, TodoResult } from "../core/todo";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 
 export interface Settings {
@@ -25,6 +26,8 @@ export type Request =
   | { type: "column.items"; board: BoardRef; column: string; refresh?: boolean }
   | { type: "item.lookup"; repo: string; number: number }
   | { type: "item.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "todo.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "todo.duplicates"; board: BoardRef; targets: BoardItem[] }
   | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
 
 export interface ResponseMap {
@@ -37,6 +40,9 @@ export interface ResponseMap {
   "column.items": BoardItem[];
   "item.lookup": Placement | null;
   "item.judge": TriageResult;
+  "todo.judge": TodoResult;
+  /** For each target's restId, the issue it duplicates and should be closed in favour of, or null. */
+  "todo.duplicates": Record<number, DuplicateOf | null>;
   "item.apply": { ok: true };
 }
 

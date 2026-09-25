@@ -5,7 +5,7 @@
   "description": "Jev-judged triage hints on the SIG Node GitHub project boards. Read-only: it never writes to GitHub.",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],
-  "host_permissions": ["https://api.github.com/*", "https://api.typesafe.ai/*"],
+  "host_permissions": ["https://api.github.com/*", "https://api.typesafe.ai/*", "https://testgrid.k8s.io/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
