@@ -89,7 +89,15 @@ class BoardAssistant {
     if (!this.started) return;
     const cards = cardsIn(document, this.column);
     for (const c of cards) {
-      if (!c.el.querySelector(SEL.badge)) this.mountBadge(c.el, c.restId);
+      let badge = c.el.querySelector<HTMLElement>(SEL.badge);
+      // GitHub can reuse a card element for another item; a badge (and tint) from the old item is stale.
+      if (badge && badge.dataset.restId !== String(c.restId)) {
+        badge.remove();
+        delete c.el.dataset.snbaVerdict;
+        badge = null;
+      }
+      if (!badge) this.mountBadge(c.el, c.restId);
+      else placeBadge(c.el, badge); // GitHub may draw the header after we mounted; move the badge into it
       this.paintBadge(c.restId);
     }
     // Only against a finished read: while the first one is in flight every card looks missing.
@@ -262,6 +270,13 @@ class BoardAssistant {
     const t = b.querySelector<HTMLElement>(".snba-text")!;
     if (t.textContent !== text) t.textContent = text;
     if (b.title !== title) b.title = title;
+    // Tint the whole card with the verdict's muted colour (content.css); only settled verdicts tint.
+    const card = b.closest<HTMLElement>("[data-board-card-id]");
+    const tint = slot?.state === "done" ? verdict : undefined;
+    if (card && card.dataset.snbaVerdict !== tint) {
+      if (tint) card.dataset.snbaVerdict = tint;
+      else delete card.dataset.snbaVerdict;
+    }
   }
 
   // ------------------------------------------------------------------ pane

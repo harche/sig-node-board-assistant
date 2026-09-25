@@ -78,6 +78,23 @@
   }
 }
 
+/* ---------- card tint (board): once judged, the card's own box takes Primer's muted success / danger / attention
+   background and border, the same pair GitHub uses for its flash banners. The attribute sits on the card root;
+   GitHub paints the card's background on its
+   card-internal-content Box child. */
+[data-board-card-id][data-snba-verdict="KEEP"] > [class*="__Box__"] {
+  background-color: var(--bgColor-success-muted, #dafbe1);
+  border-color: var(--borderColor-success-muted, #4ac26b66);
+}
+[data-board-card-id][data-snba-verdict="REMOVE"] > [class*="__Box__"] {
+  background-color: var(--bgColor-danger-muted, #ffebe9);
+  border-color: var(--borderColor-danger-muted, #ff818266);
+}
+[data-board-card-id][data-snba-verdict="BORDERLINE"] > [class*="__Box__"] {
+  background-color: var(--bgColor-attention-muted, #fff8c5);
+  border-color: var(--borderColor-attention-muted, #d4a72c66);
+}
+
 /* ---------- status pill (board) */
 #snba-pill {
   all: unset;

@@ -64,10 +64,12 @@ export function placeBadge(card: HTMLElement, badge: HTMLElement): void {
   const header = card.querySelector<HTMLElement>('[class*="__Header"]');
   const row = header?.firstElementChild as HTMLElement | null;
   if (row) {
+    if (badge.parentElement === row) return;
     if (row.children.length >= 2) row.insertBefore(badge, row.lastElementChild);
     else row.append(badge);
     return;
   }
+  if (badge.isConnected && card.contains(badge)) return;
   for (const el of card.querySelectorAll<HTMLElement>("span, div, a")) {
     if (el.children.length === 0 && /#\d+$/.test(el.textContent?.trim() ?? "")) {
       (el.parentElement ?? card).append(badge);
