@@ -46,15 +46,15 @@ export function columns(root: ParentNode): { name: string; el: HTMLElement }[] {
 
 /** Puts the run button in the column's header, before GitHub's own "…" and "+" buttons. The actions row is found by
  *  its CSS-module class prefix, then by the column title (h2); failing both, the button is not placed. */
-export function placeRunButton(col: HTMLElement, btn: HTMLElement): boolean {
+export function placeRunButton(col: HTMLElement, ...btns: HTMLElement[]): boolean {
   const actions = col.querySelector<HTMLElement>('[class*="__ColumnActions"]');
   if (actions) {
-    actions.prepend(btn);
+    actions.prepend(...btns);
     return true;
   }
   const title = col.querySelector<HTMLElement>("h2");
   if (!title?.parentElement) return false;
-  title.parentElement.append(btn);
+  title.parentElement.append(...btns);
   return true;
 }
 

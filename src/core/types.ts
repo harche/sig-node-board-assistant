@@ -147,7 +147,7 @@ export interface TriageResult {
 /** One board mutation, described but never executed by this extension. */
 export type ActionStep =
   | { kind: "comment"; repo: string; number: number; body: string }
-  | { kind: "move"; itemId: string; lane: string };
+  | { kind: "move"; itemId: string; restId: number; lane: string };
 
 export interface ProposedAction {
   label: string;

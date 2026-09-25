@@ -1,7 +1,7 @@
 /** Typed request/response protocol between the content script / options page and the background worker.
- *  Every request is a read: there is no message that mutates GitHub. */
+ *  Every request is a read except `item.apply`, which the worker only runs on boards marked writable. */
 import type { Placement } from "../core/lookup";
-import type { BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
+import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 
 export interface Settings {
   githubToken: string;
@@ -24,7 +24,8 @@ export type Request =
   | { type: "board.fields"; board: BoardRef }
   | { type: "column.items"; board: BoardRef; column: string; refresh?: boolean }
   | { type: "item.lookup"; repo: string; number: number }
-  | { type: "item.judge"; item: BoardItem; refresh?: boolean };
+  | { type: "item.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
 
 export interface ResponseMap {
   "settings.get": { settings: Settings; configured: { github: boolean; typesafe: boolean } };
@@ -36,6 +37,7 @@ export interface ResponseMap {
   "column.items": BoardItem[];
   "item.lookup": Placement | null;
   "item.judge": TriageResult;
+  "item.apply": { ok: true };
 }
 
 export type Response<R extends Request> = ResponseMap[R["type"]];

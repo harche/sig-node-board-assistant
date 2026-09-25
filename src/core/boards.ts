@@ -7,6 +7,8 @@ export interface KnownBoard extends BoardRef {
   about: string;
   /** Columns the extension decorates on this board, by workflow. */
   workflows: Record<string, string>;
+  /** Whether Accept may write to this board (Status moves, Prow comments). Only the test board, for now. */
+  writable?: boolean;
 }
 
 export const KNOWN_BOARDS: KnownBoard[] = [
@@ -39,6 +41,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     title: "SIG Node CI/Test Board (test)",
     about: "Test copy of kubernetes/151",
     workflows: { triage: "Triage" },
+    writable: true,
   },
 ];
 

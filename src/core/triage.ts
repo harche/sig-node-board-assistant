@@ -82,7 +82,7 @@ export function proposedActions(
     label: `ACCEPT: /triage accepted + /priority ${r.priority}, move to '${r.lane}'`,
     steps: [
       ...(needsProw ? [{ kind: "comment" as const, repo, number: num, body: prowBody }] : []),
-      { kind: "move" as const, itemId: item.id, lane: r.lane },
+      { kind: "move" as const, itemId: item.id, restId: item.restId, lane: r.lane },
     ],
     ghCommands: [
       ...(needsProw ? [prowCommand(kind, repo, num, r.priority)] : []),
@@ -91,7 +91,7 @@ export function proposedActions(
   };
   const reject: ProposedAction = {
     label: "REJECT: move to 'Archive-it'",
-    steps: [{ kind: "move", itemId: item.id, lane: "Archive-it" }],
+    steps: [{ kind: "move", itemId: item.id, restId: item.restId, lane: "Archive-it" }],
     ghCommands: [moveCommand(item.id, "Archive-it", fields)],
   };
   const recommended = r.verdict === "KEEP" ? "accept" : r.verdict === "REMOVE" ? "reject" : null;

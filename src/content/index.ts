@@ -1,8 +1,10 @@
-/** Board page: a run button in the judged column's header. Nothing is fetched or judged until it is clicked; then
- *  every item in the column is judged (like the CLI's `triage`), each card gets a verdict badge, and GitHub's own
- *  item pane gets the evidence section when it opens for one of those cards. Fetching and judging happen in the
- *  background worker. */
+/** Board page: a Tackle button in the judged column's header. Nothing is fetched or judged until it is clicked; then
+ *  every item in the column is judged (like the CLI's `triage`), each card gets a verdict badge and tint, and
+ *  GitHub's own item pane gets the evidence section when it opens for one of those cards. Once every item is
+ *  judged the header offers Accept (apply every recommendation, in parallel) or Cancel (back to the plain board).
+ *  Fetching, judging and writing happen in the background worker. */
 import { boardFromUrl, knownBoard } from "../core/boards";
+import { proposedActions } from "../core/triage";
 import type { BoardItem, BoardRef } from "../core/types";
 import { send } from "../shared/messages";
 import { attachTooltip, findSidebar, nativeButton, PANE_SIDEBAR, placeSection } from "./adapters";
@@ -31,6 +33,16 @@ class BoardAssistant {
   private runBtn: HTMLElement | null = null;
   /** Tackle buttons on the columns without a workflow yet, by column name. */
   private idleBtns = new Map<string, HTMLElement>();
+  /** Shown instead of Tackle once every item is judged. */
+  private acceptBtn: HTMLElement | null = null;
+  private cancelBtn: HTMLElement | null = null;
+  /** Accept's writes, per project item. */
+  private applied = new Map<number, { state: "pending" | "done" } | { state: "error"; message: string }>();
+  private applying = false;
+  /** Set after Accept moved items: the next Tackle re-reads the column instead of trusting the cache. */
+  private stale = false;
+  /** What the last Accept did; the pill shows it until the next Tackle or Cancel. */
+  private applySummary: string | null = null;
 
   constructor(
     private board: BoardRef,
@@ -76,9 +88,13 @@ class BoardAssistant {
     // React re-renders the header and cards (and the board virtualises long columns), so both are re-attached here.
     for (const col of columns(document)) {
       if (col.name === this.column) {
-        if (this.runBtn?.isConnected) continue;
         this.runBtn ??= this.makeRunButton(col.el);
-        placeRunButton(col.el, this.runBtn);
+        this.acceptBtn ??= this.makeAcceptButton(col.el);
+        this.cancelBtn ??= this.makeCancelButton(col.el);
+        const btns = [this.runBtn, this.acceptBtn, this.cancelBtn];
+        if (btns.every((b) => b.isConnected)) continue;
+        placeRunButton(col.el, ...btns);
+        this.paintRunButton();
       } else {
         let b = this.idleBtns.get(col.name);
         if (b?.isConnected) continue;
@@ -117,9 +133,12 @@ class BoardAssistant {
       void send({ type: "options.open" });
       return;
     }
-    if (this.load.state === "loading" || this.running()) return;
-    const again = this.started;
+    if (this.load.state === "loading" || this.running() || this.applying) return;
+    const again = this.started || this.stale;
     this.started = true;
+    this.stale = false;
+    this.applied.clear();
+    this.applySummary = null;
     this.paintRunButton();
     await this.ensureColumn(again);
     this.judgeAll();
@@ -165,6 +184,19 @@ class BoardAssistant {
   private makeRunButton(col: HTMLElement): HTMLElement {
     const b = tackleButton(col, () => void this.run());
     this.paintRunButton(b);
+    return b;
+  }
+
+  private makeAcceptButton(col: HTMLElement): HTMLElement {
+    const b = tackleButton(col, () => void this.accept(), CHECK, "Accept");
+    b.classList.add("snba-accept");
+    b.hidden = true;
+    return b;
+  }
+
+  private makeCancelButton(col: HTMLElement): HTMLElement {
+    const b = tackleButton(col, () => this.cancel(), X, "Cancel");
+    b.hidden = true;
     return b;
   }
 
@@ -221,6 +253,119 @@ class BoardAssistant {
     const t = b.querySelector<HTMLElement>(".snba-run-text")!;
     if (t.textContent !== text) t.textContent = text;
     b.dataset.tip = title;
+    this.paintReview();
+  }
+
+  /** Every item judged (or Accept under way): Accept and Cancel take Tackle's place in the header. */
+  private reviewing(): boolean {
+    if (this.applying) return true;
+    if (!this.started || this.load.state !== "loaded" || !this.items.size || this.running()) return false;
+    // Once Accept has run, Tackle comes back to re-read what is left.
+    return this.applied.size === 0;
+  }
+
+  private paintReview(): void {
+    const [run, accept, cancel] = [this.runBtn, this.acceptBtn, this.cancelBtn];
+    if (!run || !accept || !cancel) return;
+    const review = this.reviewing();
+    // Tackle stays next to Accept while some items failed to judge: it retries them without discarding verdicts.
+    const failedJudging = [...this.items.keys()].some((id) => this.judged.slots.get(id)?.state === "error");
+    run.hidden = review && (this.applying || !failedJudging);
+    accept.hidden = cancel.hidden = !review;
+    if (!review) return;
+    const plan = this.plan();
+    const keep = plan.filter((p) => p.recommended === "accept").length;
+    const remove = plan.length - keep;
+    const borderline = [...this.items.keys()].filter(
+      (id) => this.judged.slots.get(id)?.state === "done" && !plan.some((p) => p.item.restId === id),
+    ).length;
+    const failed = [...this.items.keys()].filter((id) => this.judged.slots.get(id)?.state === "error").length;
+    const left = [
+      borderline && `${borderline} borderline`,
+      failed && `${failed} that failed to judge`,
+    ].filter(Boolean);
+    const settled = [...this.applied.values()].filter((a) => a.state !== "pending").length;
+    setText(accept, this.applying ? `${settled}/${this.applied.size}` : "Accept");
+    accept.dataset.state = this.applying ? "applying" : "ready";
+    accept.setAttribute("aria-disabled", String(this.applying || !plan.length));
+    accept.dataset.tip = this.applying
+      ? "Applying the recommendations"
+      : plan.length
+        ? `Apply the recommendation to ${plan.length} item${plan.length === 1 ? "" : "s"}: ` +
+          `${keep} keep (/triage accepted + /priority, move to its lane), ${remove} remove (move to Archive-it)` +
+          (left.length ? `. ${left.join(" and ")} stay in ${this.column} for you.` : ".")
+        : `Nothing to apply: every item needs your call`;
+    cancel.setAttribute("aria-disabled", String(this.applying));
+    cancel.dataset.tip = this.applying
+      ? "Can't cancel while applying"
+      : `Discard the verdicts and go back to the board as it was`;
+  }
+
+  /** The recommended action for every item with a clear verdict; borderline and failed items are left out. */
+  private plan() {
+    const fields = this.judged.fields;
+    if (!fields) return [];
+    const out = [];
+    for (const item of this.items.values()) {
+      const slot = this.judged.slots.get(item.restId);
+      if (slot?.state !== "done") continue;
+      const p = proposedActions(item, slot.result, fields);
+      if (p.recommended) out.push({ item, recommended: p.recommended, action: p[p.recommended] });
+    }
+    return out;
+  }
+
+  /** Accept: every recommendation at once, capped like judging. Each item's own steps run in order. */
+  private async accept(): Promise<void> {
+    if (!this.reviewing() || this.applying) return;
+    const plan = this.plan();
+    if (!plan.length) return;
+    this.applying = true;
+    this.stale = true;
+    for (const p of plan) this.applied.set(p.item.restId, { state: "pending" });
+    this.repaintAll();
+    const queue = [...plan];
+    const worker = async () => {
+      for (let p = queue.shift(); p; p = queue.shift()) {
+        try {
+          await send({ type: "item.apply", board: this.board, restId: p.item.restId, steps: p.action.steps });
+          this.applied.set(p.item.restId, { state: "done" });
+        } catch (e) {
+          this.applied.set(p.item.restId, {
+            state: "error",
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+        this.paintBadge(p.item.restId);
+        this.paintRunButton();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, plan.length) }, worker));
+    this.applying = false;
+    const failed = [...this.applied.values()].filter((a) => a.state === "error").length;
+    this.applySummary = `Applied ${this.applied.size - failed}${failed ? `, ${failed} failed` : ""}`;
+    this.repaintAll();
+  }
+
+  /** Cancel: drop every verdict and our marks on the board; the next Tackle starts over (Jev answers are cached). */
+  private cancel(): void {
+    if (this.applying) return;
+    this.started = false;
+    this.judged.slots.clear();
+    this.applied.clear();
+    this.applySummary = null;
+    for (const b of document.querySelectorAll(SEL.badge)) b.remove();
+    for (const c of document.querySelectorAll<HTMLElement>("[data-snba-verdict]"))
+      delete c.dataset.snbaVerdict;
+    document.querySelector(".snba-evidence")?.remove();
+    this.updatePill();
+    this.paintRunButton();
+  }
+
+  private repaintAll(): void {
+    for (const id of this.items.keys()) this.paintBadge(id);
+    this.updatePill();
+    this.paintRunButton();
   }
 
   // ------------------------------------------------------------------ badges
@@ -265,6 +410,10 @@ class BoardAssistant {
         `${slot.result.why}. Open the item for the evidence.`,
       ];
     }
+    const applied = this.applied.get(restId);
+    if (applied?.state === "pending") [text, title] = ["applying", "Applying the recommendation"];
+    else if (applied?.state === "done") [text, title] = ["applied", "Recommendation applied"];
+    else if (applied?.state === "error") [verdict, text, title] = ["error", "failed", applied.message];
     // Only touch the DOM when something changed: every write here is a mutation other observers see.
     if (b.dataset.verdict !== verdict) b.dataset.verdict = verdict;
     const t = b.querySelector<HTMLElement>(".snba-text")!;
@@ -323,6 +472,10 @@ class BoardAssistant {
       this.setPill(`Click Tackle on ${this.column} to start`);
       return;
     }
+    if (this.applySummary) {
+      this.setPill(this.applySummary);
+      return;
+    }
     this.setPill(`${done} judged${pending ? `, ${pending} pending` : ""}`);
   }
 
@@ -332,8 +485,8 @@ class BoardAssistant {
 }
 
 /** The column header's button, drawn with GitHub's own button classes where possible. */
-function tackleButton(col: HTMLElement, onClick: () => void): HTMLElement {
-  const { root: b, label, native } = nativeButton(col, octicon(PLAY), "Tackle");
+function tackleButton(col: HTMLElement, onClick: () => void, icon = PLAY, text = "Tackle"): HTMLElement {
+  const { root: b, label, native } = nativeButton(col, octicon(icon), text);
   b.classList.add("snba-run");
   label.classList.add("snba-run-text");
   if (!native) b.classList.add("snba-run-plain");
@@ -341,7 +494,7 @@ function tackleButton(col: HTMLElement, onClick: () => void): HTMLElement {
   b.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    onClick();
+    if (b.getAttribute("aria-disabled") !== "true") onClick();
   });
   // The column header is a drag handle; keep our clicks from starting a column drag.
   for (const ev of ["mousedown", "pointerdown", "keydown"])
@@ -354,8 +507,18 @@ const PLAY =
 const SYNC =
   "M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z";
 
+const CHECK =
+  "M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z";
+const X =
+  "M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z";
+
 const ALERT =
   "M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z";
+
+function setText(b: HTMLElement, text: string): void {
+  const t = b.querySelector<HTMLElement>(".snba-run-text")!;
+  if (t.textContent !== text) t.textContent = text;
+}
 
 function boot(): void {
   const ref = boardFromUrl(location.href);

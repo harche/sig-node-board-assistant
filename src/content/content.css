@@ -321,6 +321,16 @@
 /* ---------- column run button (board header)
    Normally built from GitHub's own Primer button classes (adapters.ts nativeButton), so only state tweaks live here.
    .snba-run-plain is the fallback when no GitHub button was found to borrow from: a small invisible Primer button. */
+/* GitHub's button classes set display, which beats the UA's [hidden] rule. */
+.snba-run[hidden] {
+  display: none !important;
+}
+.snba-run[data-state="applying"] {
+  cursor: progress;
+}
+.snba-accept:not([aria-disabled="true"]) svg {
+  color: var(--fgColor-success, #1a7f37);
+}
 .snba-run[data-state="running"] {
   cursor: progress;
 }

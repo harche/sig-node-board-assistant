@@ -1,12 +1,37 @@
-/** Service worker: owns the tokens, the cache and every network call. The content script only ever asks it
- *  questions; the answers are read-only views of GitHub plus Jev's opinion. */
+/** Service worker: owns the tokens, the cache and every network call. The content script asks it questions
+ *  (read-only views of GitHub plus Jev's opinion) and, on a writable board, to apply an accepted action. */
 import { Cache } from "../core/cache";
 import { GitHubClient } from "../core/github";
 import { JevClient } from "../core/jev";
+import { knownBoard } from "../core/boards";
 import { findOnBoards } from "../core/lookup";
 import { judge } from "../core/triage";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
 import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
+
+/** The only comment Accept may post: the triage acceptance and a priority. */
+const PROW_TRIAGE = /^\/triage accepted\n\/priority [a-z-]+$/;
+
+/** GitHub's secondary rate limit wants content-creating requests sent one at a time with about a second between
+ *  them, so every write from every tab goes through this queue while reads stay parallel. */
+class WriteQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+  private last = 0;
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.tail.then(async () => {
+      const wait = this.last + 1000 - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      try {
+        return await fn();
+      } finally {
+        this.last = Date.now();
+      }
+    });
+    this.tail = next.catch(() => {});
+    return next;
+  }
+}
+const writes = new WriteQueue();
 
 const store = new ChromeLocalStore();
 const cache = new Cache(store);
@@ -75,6 +100,33 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
       const detail = await gh.itemDetail(req.item.repository, req.item.type, req.item.number, req.refresh);
       return (await judge(req.item, detail, jev, req.refresh)) as Out;
+    }
+    case "item.apply": {
+      // The only write path. Refused unless the board is registered as writable (the test board), and every step
+      // must touch only the one item named: a Status move of that project item, or a Prow triage comment on the
+      // issue / PR that GitHub says is behind it.
+      const b = knownBoard(req.board);
+      if (!b?.writable)
+        throw new Error(`${req.board.owner}/${req.board.number} is read-only in this extension`);
+      const { gh } = await clients();
+      const target = await gh.projectItem(req.board, req.restId);
+      if (!target) throw new Error(`project item ${req.restId} has no issue or PR behind it`);
+      for (const st of req.steps) {
+        const ok =
+          st.kind === "move"
+            ? st.restId === req.restId
+            : st.kind === "comment" &&
+              st.repo === target.repository &&
+              st.number === target.number &&
+              PROW_TRIAGE.test(st.body);
+        if (!ok) throw new Error(`refusing a step outside ${target.repository}#${target.number}`);
+      }
+      // In order: the Prow comment first, then the move, as the CLI runs them.
+      for (const st of req.steps) {
+        if (st.kind === "comment") await writes.run(() => gh.comment(st.repo, st.number, st.body));
+        else await writes.run(() => gh.moveItem(req.board, st.restId, st.lane));
+      }
+      return { ok: true } as Out;
     }
   }
 }

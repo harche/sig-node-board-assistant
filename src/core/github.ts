@@ -1,6 +1,6 @@
 /** GitHub REST client on Octokit (no GraphQL: the hourly GraphQL point budget is never touched). Octokit adds
  *  Link-header pagination; this class adds a short retry on 5xx, the cache and the board shapes.
- *  Every method here is a GET today; writes (Status moves, Prow comments) will go through `octokit` too. */
+ *  Reads are GETs; the two writes are a Status move and an issue / PR comment (for Prow commands). */
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
 import { DAY, MINUTE, type Cache } from "./cache";
@@ -41,8 +41,10 @@ export class GitHubClient {
       request: { fetch: fetchFn },
       headers: { "X-GitHub-Api-Version": GITHUB_API_VERSION },
     });
-    // Wraps every request, including each page octokit.paginate fetches.
+    // Wraps every request, including each page octokit.paginate fetches. Only reads are retried: a write that
+    // answers 5xx may still have happened, and repeating it would post a second comment.
     this.octokit.hook.wrap("request", async (request, options) => {
+      if (options.method !== "GET") return request(options);
       for (let attempt = 0; ; attempt++) {
         try {
           return await request(options);
@@ -89,8 +91,8 @@ export class GitHubClient {
     return `/${await this.ownerType(board.owner)}/${board.owner}/projectsV2/${board.number}`;
   }
 
-  /** Project node id, Status field id and option ids: the parameters a Status move would need. Read here only so
-   *  the proposed `gh` command can be shown verbatim; this extension never issues the move. */
+  /** Project node id, Status field ids and option ids: what a Status move needs, and what the proposed `gh`
+   *  command shows. */
   fields(board: BoardRef): Promise<BoardFields> {
     return this.cache.cached(`fields:${board.owner}/${board.number}`, DAY, async () => {
       const base = await this.projectPath(board);
@@ -111,6 +113,45 @@ export class GitHubClient {
         options: Object.fromEntries((st.options ?? []).map((o) => [o.name.raw, o.id])),
       };
     });
+  }
+
+  /** Moves a project item to the Status column `lane` (REST: PATCH the item's Status field to the option id). */
+  async moveItem(board: BoardRef, restId: number, lane: string): Promise<void> {
+    const f = await this.fields(board);
+    const option = f.options[lane];
+    if (!option) throw new GitHubError(`board has no Status column named '${lane}'`, 404);
+    const path = `${await this.projectPath(board)}/items/${restId}`;
+    try {
+      await this.octokit.request(`PATCH ${path}`, {
+        fields: [{ id: f.status_field_rest_id, value: option }],
+      });
+    } catch (e) {
+      throw toGitHubError(e, path);
+    }
+  }
+
+  /** The issue or PR behind one project item, read fresh (never cached): what a write is checked against. */
+  async projectItem(board: BoardRef, restId: number): Promise<{ repository: string; number: number } | null> {
+    const it = await this.api<RawProjectItem>(`${await this.projectPath(board)}/items/${restId}`);
+    const c = it.content;
+    if (!c?.number) return null;
+    return { repository: c.html_url.split("/").slice(3, 5).join("/"), number: c.number };
+  }
+
+  /** Comments on an issue or PR (the issues comments route serves both); how Prow commands are sent. Skipped when
+   *  the token's user already left the same comment, so a retry after a failed move does not post it twice. */
+  async comment(repo: string, number: number, body: string): Promise<void> {
+    const path = `/repos/${repo}/issues/${number}/comments`;
+    const [me, existing] = await Promise.all([
+      this.viewer(),
+      this.paged<{ body?: string; user?: { login: string } | null }>(path),
+    ]);
+    if (existing.some((c) => c.user?.login === me.login && c.body?.trim() === body.trim())) return;
+    try {
+      await this.octokit.request(`POST ${path}`, { body });
+    } catch (e) {
+      throw toGitHubError(e, path);
+    }
   }
 
   /** Items in one Status column via the server-side `q=status:` filter; draft issues (no content) are skipped. */
