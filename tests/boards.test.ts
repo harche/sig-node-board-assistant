@@ -17,8 +17,15 @@ describe("boardFromUrl", () => {
 describe("knownBoard", () => {
   it("151 has the triage workflow on the Triage column", () =>
     expect(knownBoard({ owner: "kubernetes", number: 151 })?.workflows.triage).toBe("Triage"));
-  it("185 is known but has no workflow yet", () =>
-    expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual({}));
+  it("185 and its test copy work on the Triage column", () => {
+    expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual({ bugs: "Triage" });
+    expect(knownBoard({ owner: "harche", number: 6 })).toMatchObject({
+      workflows: { bugs: "Triage" },
+      writable: true,
+    });
+  });
+  it("95 is known but has no workflow yet", () =>
+    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual({}));
   it("a sandbox board is unknown", () => expect(knownBoard({ owner: "harche", number: 1 })).toBeUndefined());
 });
 

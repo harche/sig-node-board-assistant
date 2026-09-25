@@ -15,6 +15,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
   approvers get 14 days; otherwise `/cc` approvers for the OWNERS files Prow still lists, ranked by recent approvals.
 - PRs Waiting on Author: Done, Archive (Triage's scope verdict), Needs Approver on lgtm, Needs Reviewer when the
   author answered; nudge an author quiet 30+ days, wait on a check-in, then leave it to the lifecycle bot.
+- SIG Node Bugs (kubernetes/185) Triage: accept at a priority into Triaged or High Priority, ask for information,
+  close support requests, relabel features, hand over to another SIG, add `/wg device-management` to DRA reports;
+  cards with a triage label already set are only moved. Test copy at harche/6.
 - Asks include comments Jev reads as asking someone to review or approve.
 - Broken Prow commands in any column: flagged by code, read by Jev, fixed on Apply / Accept.
 - The header's Accept applies every suggestion, comments included, in every column.

@@ -38,8 +38,9 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
   `is:issue is:open label:kind/bug label:sig/node -label:kind/flake -label:kind/failing-test -label:area/test -label:area/test-infra`.
 - **Labels:** the ones 185 uses were added to the test repo: `triage/needs-information`,
   `triage/not-reproducible`, `priority/critical-urgent`, `kind/regression`, `wg/device-management`, `sig/network`.
-- **Items:** none yet. "Make a copy" doesn't copy issues, so fake bug issues are made up as each column's workflow
-  is built. Base them on real 185 issues.
+- **Items:** fake bug issues #29–36, one per Triage decision, based on real 185 issues: a clear bug (#29), a support
+  question (#30), a feature (#31), co-owned storage code (#32), too thin to act on (#33), already `triage/accepted`
+  (#34), DRA (#35), already `triage/needs-information` (#36). Add more the same way as other columns are built.
 
 ### Access
 

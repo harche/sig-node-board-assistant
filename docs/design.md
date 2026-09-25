@@ -130,6 +130,26 @@ had been moved past Triage); by the board owner's decision those are suggested f
 the later of the author's own last activity and the last review, so a change request made today is not the author
 going quiet. An unanswered check-in leaves the card alone: the lifecycle bot already stales, rots and closes PRs.
 
+## SIG Node Bugs: Triage
+
+`src/core/bugs.ts` and `src/core/prompts/bugs.ts`. Tuned on 284 kubernetes/kubernetes node issues from 2025–26, each
+shown to Jev as it stood before the first human triage comment, against what that triager did (172 accepted, 43
+needs-information, 24 another SIG, 21 support, 19 feature or other kind, 2 duplicates). Findings:
+
+- Support requests separate well: P ≥ 0.7 was right 8 of 8, so Accept closes them.
+- Needs information separates fairly (AUC 0.73): P(enough) ≤ 0.3 was right 5 of 7 and Accept asks; up to 0.5 it is
+  suggested. More criteria (unsupported versions, working as intended, code-reading reports) did not help.
+- Feature requests filed as bugs are mostly accepted anyway (16 of 29 Jev flagged), and "another SIG" splits on
+  co-owned kubelet code (volumes, Windows): about half right at any threshold. Both are only suggested; the hand-over
+  SIG comes from a separate question and can be changed on the card.
+- DRA is not a reject: 12 of 19 DRA reports kept `sig/node` and were accepted, with `/wg device-management` added.
+  That is what the extension does.
+- Priority: triagers disagree with each other. A score question matched them as often as always answering
+  important-longterm (39%) and caught more backlog bugs; the card has a priority select.
+- Duplicates were 2 of 300 first decisions, so there is no duplicate pass yet.
+
+A human `/sig node` keeps a hand-over from being suggested over them, as in the CI board's Triage.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

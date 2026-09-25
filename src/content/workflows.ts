@@ -22,6 +22,8 @@ import {
   type PrSpec,
 } from "./reviewercard";
 import { chosenProgress, renderProgressEvidence, renderProgressHoverCard } from "./progresscard";
+import { BUG_TINT, decideBug, type BugAction, type BugResult } from "../core/bugs";
+import { chosenBug, chosenBugSteps, renderBugEvidence, renderBugHoverCard } from "./bugcard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
@@ -422,6 +424,93 @@ export const authorWorkflow = prWorkflow<AuthorResult>(AUTHOR_SPEC, "author.judg
   asked: "authors",
 });
 
+// ---------------------------------------------------------------------------------------------------- SIG Node Bugs
+
+const BUG_BADGE: Record<BugAction, string> = {
+  accept: "accept",
+  needs_info: "needs info",
+  support: "support",
+  feature: "feature",
+  other_sig: "other SIG",
+  done: "done",
+  keep: "triage",
+};
+
+/** The Triage column of the SIG Node Bugs board (kubernetes/185). A suggestion Jev is not sure of (and every
+ *  hand-over or relabel) is the reviewer's call: yellow, with a question mark, until they pick an action. */
+export const bugsWorkflow: ColumnWorkflow<BugResult> = {
+  judge: (item, refresh) => send({ type: "bugs.judge", item, refresh }),
+  badge(r, o) {
+    const a = chosenBug(r, o);
+    const unsure = !o.action && !decideBug(r).auto;
+    const word =
+      a === "accept" && !unsure
+        ? ["critical-urgent", "important-soon"].includes(o.priority ?? r.priority ?? "")
+          ? "high priority"
+          : "accept"
+        : BUG_BADGE[a];
+    return { tint: unsure ? "BORDERLINE" : BUG_TINT[a], text: unsure ? `${word}?` : word };
+  },
+  recommended(item, r, _fields, o) {
+    if (!o.action && !decideBug(r).auto) return null;
+    const a = chosenBug(r, o);
+    const steps = chosenBugSteps(item, r, o);
+    return steps.length ? { tint: BUG_TINT[a], steps, kind: a } : null;
+  },
+  steps: (item, r, _fields, o) => chosenBugSteps(item, r, o),
+  override(r, o, key, value) {
+    const rest = omit(o, key);
+    const d = decideBug(r);
+    // Picking the suggestion of a card Jev was unsure about is the reviewer's decision: it stays, so Accept applies it.
+    if (key === "action") return value === d.action && d.auto ? rest : { ...rest, action: value };
+    const suggested = key === "priority" ? r.priority : key === "sig" ? r.sig : null;
+    return value === suggested ? rest : { ...rest, [key]: value };
+  },
+  needsHuman: (r, o) => !o.action && !decideBug(r).auto,
+  hover: (c) =>
+    renderBugHoverCard({
+      fix: c.fix,
+      item: c.item,
+      result: c.result,
+      overrides: c.overrides,
+      setOverride: c.setOverride,
+      applied: c.applied,
+      canApply: c.canApply,
+      scope: c.scope,
+      apply: () => c.apply("chosen"),
+      skip: c.skip,
+    }),
+  hoverKey: (r) => {
+    const d = decideBug(r);
+    return `${d.action}|${d.auto}|${r.priority}|${r.sig}|${r.missing.join(",")}`;
+  },
+  pane: (adapter, item, st, rejudge) =>
+    renderBugEvidence(
+      adapter,
+      item,
+      st.state === "done" ? { state: "done", result: st.result } : st,
+      rejudge,
+      SECTION_TITLE,
+    ),
+  runTip: (column) =>
+    `Ask Jev what each bug in ${column} is (a SIG Node bug, a support question, a feature, another SIG's) and whether it can be worked on`,
+  acceptTip: (n) => {
+    const c = (k: string) => n[k] ?? 0;
+    return [
+      c("accept") &&
+        `${c("accept")} accepted (/triage accepted + /priority, move to Triaged or High Priority)`,
+      c("needs_info") && `${c("needs_info")} asked for information (move to Needs Information)`,
+      c("support") && `${c("support")} closed as support requests`,
+      c("feature") && `${c("feature")} relabelled as features`,
+      c("other_sig") && `${c("other_sig")} handed to another SIG`,
+      c("done") && `${c("done")} closed, moved to Done`,
+      c("keep") + c("KEEP") && `${c("keep") + c("KEEP")} with Prow fixes only`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  },
+};
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
@@ -429,4 +518,5 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   review: reviewWorkflow as ColumnWorkflow<unknown>,
   approve: approveWorkflow as ColumnWorkflow<unknown>,
   author: authorWorkflow as ColumnWorkflow<unknown>,
+  bugs: bugsWorkflow as ColumnWorkflow<unknown>,
 };

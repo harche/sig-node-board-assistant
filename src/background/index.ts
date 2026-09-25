@@ -12,6 +12,7 @@ import { isDraftedComment } from "../core/comments";
 import { prowFixes, type ProwFix } from "../core/prowcmds";
 import { decideApprove, type ApproveResult } from "../core/approver";
 import type { AuthorResult } from "../core/author";
+import { judgeBug } from "../core/bugs";
 import {
   blend,
   blendApprovers,
@@ -371,6 +372,14 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         prow_fixes: await fixes(detail, jev, req.refresh),
       };
       return out as Out;
+    }
+    case "bugs.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const detail = await gh.itemDetail(req.item.repository, "Issue", req.item.number, req.refresh);
+      const r = await judgeBug(req.item, detail, jev, req.refresh);
+      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      return r as Out;
     }
     case "todo.duplicates": {
       const { gh, jev } = await clients();

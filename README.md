@@ -1,8 +1,10 @@
 # SIG Node Board Assistant
 
 A Chrome extension that puts a calibrated opinion on the cards of the
-[SIG Node CI/Test board](https://github.com/orgs/kubernetes/projects/151), right on the board you already
-use, for two columns:
+[SIG Node CI/Test board](https://github.com/orgs/kubernetes/projects/151) and the
+[SIG Node Bugs board](https://github.com/orgs/kubernetes/projects/185), right on the board you already use.
+
+On the CI/Test board:
 
 - **Triage**: does the item belong on the board (keep, remove, borderline), and at which priority.
 - **Issues - To do**: is the issue already resolved, a duplicate, being worked on, or someone else's; read
@@ -16,16 +18,23 @@ use, for two columns:
 - **PRs Waiting on Author**: did the author act (back to reviewers or approvers), has the author gone quiet (nudge
   them), or is the PR not SIG Node CI work at all (archive).
 
+On the Bugs board:
+
+- **Triage**: is the report a SIG Node bug a maintainer can start on (accept it at a priority), a support question
+  (redirect and close), a feature filed as a bug, another SIG's code (hand it over), or too thin to act on (ask the
+  reporter); and move it to the column its labels call for.
+
 Click **Tackle** on the column (or on one card) and each card gets a badge and a tint. Hover a card for the
 evidence and the suggested action, which you can change before applying it; open the item the way you always
 do and the same evidence is there as one more section in GitHub's own sidebar.
 
 **Writes are limited to the test board for now.** Applying an action (a Prow comment and a Status move) only
-works on boards marked `writable` in `src/core/boards.ts`, today only the private test copy of 151. On
-kubernetes/151 the extension reads and suggests; it never comments, labels or moves a card there. The worker
+works on boards marked `writable` in `src/core/boards.ts`, today only the private test copies of 151 and 185. On
+kubernetes/151 and kubernetes/185 the extension reads and suggests; it never comments, labels or moves a card there. The worker
 checks every write against an allow-list: Status moves of the one item, and only the comments the extension
 drafts (`/triage accepted` with a priority, the To-do close / duplicate / check-in comments, and the
-In-progress nudge, `/unassign` and check-in comments, and the Needs Reviewer `/cc` and re-pings).
+In-progress nudge, `/unassign` and check-in comments, the Needs Reviewer `/cc` and re-pings, and the Bugs board's
+accept, needs-information, support, feature and hand-over comments).
 
 | on the board                                         | in GitHub's item pane (issues)                                   | on the PR page (pull requests)                       |
 | ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
@@ -152,6 +161,21 @@ move, counted from the later of their own last activity and the last review: qui
 nudge the author; a check-in Jev finds under 14 days → wait; an unanswered one → the card stays, and the Kubernetes
 lifecycle bot takes it from there (stale, rotten, closed).
 
+## SIG Node Bugs: Triage
+
+The board's own automations only put new and reopened issues in Triage and closed ones in Done; nothing moves a card
+when its labels change. So every action pairs its Prow comment with the move the column descriptions ask for:
+`triage/accepted` → Triaged, or High Priority at `critical-urgent` / `important-soon`; `triage/needs-information` →
+Needs Information; leaving the board → Done (there is no archive column). A card whose triage label a human already
+set is only moved.
+
+The flow is the community [issue triage guide](https://github.com/kubernetes/community/blob/master/contributors/guide/issue-triage.md)'s.
+Jev reads what kind of report it is, who owns the code, whether there is enough to start, whether it is about DRA
+(which adds `/wg device-management` and stays), its priority, and what to ask the reporter for. Accept applies the
+suggestions Jev is sure of: accept, a sure support request (redirect, `/kind support`, `/close`) and a report with
+hardly any information (ask for the missing facts, `/triage needs-information`). A feature filed as a bug, another
+SIG's code and the less sure calls show as yellow with a question mark: you pick the action, then Apply or Accept.
+
 ## Broken Prow commands (every column)
 
 A comment line Prow ignored (`/assing @x`, `/triage accept`, `triage/accept`, `/priority imporant-soon`) means the
@@ -167,7 +191,8 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 | ----------------------------- | -------------- | ------------------------------------------- |
 | SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only) |
 | SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing          |
-| SIG Node Bugs                 | kubernetes/185 | recognised, idle (workflow to come)         |
+| SIG Node Bugs                 | kubernetes/185 | judges the Triage column (read-only)        |
+| SIG Node Bugs (test)          | harche/6       | the same, with writes, for testing          |
 | Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)         |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a

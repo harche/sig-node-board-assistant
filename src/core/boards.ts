@@ -1,5 +1,5 @@
-/** Known SIG Node boards and the column semantics of the CI/Test board (kubernetes/151), the only board the
- *  triage workflow is written for. Other boards get no decoration until their workflows exist. */
+/** Known SIG Node boards and the columns the extension works on, by workflow. Boards without workflows get no
+ *  decoration until theirs exist. */
 import type { BoardRef } from "./types";
 
 export interface KnownBoard extends BoardRef {
@@ -31,7 +31,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 185,
     title: "SIG Node Bugs",
     about: "kind/bug issues routed to SIG Node: triage, needs-information, priority",
-    workflows: {},
+    workflows: { bugs: "Triage" },
   },
   {
     owner: "kubernetes",
@@ -64,7 +64,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 6,
     title: "SIG Node Bugs (test)",
     about: "Test copy of kubernetes/185",
-    workflows: {},
+    workflows: { bugs: "Triage" },
     writable: true,
   },
 ];

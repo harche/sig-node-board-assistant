@@ -5,6 +5,7 @@ import { PROGRESS_PREFIX } from "./inprogress";
 import { isFixComment } from "./prowcmds";
 import { APPROVE_PREFIX } from "./approver";
 import { AUTHOR_PREFIX } from "./author";
+import { isBugComment } from "./bugs";
 import { REVIEW_PREFIX } from "./reviewer";
 import { PRIORITY_CHOICES } from "./policy";
 import { COMMENT_PREFIX } from "./todo";
@@ -18,6 +19,8 @@ const MENTION = /(^|[^\w`])@[A-Za-z0-9]/;
 export function isDraftedComment(body: string): boolean {
   if (!body.trim()) return false;
   if (TRIAGE.test(body)) return true;
+  // SIG Node Bugs' Triage: accept, ask for information, support, feature, hand to another SIG.
+  if (isBugComment(body)) return true;
   // Any column: a fix for Prow commands someone mistyped (routing, labels, assignment; never /lgtm or /approve).
   if (isFixComment(body)) return true;
   const lines = body.split("\n");
