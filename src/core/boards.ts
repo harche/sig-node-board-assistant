@@ -38,7 +38,12 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 95,
     title: "Dynamic Resource Allocation",
     about: "DRA feature work: KEPs, implementation issues and PRs, new to in-review",
-    workflows: { dranew: "🆕 New", drabacklog: "📋 Backlog", draready: "🔖 Ready" },
+    workflows: {
+      dranew: "🆕 New",
+      drabacklog: "📋 Backlog",
+      draready: "🔖 Ready",
+      draprogress: "🏗 In progress",
+    },
   },
   {
     // Private copy of kubernetes/151 (same Status columns, views and workflows) over fake items in
@@ -74,7 +79,12 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     number: 7,
     title: "Dynamic Resource Allocation (test)",
     about: "Test copy of kubernetes/95",
-    workflows: { dranew: "🆕 New", drabacklog: "📋 Backlog", draready: "🔖 Ready" },
+    workflows: {
+      dranew: "🆕 New",
+      drabacklog: "📋 Backlog",
+      draready: "🔖 Ready",
+      draprogress: "🏗 In progress",
+    },
     writable: true,
   },
 ];

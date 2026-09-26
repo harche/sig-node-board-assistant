@@ -230,6 +230,20 @@ when moved; 68 stays, each stint's midpoint and every open card now), with New's
 Of the 34 stays Jev scored under 0.5, 20 stayed and 2 went to In progress. So ≥ 0.9 is suggested as the reviewer's
 call (19 of 29 ended In progress), below the 85% a card needs for Accept.
 
+## Dynamic Resource Allocation: In progress
+
+Same module, no Jev. Moves out: closed issues → Done 35/37, merged or closed PRs → Done 19/22, open PRs ready for
+review → In review 21/22, and 37 open issues to Backlog or Ready, 29 of them KEPs in batches at a release's end
+(1.35 code freeze on 2025-11-07, 1.36 on 2026-03-20, after 1.37 shipped on 2026-08-25).
+
+- Jev's question (P in progress < 0.5 as "stopped") did not separate them: non-KEP issues flagged 23, of which 21
+  stayed (only 5 of 78 non-KEP stints ended before the issue closed); KEPs flagged 16, 9 left.
+- The release rule on 70 KEP cases: not in the release being developed → left then 19, stayed 15. Of the 30 whose
+  story has played out, 27 left (19 then, 8 a few weeks later), 2 were re-targeted, 1 closed: 90%. Accept applies it
+  (the board owner's call, over leaving it to the reviewer). KEPs in the release left only at code-freeze sweeps (10),
+  which the board does not mark, so they stay.
+- A KEP is an issue in kubernetes/enhancements or one with a `stage/*` label.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

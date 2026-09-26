@@ -33,6 +33,7 @@ const base = (over: Partial<DraResult> = {}, column: DraColumn = "new"): DraResu
   development_cycle: "1.38",
   milestone: null,
   opted_in: false,
+  kep: false,
   lane: null,
   usage: { input_tokens: 0, cost: 0 },
   state_chars: 0,
@@ -102,6 +103,27 @@ describe("decideDra: Ready", () => {
   );
   it("offers Backlog rather than Ready", () =>
     expect(draActions(ready())).toEqual(["in_progress", "backlog", "done", "keep"]));
+});
+
+const progress = (over: Partial<DraResult> = {}) => base(over, "progress");
+
+describe("decideDra: In progress", () => {
+  it.each([
+    ["a closed issue", progress({ state: "closed" }), "done", true],
+    ["a merged PR", pr({ state: "merged" }, "progress"), "done", true],
+    ["an open PR", pr({}, "progress"), "in_review", true],
+    ["a draft PR", pr({ draft: true }, "progress"), "keep", true],
+    ["a KEP opted into 1.38", progress({ kep: true, milestone: "v1.38", opted_in: true }), "keep", true],
+    ["a KEP opted into 1.37", progress({ kep: true, milestone: "v1.37", opted_in: true }), "backlog", true],
+    ["a KEP with no milestone", progress({ kep: true }), "backlog", true],
+    ["an issue", progress(), "keep", true],
+  ] as [string, DraResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
+    expect(decideDra(r)).toMatchObject({ action, auto }),
+  );
+  it("never offers the column the card is in", () => {
+    expect(draActions(progress())).toEqual(["ready", "backlog", "done", "keep"]);
+    expect(draActions(pr({}, "progress"))).toEqual(["in_review", "done", "keep"]);
+  });
 });
 
 describe("draActions, labels and steps", () => {

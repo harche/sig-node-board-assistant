@@ -10,6 +10,7 @@ import {
   draActions,
   draSteps,
   type DraAction,
+  type DraColumn,
   type DraResult,
 } from "../core/dra";
 import type { ActionStep, BoardItem } from "../core/types";
@@ -148,12 +149,15 @@ export function renderDraEvidence(
   st: DraPaneState,
   rejudge: (i: BoardItem) => Promise<void>,
   title: string,
+  column: DraColumn,
 ): HTMLElement {
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
   const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
-  again.title = "Re-read the thread and linked PRs and ask Jev again";
+  // In progress is placed by state alone (dra.ts): no Jev there.
+  const jev = column !== "progress";
+  again.title = jev ? "Re-read the thread and linked PRs and ask Jev again" : "Re-read the item";
   again.addEventListener("click", async () => {
     again.disabled = true;
     try {
@@ -163,7 +167,9 @@ export function renderDraEvidence(
     }
   });
   if (st.state === "pending") {
-    body.append(h("p.snba-muted", {}, "Reading the thread and linked PRs, and asking Jev…"));
+    body.append(
+      h("p.snba-muted", {}, jev ? "Reading the thread and linked PRs, and asking Jev…" : "Reading the item…"),
+    );
     return root;
   }
   if (st.state === "error") {

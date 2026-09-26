@@ -761,6 +761,7 @@ function draWorkflow(column: DraColumn, run: (column: string) => string): Column
         st.state === "done" ? { state: "done", result: st.result } : st,
         rejudge,
         SECTION_TITLE,
+        column,
       ),
     runTip: run,
     acceptTip: (n) => {
@@ -795,6 +796,12 @@ export const draReadyWorkflow = draWorkflow(
     `Check each card in ${column}: closed ones to Done, and whether Jev reads the work on each issue as under way`,
 );
 
+export const draProgressWorkflow = draWorkflow(
+  "progress",
+  (column) =>
+    `Check each card in ${column}: closed ones to Done, PRs ready for review to In review, KEPs no longer in the release to Backlog`,
+);
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
@@ -809,4 +816,5 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   dranew: draNewWorkflow as ColumnWorkflow<unknown>,
   drabacklog: draBacklogWorkflow as ColumnWorkflow<unknown>,
   draready: draReadyWorkflow as ColumnWorkflow<unknown>,
+  draprogress: draProgressWorkflow as ColumnWorkflow<unknown>,
 };

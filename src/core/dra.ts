@@ -21,6 +21,14 @@
  *    were moved then, 6 weeks later, 2 went to Done and 6 are still in Ready. Being assigned is not the trigger.
  *  - Other open issues stay.
  *
+ *  In progress: work under way. 35 of 37 closed issues left it for Done, 19 of 22 merged or closed PRs too, 21 of 22
+ *  open PRs ready for review for In review; draft PRs stay.
+ *  - A KEP not in the release being developed → Backlog: of 30 such cards whose story has played out, 27 left, 19 at
+ *    once and 8 a few weeks later (the board sweeps late), mostly to Backlog. A KEP in the release stays: it leaves
+ *    only in code-freeze sweeps, which nothing on the board marks.
+ *  - Other open issues stay: 73 of 78 stayed until closed. Jev is not asked: it could not tell stalled work from
+ *    live (21 of the 23 issues it read as stopped stayed).
+ *
  *  A move only changes the Status: the maintainers add no comments or labels. */
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
@@ -41,8 +49,20 @@ export const DRA_LANE = {
   done: "✅ Done",
 } as const;
 
-export type DraColumn = "new" | "backlog" | "ready";
-export const COLUMN_TITLE: Record<DraColumn, string> = { new: "New", backlog: "Backlog", ready: "Ready" };
+export type DraColumn = "new" | "backlog" | "ready" | "progress";
+export const COLUMN_TITLE: Record<DraColumn, string> = {
+  new: "New",
+  backlog: "Backlog",
+  ready: "Ready",
+  progress: "In progress",
+};
+/** The action that would move a card to the column it is already in. */
+const OWN: Record<DraColumn, DraAction | null> = {
+  new: null,
+  backlog: "backlog",
+  ready: "ready",
+  progress: "in_progress",
+};
 
 export const DRA_ACTIONS = ["in_review", "in_progress", "ready", "backlog", "done", "keep"] as const;
 export type DraAction = (typeof DRA_ACTIONS)[number];
@@ -79,6 +99,8 @@ export interface DraResult {
   /** Open issues only: the issue's milestone and whether the SIG lead opted it into a release. */
   milestone: string | null;
   opted_in: boolean;
+  /** Open issues only: a KEP's tracking issue (kubernetes/enhancements, or a `stage/*` label). */
+  kep: boolean;
   /** Open issues only: Jev's pick of column. Null for PRs and closed issues, which code places, and for a KEP in the
    *  release, which its labels place. */
   lane: JevChoice | null;
@@ -96,6 +118,12 @@ type Decision = { action: DraAction; why: string; auto: boolean };
 
 /** The suggested action, why, and whether the header's Accept applies it without the reviewer picking it. */
 export function decideDra(r: DraResult): Decision {
+  const d = decideAny(r);
+  // A draft PR in In progress already is where its rule puts it.
+  return d.action === OWN[r.column] ? { ...d, action: "keep" } : d;
+}
+
+function decideAny(r: DraResult): Decision {
   if (r.type === "PullRequest") {
     if (r.state === "merged") return { action: "done", why: "merged", auto: true };
     if (r.state === "closed") return { action: "done", why: "closed without merging", auto: true };
@@ -103,11 +131,16 @@ export function decideDra(r: DraResult): Decision {
     return { action: "in_review", why: "an open PR, ready for review", auto: true };
   }
   if (r.state !== "open") return { action: "done", why: "closed", auto: true };
-  return r.column === "new"
-    ? decideNewIssue(r)
-    : r.column === "backlog"
-      ? decideBacklogIssue(r)
-      : decideReadyIssue(r);
+  switch (r.column) {
+    case "new":
+      return decideNewIssue(r);
+    case "backlog":
+      return decideBacklogIssue(r);
+    case "ready":
+      return decideReadyIssue(r);
+    case "progress":
+      return decideProgressIssue(r);
+  }
 }
 
 const pick = (a: JevChoice) => {
@@ -176,12 +209,34 @@ function decideReadyIssue(r: DraResult): Decision {
   return { action: "keep", why: "nobody has started on it yet", auto: true };
 }
 
+function decideProgressIssue(r: DraResult): Decision {
+  if (r.kep && !inRelease(r))
+    return {
+      action: "backlog",
+      why: `a KEP not in the ${r.development_cycle} release (${r.milestone ?? "no milestone"}${r.opted_in ? "" : `, no ${OPTED_IN}`})`,
+      auto: true,
+    };
+  return {
+    action: "keep",
+    why: r.kep ? `a KEP in the ${r.development_cycle} release` : "work under way until it closes",
+    auto: true,
+  };
+}
+
 export function draActions(r: DraResult): DraAction[] {
-  if (r.type === "PullRequest") return ["in_review", "in_progress", "done", "keep"];
-  if (r.state !== "open") return ["done", "keep"];
-  if (r.column === "new") return ["in_progress", "ready", "backlog", "done", "keep"];
-  if (r.column === "backlog") return ["in_progress", "ready", "done", "keep"];
-  return ["in_progress", "backlog", "done", "keep"];
+  const all: DraAction[] =
+    r.type === "PullRequest"
+      ? ["in_review", "in_progress", "done", "keep"]
+      : r.state !== "open"
+        ? ["done", "keep"]
+        : r.column === "new"
+          ? ["in_progress", "ready", "backlog", "done", "keep"]
+          : r.column === "backlog"
+            ? ["in_progress", "ready", "done", "keep"]
+            : r.column === "ready"
+              ? ["in_progress", "backlog", "done", "keep"]
+              : ["ready", "backlog", "done", "keep"];
+  return all.filter((a) => a !== OWN[r.column]);
 }
 
 export function draSteps(item: BoardItem, action: DraAction): ActionStep[] {
@@ -278,6 +333,7 @@ export async function judgeDra(
     development_cycle: null,
     milestone: null,
     opted_in: false,
+    kep: false,
     lane: null,
     readings: [],
     usage: { input_tokens: 0, cost: 0, cached: true },
@@ -291,6 +347,7 @@ export async function judgeDra(
   r.development_cycle = st.development_cycle;
   r.milestone = d.milestone ?? null;
   r.opted_in = d.labels.some((l) => l.name === OPTED_IN);
+  r.kep = item.repository.endsWith("/enhancements") || d.labels.some((l) => l.name.startsWith("stage/"));
   r.linked_prs = prs.slice(-6).map((p) => ({
     repository: p.repository,
     number: p.number,
@@ -301,6 +358,8 @@ export async function judgeDra(
   r.state_chars = JSON.stringify(st).length;
   // A KEP in the release is placed by its labels.
   if (column !== "new" && inRelease(r)) return r;
+  // In progress is placed by state alone: Jev could not tell stalled work from live there.
+  if (column === "progress") return r;
   const res = await jev.askCached<{ lane: JevChoice }>(st, laneQuestion(), 4, refresh);
   r.usage = { ...res.usage };
   r.lane = res.answers.lane ?? null;

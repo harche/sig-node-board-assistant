@@ -240,6 +240,15 @@ Work nobody has started. Cards move on when work starts, often in batches weeks 
   call. Being assigned alone is not the trigger: assigned cards often wait in Ready for months.
 - Other open issues stay.
 
+## Dynamic Resource Allocation: In progress
+
+Work under way. Placed by state alone; Jev is not asked.
+
+- Closed issues and merged or closed PRs → Done; open PRs ready for review → In review; draft PRs stay.
+- A KEP no longer in the release being developed (not in its milestone, or not `lead-opted-in`) → Backlog. A KEP in
+  the release stays.
+- Other open issues stay until they close.
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
@@ -263,7 +272,7 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 | SIG Node CI/Test Board (test)      | harche/5       | the same, with writes, for testing          |
 | SIG Node Bugs                      | kubernetes/185 | judges all four active columns (read-only)  |
 | SIG Node Bugs (test)               | harche/6       | the same, with writes, for testing          |
-| Dynamic Resource Allocation        | kubernetes/95  | judges New, Backlog, Ready (read-only)      |
+| Dynamic Resource Allocation        | kubernetes/95  | judges New to In progress (read-only)       |
 | Dynamic Resource Allocation (test) | harche/7       | the same, with writes, for testing          |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
