@@ -209,6 +209,14 @@ export function tally(tbl: TgTable, row: TgRow, skip: Set<string>): { runs: numb
   return { runs, failed };
 }
 
+/** The newest run in which `row` failed: its build id and start time, or null. */
+export function newestFailure(tbl: TgTable, row: TgRow): { build: string; started: number } | null {
+  const all = cells(row, tbl.timestamps.length);
+  const i = all.findIndex((v) => FAIL.has(v));
+  const build = tbl.column_ids?.[i];
+  return i >= 0 && build ? { build, started: tbl.timestamps[i]! } : null;
+}
+
 /** Run-length `statuses` expanded to one value per column, newest first. */
 export function cells(row: TgRow, n: number): number[] {
   const out: number[] = [];

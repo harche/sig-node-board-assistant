@@ -233,11 +233,16 @@ export function fragment(name: string): string {
     .map((r) => r.trim())
     .filter((r) => r.split(/\s+/).length >= 3);
   if (!runs.length) return "";
-  return runs
-    .reduce((a, b) => (b.length > a.length ? b : a))
-    .replace(/\s+/g, " ")
-    .slice(0, 60)
-    .trim();
+  return (
+    runs
+      .reduce((a, b) => (b.length > a.length ? b : a))
+      .replace(/\s+/g, " ")
+      .trim()
+      // Whole words only: a quoted search for a cut-off word matches nothing. A first word over 60 characters is cut.
+      .replace(/^(.{0,60})(?:\s.*)?$/, "$1")
+      .slice(0, 60)
+      .trim()
+  );
 }
 
 const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);

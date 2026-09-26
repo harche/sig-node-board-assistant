@@ -5,8 +5,8 @@ A Chrome extension that puts Jev's suggestion on every card of the
 [SIG Node Bugs](https://github.com/orgs/kubernetes/projects/185) and
 [Dynamic Resource Allocation](https://github.com/orgs/kubernetes/projects/95) boards, and on every failing or flaky
 job of a [TestGrid](https://testgrid.k8s.io) dashboard, with the evidence behind it, right on the page you already
-use. On a pull request's page it says, for each failing Prow job, whether the PR broke it. Nothing is written until
-you Apply or Accept.
+use. On a pull request's page it says, for each failing Prow job, whether the PR broke it; on an issue's page, whether
+the failure it reports still happens and which issues it duplicates. Nothing is written until you Apply or Accept.
 
 On the CI/Test board:
 
@@ -297,6 +297,22 @@ change broke it or it fails without the PR, and why.
 - The section suggests the Prow command that reruns what is not the PR's: `/retest` when nothing failing is the PR's,
   else one `/test <job>` per job. It only shows the command, with a Copy button: it writes nothing.
 
+## CI history and duplicates on an issue's page
+
+On SIG Node and DRA issues (`sig/node` or `wg/device-management`), two sidebar sections, each shown only when it has
+something to say:
+
+- **CI history**, for an issue that names CI jobs or tests: their run history on TestGrid (as the To do column reads
+  it), the newest failed run's junit failures and log lines, Jev's read of whether the problem is resolved (To do's
+  question), and whether that newest failure is still the one the issue reports. Verdicts: still failing, fails
+  differently now, looks fixed (suggest closing), looks fixed but too soon to close (the fresh-fix guard), and for a
+  closed issue failing again (suggest `/reopen`, unless an open duplicate tracks it now).
+- **Possible duplicates**: issues from the last year found by GitHub search on the issue's tests, jobs and title,
+  the five closest by shared words asked pairwise with To do's duplicate question (flake and failing-test issues) or
+  the Bugs backlog's (others). Shown from P 0.35; at 0.65 it names the likely duplicate and which one Jev would keep.
+
+Read-only: a suggested command is for the reader to post.
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
@@ -344,7 +360,8 @@ src/core/        pure logic, no browser APIs: GitHub, Jev and TestGrid clients, 
 src/background/  service worker: owns tokens and the cache, answers the content script's questions, checks writes
 src/content/     board page: column buttons, badges, hover cards, pane injection; workflows.ts holds what differs
                  per column
-src/item/        issue and PR pages: the same evidence block in the page sidebar, and the PR page's Failing CI
+src/item/        issue and PR pages: the same evidence block in the page sidebar, the PR page's Failing CI, and
+                 the issue page's CI history and duplicates
 src/options/     settings page
 tests/           vitest; fixtures/parity.json is a frozen snapshot of the CLI's outputs
 docs/design.md   why it is shaped this way

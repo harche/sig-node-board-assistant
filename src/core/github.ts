@@ -309,7 +309,7 @@ export class GitHubClient {
    *  query not already cached (aliased searches cost about one point of the 5,000 an hour, and do not count against
    *  REST search's 30 a minute). Results are kept for 30 minutes. */
   async searchIssues(queries: string[], n = 10, refresh = false): Promise<RawSearchIssue[][]> {
-    const key = (q: string) => `gsearch:${n}:${q}`;
+    const key = (q: string) => `gsearch2:${n}:${q}`;
     const out = new Map<string, RawSearchIssue[]>();
     if (!refresh)
       for (const q of queries) {
@@ -318,7 +318,8 @@ export class GitHubClient {
       }
     const todo = [...new Set(queries.filter((q) => !out.has(q)))];
     if (todo.length) {
-      const fields = "nodes { ... on Issue { number title state closedAt url body } }";
+      const fields =
+        "nodes { ... on Issue { number title state closedAt createdAt url body author { login } assignees(first: 5) { nodes { login } } } }";
       const query = `query(${todo.map((_, i) => `$q${i}: String!`).join(", ")}) { ${todo
         .map((_, i) => `s${i}: search(query: $q${i}, type: ISSUE, first: ${n}) { ${fields} }`)
         .join(" ")} }`;
@@ -327,8 +328,11 @@ export class GitHubClient {
         title: string;
         state: string;
         closedAt: string | null;
+        createdAt: string;
         url: string;
         body: string;
+        author: { login: string } | null;
+        assignees: { nodes: { login: string }[] } | null;
       };
       const data = await this.graphql<Record<string, { nodes: Node[] }>>(
         query,
@@ -347,6 +351,9 @@ export class GitHubClient {
             closed_at: x.closedAt,
             html_url: x.url,
             body: (x.body ?? "").slice(0, 3000),
+            created_at: x.createdAt,
+            author: x.author?.login ?? "ghost",
+            assignees: (x.assignees?.nodes ?? []).map((a) => a.login),
           }));
         await this.cache.set(key(q), xs);
         out.set(q, xs);
@@ -517,9 +524,9 @@ export class GitHubClient {
   }
 
   itemDetail(repo: string, kind: ItemKind, num: number, refresh = false): Promise<ItemDetail> {
-    // item2: details now carry the milestone; entries cached before that must not be reused.
+    // item3: details now carry the close time and assignees; entries cached before that must not be reused.
     return this.cache.cached(
-      `item2:${repo}#${num}`,
+      `item3:${repo}#${num}`,
       30 * MINUTE,
       async () => {
         const iss = await this.api<RawIssue>(`/repos/${repo}/issues/${num}`);
@@ -537,6 +544,8 @@ export class GitHubClient {
           createdAt: iss.created_at,
           url: iss.html_url,
           milestone: iss.milestone?.title ?? null,
+          closedAt: iss.closed_at ?? null,
+          assignees: (iss.assignees ?? []).map((a) => a.login),
           comments: (await this.paged<RawComment>(`/repos/${repo}/issues/${num}/comments`)).map(cm),
         };
         if (kind === "PullRequest") {
@@ -635,6 +644,9 @@ export interface RawSearchIssue {
   closed_at?: string | null;
   html_url: string;
   body?: string | null;
+  created_at?: string;
+  author?: string;
+  assignees?: string[];
 }
 
 interface RawIssue {
@@ -646,6 +658,8 @@ interface RawIssue {
   created_at: string;
   html_url: string;
   milestone?: { title: string } | null;
+  closed_at?: string | null;
+  assignees?: { login: string }[];
 }
 /** Timeline events the extension reads, cut to the fields it reads: raw events carry full user objects and the
  *  whole cross-referenced issue, and the cache lives in chrome.storage.local's 10 MB (overflow clears it all). */

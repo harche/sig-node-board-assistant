@@ -10,6 +10,7 @@ import type { BacklogResult } from "../core/backlog";
 import type { DraColumn, DraResult } from "../core/dra";
 import type { TgStep, TgResult } from "../core/tgreview";
 import type { CiJob, FailedCheck, PrChecks } from "../core/prci";
+import type { IssueCiResult, IssueDupsResult } from "../core/issuecheck";
 import type { TgRef } from "../core/testgrid";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
@@ -56,7 +57,9 @@ export type Request =
   | { type: "tg.judge"; ref: TgRef; status: "FAILING" | "FLAKY"; refresh?: boolean }
   | { type: "tg.apply"; steps: TgStep[] }
   | { type: "ci.checks"; repo: string; number: number; refresh?: boolean }
-  | { type: "ci.judge"; repo: string; number: number; check: FailedCheck; refresh?: boolean };
+  | { type: "ci.judge"; repo: string; number: number; check: FailedCheck; refresh?: boolean }
+  | { type: "issue.ci"; repo: string; number: number; refresh?: boolean }
+  | { type: "issue.dups"; repo: string; number: number; refresh?: boolean };
 
 export interface ResponseMap {
   "settings.get": { settings: Settings; configured: { github: boolean; typesafe: boolean } };
@@ -87,6 +90,10 @@ export interface ResponseMap {
   "tg.apply": { wrote: string[] };
   "ci.checks": PrChecks;
   "ci.judge": CiJob;
+  /** null when the issue is out of scope or names no job TestGrid has. */
+  "issue.ci": IssueCiResult | null;
+  /** null when the issue is out of scope. */
+  "issue.dups": IssueDupsResult | null;
 }
 
 export type Response<R extends Request> = ResponseMap[R["type"]];

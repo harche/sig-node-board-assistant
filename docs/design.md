@@ -292,6 +292,23 @@ PRs.
 - Not yet: posting the command (it would go through test mode's mirror), GitHub Actions checks, and the periodic
   jobs' record of the same test.
 
+## CI history and duplicates on the issue page
+
+`src/core/issuecheck.ts`, `src/item/issue.ts`. Read-only, tried on real kubernetes/kubernetes issues. Every question
+is one the extension already asks elsewhere: To do's `resolved` and `resolution` on To do's state, the TestGrid
+review's `tracks` on the newest failed run, and To do's or the Bugs backlog's duplicate pair.
+
+- The verdict uses the named test that failed most; the whole job only when the title names it, as the fresh-fix
+  guard does. #142439 names `pull-kubernetes-kind-dra-all` only as where a data race showed, and that job fails half
+  its runs for other reasons.
+- A closed issue whose test fails again suggests `/reopen`, unless the duplicate check finds an open issue tracking
+  it: #141469 (closed) fails again, and #141786 tracks it (P 0.81).
+- Duplicate candidates: GitHub search on the tests' names, the jobs and the title's longest words (four, three,
+  two), updated within a year, then the five sharing the most words. A test-name fragment is cut at a word: a quoted
+  search for half a word finds nothing (the TestGrid review's search had the same fault).
+- On #141786: still failing (3 and 10 of 179 runs, the newest failure the issue's at 0.95, the fix merged 4 days
+  ago and 49 of 50 runs clean since, too soon to close), duplicates #141614 (0.82) and #141469 (0.68), both closed.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

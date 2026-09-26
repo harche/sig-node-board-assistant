@@ -124,6 +124,14 @@ describe("fragment", () => {
         "E2eNode Suite.[It] [sig-node] MirrorPod when kubelet restarts [Serial] should not change status",
       ),
     ).toBe("MirrorPod when kubelet restarts should not change status"));
+  it("cuts a first word over 60 characters", () =>
+    expect(fragment(`${"x".repeat(80)} b c`)).toBe("x".repeat(60)));
+  it("cuts a long name at a word, since a quoted search for half a word finds nothing", () =>
+    expect(
+      fragment(
+        "[It] Probing container should not be restarted with a non-local redirect http liveness probe",
+      ),
+    ).toBe("Probing container should not be restarted with a non-local"));
 });
 
 const facts = (over: Partial<JobFacts> = {}): JobFacts => ({

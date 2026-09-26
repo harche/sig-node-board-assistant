@@ -17,6 +17,7 @@ import { judgeInfo } from "../core/needsinfo";
 import { judgeDra } from "../core/dra";
 import { judgeTg } from "../core/tgjudge";
 import { judgeCi, prChecks, type CiDeps } from "../core/prcijudge";
+import { inScope, judgeIssueCi, judgeIssueDups } from "../core/issuecheck";
 import {
   isTgDraft,
   mirrorTitle,
@@ -545,6 +546,23 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         cache,
       };
       return (await judgeCi(deps, req.repo, req.number, req.check, req.refresh)) as Out;
+    }
+    case "issue.ci":
+    case "issue.dups": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const detail = await gh.itemDetail(req.repo, "Issue", req.number, req.refresh);
+      if (!inScope(detail.labels.map((l) => l.name))) return null as Out;
+      const deps = {
+        tg: new TestGridClient(tgCache),
+        search: (qs: string[], n?: number, r?: boolean) => gh.searchIssues(qs, n, r),
+        jev,
+        cache,
+      };
+      if (req.type === "issue.dups")
+        return (await judgeIssueDups(deps, req.repo, req.number, detail, req.refresh)) as Out;
+      const prs = await gh.linkedPrs(req.repo, req.number, req.refresh);
+      return (await judgeIssueCi(deps, req.repo, req.number, detail, prs, req.refresh)) as Out;
     }
     case "tg.apply": {
       // In test mode, TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a

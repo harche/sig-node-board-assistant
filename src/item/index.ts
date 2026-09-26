@@ -9,6 +9,7 @@ import { Judged } from "../content/judged";
 import { isOurs } from "../content/dom";
 import { WORKFLOWS, type ColumnWorkflow, type PaneState } from "../content/workflows";
 import { PrCi } from "./ci";
+import { IssueCheck } from "./issue";
 
 /** The workflow of the column the item sits in. */
 function workflowFor(p: Placement): ColumnWorkflow<unknown> | null {
@@ -25,7 +26,7 @@ class ItemAssistant {
   private judged: Judged<unknown> | null = null;
   private wf: ColumnWorkflow<unknown> | null = null;
   private placement: Placement | null = null;
-  private ci: PrCi | null = null;
+  private ci: PrCi | IssueCheck | null = null;
   /** "repo#number" of the item the page currently shows; hash and tab changes keep it the same. */
   private current = "";
   private generation = 0;
@@ -55,7 +56,7 @@ class ItemAssistant {
       this.placement = null;
       this.ci = null;
       document.querySelector(".snba-evidence")?.remove();
-      document.querySelector(".snba-ci")?.remove();
+      document.querySelectorAll(".snba-ci").forEach((e) => e.remove());
       if (!ref) return;
       // Ticks for different items can overlap (fast navigation, a slow lookup): only the latest one may publish.
       const gen = ++this.generation;
@@ -63,10 +64,10 @@ class ItemAssistant {
       try {
         const s = await send({ type: "settings.get" });
         if (!live() || !s.configured.github || !s.configured.typesafe) return;
-        if (ref.pull) {
-          this.ci = new PrCi(ref.repo, ref.number, live);
-          void this.ci.run();
-        }
+        this.ci = ref.pull
+          ? new PrCi(ref.repo, ref.number, live)
+          : new IssueCheck(ref.repo, ref.number, live);
+        void this.ci.run();
         const placement = await send({ type: "item.lookup", repo: ref.repo, number: ref.number });
         if (!live() || !placement) return;
         const wf = workflowFor(placement);

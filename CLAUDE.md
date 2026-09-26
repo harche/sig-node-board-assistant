@@ -88,10 +88,11 @@ TestGrid (testgrid.k8s.io), GCS and GitHub search are only read; test on the rea
 kubernetes/kubernetes issue on a `[mirror] kubernetes/kubernetes#N` issue there (#55 mirrors #142268; #56 is a filed
 flaking-test issue). Never point writes at kubernetes/kubernetes without the user asking.
 
-### Failing CI on the PR page
+### Failing CI on the PR page, CI history and duplicates on the issue page
 
-Read-only (it shows a Prow command, never posts it), so test it on real kubernetes/kubernetes PRs with failing jobs,
-e.g. #142200. If it ever posts, the post goes through test mode like every other write.
+Read-only (they show a Prow command, never post it), so test them on real kubernetes/kubernetes items: PRs with
+failing jobs (e.g. #142200), flake issues (e.g. #141786 open, #141469 closed and failing again). If they ever post,
+the post goes through test mode like every other write.
 
 ### Access
 

@@ -57,6 +57,8 @@ export interface ItemDetail {
   comments: Comment[];
   /** The issue's milestone title, or null. */
   milestone?: string | null;
+  closedAt?: string | null;
+  assignees?: string[];
   isDraft?: boolean;
   additions?: number;
   deletions?: number;
