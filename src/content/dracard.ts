@@ -4,6 +4,7 @@
  *  One action, the suggested one preselected unless it is the reviewer's call. */
 import {
   decideDra,
+  COLUMN_TITLE,
   draLabel,
   DRA_TINT,
   draActions,
@@ -131,7 +132,7 @@ export function renderDraHoverCard(c: DraHoverContent): HTMLElement {
       canApply: c.canApply,
       label: draLabel(action, r.column),
       steps: c.fix(chosenDraSteps(c.item, r, o)),
-      where: `in ${r.column === "new" ? "New" : "Backlog"}`,
+      where: `in ${COLUMN_TITLE[r.column]}`,
       apply: c.apply,
       skip: c.skip,
     }),

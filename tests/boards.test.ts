@@ -22,15 +22,10 @@ describe("knownBoard", () => {
     expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual(all);
     expect(knownBoard({ owner: "harche", number: 6 })).toMatchObject({ workflows: all, writable: true });
   });
-  it("95 and its test copy work on New and Backlog", () => {
-    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual({
-      dranew: "🆕 New",
-      drabacklog: "📋 Backlog",
-    });
-    expect(knownBoard({ owner: "harche", number: 7 })).toMatchObject({
-      workflows: { dranew: "🆕 New", drabacklog: "📋 Backlog" },
-      writable: true,
-    });
+  it("95 and its test copy work on New, Backlog and Ready", () => {
+    const all = { dranew: "🆕 New", drabacklog: "📋 Backlog", draready: "🔖 Ready" };
+    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual(all);
+    expect(knownBoard({ owner: "harche", number: 7 })).toMatchObject({ workflows: all, writable: true });
   });
   it("a sandbox board is unknown", () => expect(knownBoard({ owner: "harche", number: 1 })).toBeUndefined());
 });

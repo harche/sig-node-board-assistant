@@ -15,6 +15,12 @@
  *    release_phases.md defines "in the release") → In progress; 10 of 13 KEPs moved there had the label.
  *  - Other open issues stay. Only 9 left Backlog in two years, so Jev's reading is shown and a move is the reviewer's.
  *
+ *  Ready: picked up when work starts. 45 moves left it.
+ *  - PRs, closed issues and KEPs in the release as in Backlog (11 of 12 moves to Done were closed items).
+ *  - An issue Jev reads as under way (P ≥ 0.9) → In progress, the reviewer's call: of 29 such cards in the record, 13
+ *    were moved then, 6 weeks later, 2 went to Done and 6 are still in Ready. Being assigned is not the trigger.
+ *  - Other open issues stay.
+ *
  *  A move only changes the Status: the maintainers add no comments or labels. */
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
@@ -23,6 +29,8 @@ import { choiceReading, type Reading } from "./readings";
 import type { ActionStep, BoardItem, ItemDetail, JevChoice, JevUsage, LinkedPr } from "./types";
 
 export const IN_PROGRESS_AT = 0.95;
+/** Ready: Jev reads the work as under way. A suggestion only: 19 of 29 such cards went to In progress, some later. */
+export const UNDERWAY_AT = 0.9;
 export const OPTED_IN = "lead-opted-in";
 
 export const DRA_LANE = {
@@ -33,8 +41,8 @@ export const DRA_LANE = {
   done: "✅ Done",
 } as const;
 
-export type DraColumn = "new" | "backlog";
-const COLUMN_TITLE: Record<DraColumn, string> = { new: "New", backlog: "Backlog" };
+export type DraColumn = "new" | "backlog" | "ready";
+export const COLUMN_TITLE: Record<DraColumn, string> = { new: "New", backlog: "Backlog", ready: "Ready" };
 
 export const DRA_ACTIONS = ["in_review", "in_progress", "ready", "backlog", "done", "keep"] as const;
 export type DraAction = (typeof DRA_ACTIONS)[number];
@@ -95,7 +103,11 @@ export function decideDra(r: DraResult): Decision {
     return { action: "in_review", why: "an open PR, ready for review", auto: true };
   }
   if (r.state !== "open") return { action: "done", why: "closed", auto: true };
-  return r.column === "new" ? decideNewIssue(r) : decideBacklogIssue(r);
+  return r.column === "new"
+    ? decideNewIssue(r)
+    : r.column === "backlog"
+      ? decideBacklogIssue(r)
+      : decideReadyIssue(r);
 }
 
 const pick = (a: JevChoice) => {
@@ -103,10 +115,12 @@ const pick = (a: JevChoice) => {
   return { choice: a.choice, pct: `${Math.round(p * 100)}%`, p };
 };
 
+/** No answer from Jev: nothing to go on, so the card is the reviewer's. */
+const NO_COLUMN: Decision = { action: "keep", why: "Jev gave no column", auto: false };
+
 function decideNewIssue(r: DraResult): Decision {
   const a = r.lane;
-  if (!a || !["in_progress", "ready", "backlog"].includes(a.choice))
-    return { action: "keep", why: "Jev gave no column", auto: false };
+  if (!a || !["in_progress", "ready", "backlog"].includes(a.choice)) return NO_COLUMN;
   const { choice, pct, p } = pick(a);
   const action = choice as DraAction;
   if (action === "in_progress" && p >= IN_PROGRESS_AT)
@@ -126,7 +140,8 @@ function decideBacklogIssue(r: DraResult): Decision {
       auto: true,
     };
   const a = r.lane;
-  if (a && (a.choice === "in_progress" || a.choice === "ready")) {
+  if (!a) return NO_COLUMN;
+  if (a.choice === "in_progress" || a.choice === "ready") {
     const { pct } = pick(a);
     return {
       action: a.choice,
@@ -143,12 +158,30 @@ function decideBacklogIssue(r: DraResult): Decision {
   };
 }
 
+function decideReadyIssue(r: DraResult): Decision {
+  if (inRelease(r))
+    return {
+      action: "in_progress",
+      why: `a KEP in the ${r.development_cycle} release: milestone ${r.milestone} and ${OPTED_IN}`,
+      auto: true,
+    };
+  if (!r.lane) return NO_COLUMN;
+  const p = r.lane.probabilities.in_progress ?? 0;
+  if (p >= UNDERWAY_AT)
+    return {
+      action: "in_progress",
+      why: `Jev reads the work as under way (${Math.round(p * 100)}%); the board often moves such cards weeks later, so it is your call`,
+      auto: false,
+    };
+  return { action: "keep", why: "nobody has started on it yet", auto: true };
+}
+
 export function draActions(r: DraResult): DraAction[] {
   if (r.type === "PullRequest") return ["in_review", "in_progress", "done", "keep"];
   if (r.state !== "open") return ["done", "keep"];
-  return r.column === "new"
-    ? ["in_progress", "ready", "backlog", "done", "keep"]
-    : ["in_progress", "ready", "done", "keep"];
+  if (r.column === "new") return ["in_progress", "ready", "backlog", "done", "keep"];
+  if (r.column === "backlog") return ["in_progress", "ready", "done", "keep"];
+  return ["in_progress", "backlog", "done", "keep"];
 }
 
 export function draSteps(item: BoardItem, action: DraAction): ActionStep[] {
@@ -267,7 +300,7 @@ export async function judgeDra(
   }));
   r.state_chars = JSON.stringify(st).length;
   // A KEP in the release is placed by its labels.
-  if (column === "backlog" && inRelease(r)) return r;
+  if (column !== "new" && inRelease(r)) return r;
   const res = await jev.askCached<{ lane: JevChoice }>(st, laneQuestion(), 4, refresh);
   r.usage = { ...res.usage };
   r.lane = res.answers.lane ?? null;

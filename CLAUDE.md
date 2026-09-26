@@ -68,6 +68,9 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
 - **Items (Backlog):** #42 (stays), #46 (KEP, milestone `v1.38` + `lead-opted-in`: In progress), #47 (KEP opted into
   `v1.36`: stays), #48 (closed: Done), #49 (open PR: In review). The test repo has milestones `v1.38` and `v1.36` and a
   `lead-opted-in` label. To test Backlog again, move them back to 📋 Backlog.
+- **Items (Ready):** #39 (nobody started: stays), #50 (assigned, says they are on it, fix PR #51: In progress, your
+  call), #52 (KEP opted into `v1.38`: In progress), #53 (closed: Done). To test Ready again, move them back to
+  🔖 Ready.
 
 ### Access
 

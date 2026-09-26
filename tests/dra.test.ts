@@ -65,14 +65,43 @@ describe("decideDra: Backlog", () => {
     ["a merged PR", pr({ state: "merged" }, "backlog"), "done", true],
     ["an open PR", pr({}, "backlog"), "in_review", true],
     ["a KEP opted into 1.38", backlog({ milestone: "v1.38", opted_in: true }), "in_progress", true],
-    ["a KEP opted into an earlier release", backlog({ milestone: "v1.36", opted_in: true }), "keep", true],
-    ["a KEP in the milestone but not opted in", backlog({ milestone: "v1.38" }), "keep", true],
+    [
+      "a KEP opted into an earlier release",
+      backlog({ milestone: "v1.36", opted_in: true, lane: lane("backlog", 0.9) }),
+      "keep",
+      true,
+    ],
+    [
+      "a KEP in the milestone but not opted in",
+      backlog({ milestone: "v1.38", lane: lane("backlog", 0.9) }),
+      "keep",
+      true,
+    ],
     ["an issue Jev reads as ready", backlog({ lane: lane("ready", 0.9) }), "ready", false],
     ["an issue Jev reads as under way", backlog({ lane: lane("in_progress", 0.99) }), "in_progress", false],
     ["an issue Jev reads as later work", backlog({ lane: lane("backlog", 0.9) }), "keep", true],
+    ["an issue without an answer", backlog(), "keep", false],
   ] as [string, DraResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
     expect(decideDra(r)).toMatchObject({ action, auto }),
   );
+});
+
+const ready = (over: Partial<DraResult> = {}) => base(over, "ready");
+
+describe("decideDra: Ready", () => {
+  it.each([
+    ["a closed issue", ready({ state: "closed" }), "done", true],
+    ["a draft PR", pr({ draft: true }, "ready"), "in_progress", true],
+    ["a KEP opted into 1.38", ready({ milestone: "v1.38", opted_in: true }), "in_progress", true],
+    ["an issue Jev reads as under way", ready({ lane: lane("in_progress", 0.92) }), "in_progress", false],
+    ["an issue Jev is less sure of", ready({ lane: lane("in_progress", 0.8) }), "keep", true],
+    ["an issue nobody started", ready({ lane: lane("ready", 0.9) }), "keep", true],
+    ["an issue without an answer", ready(), "keep", false],
+  ] as [string, DraResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
+    expect(decideDra(r)).toMatchObject({ action, auto }),
+  );
+  it("offers Backlog rather than Ready", () =>
+    expect(draActions(ready())).toEqual(["in_progress", "backlog", "done", "keep"]));
 });
 
 describe("draActions, labels and steps", () => {

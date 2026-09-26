@@ -215,6 +215,21 @@ release in development comes from the release table in `dra.ts`, so a milestone 
 When 95 was first read, 10 KEPs opted into v1.38 were still in Backlog. Other issues get New's Jev question for the
 bars; a move is never applied by Accept.
 
+## Dynamic Resource Allocation: Ready
+
+Same module. 45 moves left Ready: 12 to Done (11 closed), 28 to In progress, 8 to Backlog (mostly KEPs at a
+release's end). 25 of the 28 In progress moves had an assignee, but assignment is not the trigger: cards moved weeks
+after it, and two assigned in July are still in Ready. Evaluated as stay vs In progress on 94 cases (26 moves, taken
+when moved; 68 stays, each stint's midpoint and every open card now), with New's question:
+
+| Jev P(in progress) | flagged | moved then | moved later | still in Ready | other |
+| ------------------ | ------- | ---------- | ----------- | -------------- | ----- |
+| ≥ 0.9              | 29      | 13         | 6           | 6              | 4     |
+| ≥ 0.95             | 25      | 11         | 4           | 6              | 4     |
+
+Of the 34 stays Jev scored under 0.5, 20 stayed and 2 went to In progress. So ≥ 0.9 is suggested as the reviewer's
+call (19 of 29 ended In progress), below the 85% a card needs for Accept.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell
