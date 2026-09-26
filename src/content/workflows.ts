@@ -802,6 +802,11 @@ export const draProgressWorkflow = draWorkflow(
     `Check each card in ${column}: closed ones to Done, PRs ready for review to In review, KEPs no longer in the release to Backlog`,
 );
 
+export const draReviewWorkflow = draWorkflow(
+  "review",
+  (column) => `Check each card in ${column}: merged or closed PRs to Done, drafts and issues to In progress`,
+);
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
@@ -817,4 +822,5 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   drabacklog: draBacklogWorkflow as ColumnWorkflow<unknown>,
   draready: draReadyWorkflow as ColumnWorkflow<unknown>,
   draprogress: draProgressWorkflow as ColumnWorkflow<unknown>,
+  drareview: draReviewWorkflow as ColumnWorkflow<unknown>,
 };

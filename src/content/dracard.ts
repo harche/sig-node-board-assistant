@@ -155,8 +155,8 @@ export function renderDraEvidence(
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
   const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
-  // In progress is placed by state alone (dra.ts): no Jev there.
-  const jev = column !== "progress";
+  // In progress and In review are placed by state alone (dra.ts): no Jev there.
+  const jev = column !== "progress" && column !== "review";
   again.title = jev ? "Re-read the thread and linked PRs and ask Jev again" : "Re-read the item";
   again.addEventListener("click", async () => {
     again.disabled = true;

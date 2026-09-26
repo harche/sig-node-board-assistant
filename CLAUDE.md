@@ -74,6 +74,8 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
 - **Items (In progress):** #41, #44 (draft PR), #46 and #52 (KEPs in `v1.38`), #50 stay; #43 (open PR: In review),
   #45 (merged PR: Done), #47 (KEP opted into `v1.36`: Backlog), #54 (closed: Done). A fake KEP is marked by a
   `stage/*` label. To test In progress again, move the leavers back to 🏗 In progress.
+- **Items (In review):** #43 and #49 (open PRs) stay. To test the leavers, move #44 (draft: In progress), #45
+  (merged: Done), #54 (closed issue: Done) and an open issue such as #39 (In progress) into 👀 In review.
 
 ### Access
 

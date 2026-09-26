@@ -249,6 +249,13 @@ Work under way. Placed by state alone; Jev is not asked.
   the release stays.
 - Other open issues stay until they close.
 
+## Dynamic Resource Allocation: In review
+
+Open PRs waiting for their merge. Placed by state alone; Jev is not asked.
+
+- Merged or closed PRs → Done; draft PRs → In progress; issues → In progress (or Done when closed).
+- Open PRs ready for review stay: the ones people moved out early had no mark the others lacked.
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
@@ -272,7 +279,7 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 | SIG Node CI/Test Board (test)      | harche/5       | the same, with writes, for testing          |
 | SIG Node Bugs                      | kubernetes/185 | judges all four active columns (read-only)  |
 | SIG Node Bugs (test)               | harche/6       | the same, with writes, for testing          |
-| Dynamic Resource Allocation        | kubernetes/95  | judges New to In progress (read-only)       |
+| Dynamic Resource Allocation        | kubernetes/95  | judges all five active columns (read-only)  |
 | Dynamic Resource Allocation (test) | harche/7       | the same, with writes, for testing          |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a

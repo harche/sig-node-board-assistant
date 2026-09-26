@@ -126,6 +126,23 @@ describe("decideDra: In progress", () => {
   });
 });
 
+const review = (over: Partial<DraResult> = {}) => base(over, "review");
+
+describe("decideDra: In review", () => {
+  it.each([
+    ["a merged PR", pr({ state: "merged" }, "review"), "done", true],
+    ["a closed PR", pr({ state: "closed" }, "review"), "done", true],
+    ["a draft PR", pr({ draft: true }, "review"), "in_progress", true],
+    ["an open PR", pr({}, "review"), "keep", true],
+    ["an open issue", review(), "in_progress", true],
+    ["a closed issue", review({ state: "closed" }), "done", true],
+  ] as [string, DraResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
+    expect(decideDra(r)).toMatchObject({ action, auto }),
+  );
+  it("offers Backlog for a PR, never In review", () =>
+    expect(draActions(pr({}, "review"))).toEqual(["in_progress", "backlog", "done", "keep"]));
+});
+
 describe("draActions, labels and steps", () => {
   const item = { id: "PVTI", restId: 7, repository: "o/r", number: 1 } as BoardItem;
   it("offers PR columns for a PR and issue columns for an issue", () => {

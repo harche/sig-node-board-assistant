@@ -43,6 +43,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       drabacklog: "📋 Backlog",
       draready: "🔖 Ready",
       draprogress: "🏗 In progress",
+      drareview: "👀 In review",
     },
   },
   {
@@ -84,6 +85,7 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       drabacklog: "📋 Backlog",
       draready: "🔖 Ready",
       draprogress: "🏗 In progress",
+      drareview: "👀 In review",
     },
     writable: true,
   },

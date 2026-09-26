@@ -244,6 +244,13 @@ review → In review 21/22, and 37 open issues to Backlog or Ready, 29 of them K
   which the board does not mark, so they stay.
 - A KEP is an issue in kubernetes/enhancements or one with a `stage/*` label.
 
+## Dynamic Resource Allocation: In review
+
+Same module, no Jev. Moves out: merged or closed PRs → Done 156/157, open issues → In progress 4/4, drafts → In
+progress 2/3. 17 open PRs ready for review were moved out early (9 to In progress, 8 to Backlog); WIP titles, holds and
+needs-rebase did not mark them (of the 49 open PRs in In review when 95 was read, 7 said WIP and 11 needed a rebase),
+so open PRs stay and those moves are the reviewer's.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

@@ -29,6 +29,10 @@
  *  - Other open issues stay: 73 of 78 stayed until closed. Jev is not asked: it could not tell stalled work from
  *    live (21 of the 23 issues it read as stopped stayed).
  *
+ *  In review: open PRs wait here for their merge (156 of 157 closed or merged PRs left for Done). Merged or closed →
+ *  Done, draft → In progress (2 of 3), an issue → In progress (4 of 4). Open PRs ready for review stay: the 17 moved
+ *  out early had no mark the others lacked (7 of the 49 there now say WIP, 11 need a rebase). No Jev.
+ *
  *  A move only changes the Status: the maintainers add no comments or labels. */
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
@@ -49,12 +53,13 @@ export const DRA_LANE = {
   done: "✅ Done",
 } as const;
 
-export type DraColumn = "new" | "backlog" | "ready" | "progress";
+export type DraColumn = "new" | "backlog" | "ready" | "progress" | "review";
 export const COLUMN_TITLE: Record<DraColumn, string> = {
   new: "New",
   backlog: "Backlog",
   ready: "Ready",
   progress: "In progress",
+  review: "In review",
 };
 /** The action that would move a card to the column it is already in. */
 const OWN: Record<DraColumn, DraAction | null> = {
@@ -62,6 +67,7 @@ const OWN: Record<DraColumn, DraAction | null> = {
   backlog: "backlog",
   ready: "ready",
   progress: "in_progress",
+  review: "in_review",
 };
 
 export const DRA_ACTIONS = ["in_review", "in_progress", "ready", "backlog", "done", "keep"] as const;
@@ -140,6 +146,8 @@ function decideAny(r: DraResult): Decision {
       return decideReadyIssue(r);
     case "progress":
       return decideProgressIssue(r);
+    case "review":
+      return { action: "in_progress", why: "an issue: work on it is under way, not in review", auto: true };
   }
 }
 
@@ -226,7 +234,9 @@ function decideProgressIssue(r: DraResult): Decision {
 export function draActions(r: DraResult): DraAction[] {
   const all: DraAction[] =
     r.type === "PullRequest"
-      ? ["in_review", "in_progress", "done", "keep"]
+      ? r.column === "review"
+        ? ["in_progress", "backlog", "done", "keep"]
+        : ["in_review", "in_progress", "done", "keep"]
       : r.state !== "open"
         ? ["done", "keep"]
         : r.column === "new"
@@ -235,7 +245,9 @@ export function draActions(r: DraResult): DraAction[] {
             ? ["in_progress", "ready", "done", "keep"]
             : r.column === "ready"
               ? ["in_progress", "backlog", "done", "keep"]
-              : ["ready", "backlog", "done", "keep"];
+              : r.column === "review"
+                ? ["in_progress", "ready", "backlog", "done", "keep"]
+                : ["ready", "backlog", "done", "keep"];
   return all.filter((a) => a !== OWN[r.column]);
 }
 
@@ -358,8 +370,8 @@ export async function judgeDra(
   r.state_chars = JSON.stringify(st).length;
   // A KEP in the release is placed by its labels.
   if (column !== "new" && inRelease(r)) return r;
-  // In progress is placed by state alone: Jev could not tell stalled work from live there.
-  if (column === "progress") return r;
+  // In progress and In review are placed by state alone: Jev could not tell stalled work from live there.
+  if (column === "progress" || column === "review") return r;
   const res = await jev.askCached<{ lane: JevChoice }>(st, laneQuestion(), 4, refresh);
   r.usage = { ...res.usage };
   r.lane = res.answers.lane ?? null;

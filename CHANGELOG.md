@@ -32,6 +32,8 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
   and issues Jev reads as under way suggested for In progress as your call.
 - Dynamic Resource Allocation In progress: closed items to Done, PRs ready for review to In review, KEPs no longer in
   the release to Backlog; everything else stays. No Jev question: state decides.
+- Dynamic Resource Allocation In review: merged or closed PRs to Done, drafts and issues to In progress; open PRs
+  stay. No Jev question.
 - Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
   option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
 - Asks include comments Jev reads as asking someone to review or approve.
