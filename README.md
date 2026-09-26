@@ -256,6 +256,25 @@ Open PRs waiting for their merge. Placed by state alone; Jev is not asked.
 - Merged or closed PRs → Done; draft PRs → In progress; issues → In progress (or Done when closed).
 - Open PRs ready for review stay: the ones people moved out early had no mark the others lacked.
 
+## TestGrid review (testgrid.k8s.io)
+
+On a SIG Node dashboard's summary, Tackle judges every FAILING and FLAKY periodic job (`pull-*` presubmits are left
+out) and badges each row: tracked `#N`, comment, file issue, or watch.
+
+- Code reads the facts: TestGrid's run history, and from each of the newest three failed runs the failed junit test
+  cases and the build log's signal lines (Ginkgo's failure markers and summary, timeouts and kills, or the job's last
+  lines when no test ran).
+- Jev judges what kind of failure it is (a test failure, a suite or job timeout, infra) and whether each candidate
+  issue tracks it. Candidates come from one batched GraphQL search per job: the job, tab and test names in
+  kubernetes/kubernetes, the job in kubernetes/test-infra, and SIG Node's failing-test and flake issues.
+- Tracked (P ≥ 0.65) by an issue that already names the job: nothing to do. Tracked by one that does not: a comment
+  adding the job. A closed match, or 0.35–0.65: your call. Untracked and FAILING: a new issue from the k/k
+  failing-test template. Untracked and FLAKY: an issue is your call when it failed 5+ runs or 20%+ of them, else watch.
+- While the review is tried out, writes go to `harche/sig-node-board-test` only: new issues are opened there, and a
+  comment meant for a kubernetes/kubernetes issue goes on its `[mirror]` issue there.
+
+The hover card takes TestGrid's look (its buttons, panel colours and status colours).
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),

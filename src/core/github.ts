@@ -257,6 +257,96 @@ export class GitHubClient {
     return { repository: c.html_url.split("/").slice(3, 5).join("/"), number: c.number };
   }
 
+  /** Issues matching each search query, newest-updated first, at most `n` each. One GraphQL request carries every
+   *  query not already cached (aliased searches cost about one point of the 5,000 an hour, and do not count against
+   *  REST search's 30 a minute). Results are kept for 30 minutes. */
+  async searchIssues(queries: string[], n = 10, refresh = false): Promise<RawSearchIssue[][]> {
+    const key = (q: string) => `gsearch:${n}:${q}`;
+    const out = new Map<string, RawSearchIssue[]>();
+    if (!refresh)
+      for (const q of queries) {
+        const hit = await this.cache.get<RawSearchIssue[]>(key(q), 30 * MINUTE);
+        if (hit) out.set(q, hit);
+      }
+    const todo = [...new Set(queries.filter((q) => !out.has(q)))];
+    if (todo.length) {
+      const fields = "nodes { ... on Issue { number title state closedAt url body } }";
+      const query = `query(${todo.map((_, i) => `$q${i}: String!`).join(", ")}) { ${todo
+        .map((_, i) => `s${i}: search(query: $q${i}, type: ISSUE, first: ${n}) { ${fields} }`)
+        .join(" ")} }`;
+      type Node = {
+        number?: number;
+        title: string;
+        state: string;
+        closedAt: string | null;
+        url: string;
+        body: string;
+      };
+      const data = await this.graphql<Record<string, { nodes: Node[] }>>(
+        query,
+        Object.fromEntries(todo.map((q, i) => [`q${i}`, `${q} sort:updated-desc`])),
+      );
+      for (const [i, q] of todo.entries()) {
+        // A failed alias comes back null beside the others' data: an error, not "nothing found".
+        const hit = data[`s${i}`];
+        if (!hit) throw new Error(`GitHub search failed for: ${q}`);
+        const xs = hit.nodes
+          .filter((x) => x.number)
+          .map((x) => ({
+            number: x.number!,
+            title: x.title,
+            state: x.state.toLowerCase() as "open" | "closed",
+            closed_at: x.closedAt,
+            html_url: x.url,
+            body: (x.body ?? "").slice(0, 3000),
+          }));
+        await this.cache.set(key(q), xs);
+        out.set(q, xs);
+      }
+    }
+    return queries.map((q) => out.get(q) ?? []);
+  }
+
+  /** An issue's whole body and every comment, as one text. With `mirrorRepo`, the comments on its
+   *  "[mirror] <repo>#<n>" issue there too (where the TestGrid review writes while being tried out). */
+  issueText(repo: string, number: number, refresh = false, mirrorRepo?: string): Promise<string> {
+    return this.cache.cached(
+      `issuetext:${repo}#${number}:${mirrorRepo ?? ""}`,
+      10 * MINUTE,
+      async () => {
+        const body = (await this.api<{ body?: string | null }>(`/repos/${repo}/issues/${number}`)).body ?? "";
+        const comments = await this.paged<{ body?: string }>(`/repos/${repo}/issues/${number}/comments`);
+        const parts = [body, ...comments.map((c) => c.body ?? "")];
+        if (mirrorRepo) {
+          const title = `[mirror] ${repo}#${number}`;
+          const all = await this.paged<{ number: number; title: string }>(`/repos/${mirrorRepo}/issues`, {
+            state: "all",
+          });
+          const m = all.find((x) => x.title === title);
+          if (m)
+            parts.push(
+              ...(
+                await this.paged<{ body?: string }>(`/repos/${mirrorRepo}/issues/${m.number}/comments`)
+              ).map((c) => c.body ?? ""),
+            );
+        }
+        return parts.join("\n");
+      },
+      refresh,
+    );
+  }
+
+  /** Opens an issue; returns its number. */
+  async createIssue(repo: string, title: string, body: string, labels: string[]): Promise<number> {
+    const path = `/repos/${repo}/issues`;
+    try {
+      const r = await this.octokit.request(`POST ${path}`, { title, body, labels });
+      return (r.data as { number: number }).number;
+    } catch (e) {
+      throw toGitHubError(e, path);
+    }
+  }
+
   /** Comments on an issue or PR (the issues comments route serves both); how Prow commands are sent. Skipped when
    *  the token's user already left the same comment, so a retry after a failed move does not post it twice. */
   async comment(repo: string, number: number, body: string): Promise<void> {
@@ -490,6 +580,15 @@ interface RawProjectItem {
     closed_at?: string | null;
   };
 }
+export interface RawSearchIssue {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  closed_at?: string | null;
+  html_url: string;
+  body?: string | null;
+}
+
 interface RawIssue {
   title: string;
   body: string | null;

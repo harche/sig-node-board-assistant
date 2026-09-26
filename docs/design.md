@@ -251,6 +251,27 @@ progress 2/3. 17 open PRs ready for review were moved out early (9 to In progres
 needs-rebase did not mark them (of the 49 open PRs in In review when 95 was read, 7 said WIP and 11 needed a rebase),
 so open PRs stay and those moves are the reviewer's.
 
+## TestGrid review
+
+`src/core/tgreview.ts` (facts, evidence, decisions, drafts), `src/core/tgjudge.ts` (fetching and Jev),
+`src/core/prompts/testgrid.ts`, `src/testgrid/` (the content script). Evaluated against 2026 sig/node failing-test
+and flake issues in kubernetes/kubernetes; GCS keeps Prow logs about 90 days, so 28 issues (June to September) had
+their runs' logs.
+
+- Evidence is where the CLI fell short. Its junit parser read each test case's `classname` ("E2eNode Suite") as its
+  name, and a build log's tail is the kubetest wrapper's traceback on every failed run. With the tail and those names
+  Jev read today's jobs badly; with real names and signal lines it read them well.
+- Kind of failure (test failure, suite timeout, infra) against the issues' own account: 24/26. The misses: a kubelet
+  startup panic from a product change, read as infra; a run that both timed out and was OOM-killed.
+- Tracking, each issue's runs against the real issue and up to 5 lookalikes (run URLs stripped): at P ≥ 0.65 the real
+  issue 25/28, others 11/119, most of them duplicates people themselves linked (the same test's flake filed twice).
+- Today's 37 jobs: 12 read as tracked, 11 right on reading; the kind DRA skew jobs' cause (1.33 artifacts removed)
+  was tracked in kubernetes/test-infra, so test-infra is searched too.
+- TestGrid marks a failed cell with several values (FAIL 12, FLAKY 13, TIMED_OUT 9, BUILD_FAIL 11, …); all count.
+- Search: REST search allows 30 requests a minute even with a token; GraphQL search, several queries aliased in one
+  request, costs about a point of 5,000 an hour. One request per job: a dashboard of 16 jobs in about 7 seconds.
+- Not yet: clustering jobs that fail the same way into one issue.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

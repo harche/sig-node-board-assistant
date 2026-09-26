@@ -123,6 +123,9 @@ export interface ActionBox {
   /** The chosen action's name and steps (Prow fixes included). */
   label: string;
   steps: ActionStep[];
+  /** What the steps do, when they are not board steps (TestGrid's issues and comments): replaces describe(steps),
+   *  and `writes` says whether there is anything to apply. */
+  summary?: { text: string; writes: boolean };
   /** Where Skip leaves the card: "in Triage", "in To do", or "" for wherever it is. */
   where: string;
   apply(): void;
@@ -152,13 +155,13 @@ export function actionBox(c: ActionBox): HTMLElement {
     h(
       "div.snba-hc-buttons",
       {},
-      button("Apply", "primary", locked || !c.steps.length, c.apply),
+      button("Apply", "primary", locked || !(c.summary ? c.summary.writes : c.steps.length), c.apply),
       button("Skip", "invisible", locked, c.skip),
     ),
     h(
       "ul.snba-hc-steps",
       {},
-      h("li", {}, h("b", {}, c.label), h("span.snba-muted", {}, `: ${describe(c.steps)}`)),
+      h("li", {}, h("b", {}, c.label), h("span.snba-muted", {}, `: ${c.summary?.text ?? describe(c.steps)}`)),
       h(
         "li",
         {},

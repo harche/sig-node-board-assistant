@@ -8,6 +8,8 @@ import type { BugResult } from "../core/bugs";
 import type { InfoResult } from "../core/needsinfo";
 import type { BacklogResult } from "../core/backlog";
 import type { DraColumn, DraResult } from "../core/dra";
+import type { TgStep, TgResult } from "../core/tgreview";
+import type { TgRef } from "../core/testgrid";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -45,7 +47,9 @@ export type Request =
   | { type: "backlog.judge"; item: BoardItem; refresh?: boolean }
   | { type: "backlog.duplicates"; board: BoardRef; targets: BoardItem[] }
   | { type: "dra.judge"; column: DraColumn; item: BoardItem; refresh?: boolean }
-  | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
+  | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] }
+  | { type: "tg.judge"; ref: TgRef; status: "FAILING" | "FLAKY"; refresh?: boolean }
+  | { type: "tg.apply"; steps: TgStep[] };
 
 export interface ResponseMap {
   "settings.get": { settings: Settings; configured: { github: boolean; typesafe: boolean } };
@@ -71,6 +75,9 @@ export interface ResponseMap {
   "backlog.duplicates": Record<number, DuplicateOf | null>;
   "dra.judge": DraResult;
   "item.apply": { ok: true };
+  "tg.judge": TgResult;
+  /** What was written, as `repo#number` of each issue created or commented on. */
+  "tg.apply": { wrote: string[] };
 }
 
 export type Response<R extends Request> = ResponseMap[R["type"]];

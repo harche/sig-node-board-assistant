@@ -1,4 +1,4 @@
-// Bundles the three extension entry points with esbuild and copies the static files into dist/.
+// Bundles the extension entry points with esbuild and copies the static files into dist/.
 // `node scripts/build.mjs --watch` rebuilds on change (reload the unpacked extension in chrome://extensions).
 import * as esbuild from "esbuild";
 import { cp, mkdir, rm } from "node:fs/promises";
@@ -24,6 +24,7 @@ const builds = [
     entryPoints: {
       content: "src/content/index.ts",
       item: "src/item/index.ts",
+      testgrid: "src/testgrid/index.ts",
       options: "src/options/index.ts",
     },
     format: "iife",

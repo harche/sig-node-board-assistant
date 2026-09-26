@@ -34,6 +34,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
   the release to Backlog; everything else stays. No Jev question: state decides.
 - Dynamic Resource Allocation In review: merged or closed PRs to Done, drafts and issues to In progress; open PRs
   stay. No Jev question.
+- TestGrid review on testgrid.k8s.io: per failing or flaky periodic job, what fails (from junit and build-log signal
+  lines), whether an issue tracks it, and a comment or a new issue drafted from the k/k templates; writes go to the
+  test repo while it is tried out.
 - Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
   option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
 - Asks include comments Jev reads as asking someone to review or approve.

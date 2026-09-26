@@ -43,6 +43,8 @@ export interface TgTable {
   query?: string;
   /** Run start times in ms, newest first; one per column. */
   timestamps: number[];
+  /** Build ids, one per column (TestGrid prefixes each with U+E000). */
+  column_ids?: string[];
   tests: TgRow[];
 }
 
@@ -53,6 +55,7 @@ function compact(t: TgTable): TgTable {
   return {
     query: t.query,
     timestamps: t.timestamps ?? [],
+    column_ids: (t.column_ids ?? []).map((c) => c.replace(/^\uE000/, "")),
     tests: (t.tests ?? []).map((r) => ({ name: r.name, statuses: r.statuses })),
   };
 }
@@ -252,13 +255,17 @@ export class TestGridClient {
     );
   }
 
-  table(ref: TgRef): Promise<TgTable> {
-    return this.cache.cached(`tg:table:${ref.dashboard}#${ref.tab}`, 30 * MINUTE, async () =>
-      compact(
-        await this.json<TgTable>(
-          `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}`,
+  table(ref: TgRef, refresh = false): Promise<TgTable> {
+    return this.cache.cached(
+      `tg:table2:${ref.dashboard}#${ref.tab}`,
+      30 * MINUTE,
+      async () =>
+        compact(
+          await this.json<TgTable>(
+            `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}`,
+          ),
         ),
-      ),
+      refresh,
     );
   }
 

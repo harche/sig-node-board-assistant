@@ -77,6 +77,13 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
 - **Items (In review):** #43 and #49 (open PRs) stay. To test the leavers, move #44 (draft: In progress), #45
   (merged: Done), #54 (closed issue: Done) and an open issue such as #39 (In progress) into 👀 In review.
 
+### TestGrid review
+
+TestGrid (testgrid.k8s.io), GCS and GitHub search are only read; test on the real dashboards. Every write goes to
+`harche/sig-node-board-test` (`TG_TEST_REPO` in `src/core/tgreview.ts`): new issues there, and comments for a
+kubernetes/kubernetes issue on a `[mirror] kubernetes/kubernetes#N` issue there (#55 mirrors #142268; #56 is a filed
+flaking-test issue). Never point writes at kubernetes/kubernetes without the user asking.
+
 ### Access
 
 - **Token:** a fine-grained GitHub token has one resource owner. The test boards need their own token with

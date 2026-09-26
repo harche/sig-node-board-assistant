@@ -625,3 +625,58 @@
   font-weight: var(--base-text-weight-semibold, 600);
   line-height: 1.25;
 }
+
+/* TestGrid (testgrid.k8s.io): the page's own look, not GitHub's. Its buttons are the browser's, so ours are left
+   unstyled; the hover card copies the summary rows' panel; badges use TestGrid's status colours. The variables apply
+   only where the TestGrid script marks the page. */
+html.snba-tg {
+  --bgColor-default: #fff;
+  --overlay-bgColor: #ebeff9;
+  --borderColor-default: #6b90da;
+  --borderColor-muted: #b8c9ee;
+  --borderRadius-large: 6px;
+  --borderRadius-medium: 6px;
+  --shadow-floating-small: 0 2px 6px rgb(0 0 0 / 0.2);
+  --fgColor-default: #000;
+  --fgColor-muted: #555;
+  --fgColor-accent: #0000cc;
+  --fgColor-success: #008a22;
+  --fgColor-danger: #aa0000;
+  --fgColor-attention: #660099;
+  --borderColor-accent-emphasis: #0000cc;
+  --borderColor-success-emphasis: #00cc33;
+  --borderColor-danger-emphasis: #aa0000;
+  --borderColor-attention-emphasis: #660099;
+  --text-body-size-small: 12px;
+}
+html.snba-tg .snba-hovercard,
+html.snba-tg .snba-badge,
+html.snba-tg .snba-tg-status {
+  font-family: Verdana, Arial, Helvetica, sans-serif;
+}
+html.snba-tg .snba-hovercard {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(480px, calc(100vh - 32px));
+}
+html.snba-tg .snba-hovercard a {
+  color: #0000cc;
+}
+.snba-tg-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+}
+.snba-tg-status {
+  font-size: 10.2px;
+  color: #555;
+}
+.tab-name .snba-badge {
+  margin-left: 8px;
+  vertical-align: middle;
+  background: #fff;
+}
+.snba-hovercard code {
+  font-size: 11px;
+  word-break: break-word;
+}

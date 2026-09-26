@@ -15,6 +15,8 @@ import type { AuthorResult } from "../core/author";
 import { judgeBug } from "../core/bugs";
 import { judgeInfo } from "../core/needsinfo";
 import { judgeDra } from "../core/dra";
+import { judgeTg } from "../core/tgjudge";
+import { isTgDraft, mirrorTitle, TG_TEST_REPO } from "../core/tgreview";
 import { judgeBacklog, shortlist } from "../core/backlog";
 import { BUG_DUPLICATE_QUESTIONS } from "../core/prompts/backlog";
 import { noulReading } from "../core/readings";
@@ -501,6 +503,61 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       const { gh, jev } = await clients();
       if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
       return (await duplicates(gh, jev, req.board, req.targets)) as Out;
+    }
+    case "tg.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      return (await judgeTg(
+        {
+          table: (ref, refresh) => new TestGridClient(tgCache).table(ref, refresh),
+          search: (qs, n, r) => gh.searchIssues(qs, n, r),
+          issueText: (repo, n, r) => gh.issueText(repo, n, r, TG_TEST_REPO),
+          jev,
+          cache,
+        },
+        req.ref,
+        req.status,
+        req.refresh,
+      )) as Out;
+    }
+    case "tg.apply": {
+      // TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a comment meant for
+      // another repo's issue goes on that issue's mirror there. Only bodies this extension drafted are written.
+      const { gh } = await clients();
+      const wrote: string[] = [];
+      for (const st of req.steps)
+        if (!isTgDraft(st.body)) throw new Error("refusing a body the extension did not draft");
+      for (const st of req.steps) {
+        if (st.kind === "issue") {
+          const labels = st.labels.filter((l) => ["kind/failing-test", "kind/flake", "sig/node"].includes(l));
+          // An open issue with the same title (an earlier Accept, or a create that timed out after GitHub made it)
+          // is the one to keep, not a second copy.
+          const open = await gh.paged<{ number: number; title: string; pull_request?: unknown }>(
+            `/repos/${TG_TEST_REPO}/issues`,
+            { state: "open" },
+          );
+          const same = open.find((x) => !x.pull_request && x.title === st.title);
+          wrote.push(
+            `${TG_TEST_REPO}#${same?.number ?? (await gh.createIssue(TG_TEST_REPO, st.title, st.body, labels))}`,
+          );
+        } else {
+          const title = mirrorTitle(st.repo, st.number);
+          const all = await gh.paged<{ number: number; title: string }>(`/repos/${TG_TEST_REPO}/issues`, {
+            state: "all",
+          });
+          const n =
+            all.find((x) => x.title === title)?.number ??
+            (await gh.createIssue(
+              TG_TEST_REPO,
+              title,
+              `Stands in for https://github.com/${st.repo}/issues/${st.number} while the TestGrid review is tried out.`,
+              [],
+            ));
+          await gh.comment(TG_TEST_REPO, n, st.body);
+          wrote.push(`${TG_TEST_REPO}#${n}`);
+        }
+      }
+      return { wrote } as Out;
     }
     case "item.apply": {
       // The only write path. Refused unless the board is registered as writable (the test board), and every step
