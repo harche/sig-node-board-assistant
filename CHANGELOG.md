@@ -23,6 +23,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
 - SIG Node Bugs Triaged and High Priority: close fixed bugs and duplicates, nudge and unassign quiet self-assigned
   assignees, add a missing priority and move a card to its priority's column, flag High Priority cards with nobody
   assigned. The lifecycle bot's work (stale, rotten, closing quiet issues) is left to it in every column.
+- Dynamic Resource Allocation (kubernetes/95) New: PRs to In review, In progress (drafts) or Done by their state,
+  closed issues to Done, open issues to In progress, Ready or Backlog by Jev's pick, following the board's record of
+  485 moves; only a Status move. Test copy at harche/7.
 - Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
   option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
 - Asks include comments Jev reads as asking someone to review or approve.

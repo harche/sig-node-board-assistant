@@ -33,6 +33,8 @@ import {
   renderBacklogEvidence,
   renderBacklogHoverCard,
 } from "./backlogcard";
+import { decideDraNew, DRA_NEW_TINT, type DraNewAction, type DraNewResult } from "../core/dranew";
+import { chosenDraNew, chosenDraNewSteps, renderDraNewEvidence, renderDraNewHoverCard } from "./dranewcard";
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
@@ -700,6 +702,81 @@ export const backlogWorkflow: ColumnWorkflow<BacklogResult> = {
   },
 };
 
+// ---------------------------------------------------------------------------------------------------- DRA New
+
+const DRA_NEW_BADGE: Record<DraNewAction, string> = {
+  in_review: "in review",
+  in_progress: "in progress",
+  ready: "ready",
+  backlog: "backlog",
+  done: "done",
+  keep: "new",
+};
+
+/** The New column of the Dynamic Resource Allocation board (kubernetes/95): PRs and closed items by their state, open
+ *  issues by Jev's pick, which is the reviewer's call unless Jev is sure work is under way. */
+export const draNewWorkflow: ColumnWorkflow<DraNewResult> = {
+  judge: (item, refresh) => send({ type: "dranew.judge", item, refresh }),
+  badge(r, o) {
+    const a = chosenDraNew(r, o);
+    const unsure = !o.action && !decideDraNew(r).auto;
+    const word = DRA_NEW_BADGE[a];
+    return { tint: unsure ? "BORDERLINE" : DRA_NEW_TINT[a], text: unsure ? `${word}?` : word };
+  },
+  recommended(item, r, _fields, o) {
+    if (!o.action && !decideDraNew(r).auto) return null;
+    const a = chosenDraNew(r, o);
+    const steps = chosenDraNewSteps(item, r, o);
+    return steps.length ? { tint: DRA_NEW_TINT[a], steps, kind: a } : null;
+  },
+  steps: (item, r, _fields, o) => chosenDraNewSteps(item, r, o),
+  override(r, o, key, value) {
+    const rest = omit(o, key);
+    const d = decideDraNew(r);
+    return key === "action" && value === d.action && d.auto ? rest : { ...rest, [key]: value };
+  },
+  needsHuman: (r, o) => !o.action && !decideDraNew(r).auto,
+  hover: (c) =>
+    renderDraNewHoverCard({
+      fix: c.fix,
+      item: c.item,
+      result: c.result,
+      overrides: c.overrides,
+      setOverride: c.setOverride,
+      applied: c.applied,
+      canApply: c.canApply,
+      scope: c.scope,
+      apply: () => c.apply("chosen"),
+      skip: c.skip,
+    }),
+  hoverKey: (r) => {
+    const d = decideDraNew(r);
+    return `${d.action}|${d.auto}|${r.state}|${r.draft}|${r.lane?.choice ?? ""}`;
+  },
+  pane: (adapter, item, st, rejudge) =>
+    renderDraNewEvidence(
+      adapter,
+      item,
+      st.state === "done" ? { state: "done", result: st.result } : st,
+      rejudge,
+      SECTION_TITLE,
+    ),
+  runTip: (column) =>
+    `Place each card in ${column}: PRs by their state, open issues by Jev's reading of the thread and linked PRs`,
+  acceptTip: (n) => {
+    const c = (k: string) => n[k] ?? 0;
+    return [
+      c("in_review") && `${c("in_review")} to In review`,
+      c("in_progress") && `${c("in_progress")} to In progress`,
+      c("ready") && `${c("ready")} to Ready`,
+      c("backlog") && `${c("backlog")} to Backlog`,
+      c("done") && `${c("done")} to Done`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  },
+};
+
 export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   triage: triageWorkflow as ColumnWorkflow<unknown>,
   todo: todoWorkflow as ColumnWorkflow<unknown>,
@@ -711,4 +788,5 @@ export const WORKFLOWS: Record<string, ColumnWorkflow<unknown>> = {
   info: infoWorkflow as ColumnWorkflow<unknown>,
   backlog: backlogWorkflow as ColumnWorkflow<unknown>,
   high: backlogWorkflow as ColumnWorkflow<unknown>,
+  dranew: draNewWorkflow as ColumnWorkflow<unknown>,
 };

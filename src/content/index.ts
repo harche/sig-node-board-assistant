@@ -9,7 +9,17 @@ import { boardFromUrl, knownBoard } from "../core/boards";
 import type { ActionStep, BoardItem, BoardRef } from "../core/types";
 import { send } from "../shared/messages";
 import { attachTooltip, findSidebar, nativeButton, PANE_SIDEBAR, placeSection } from "./adapters";
-import { cardsIn, columns, isOurs, itemLink, paneItemId, placeBadge, placeRunButton, SEL } from "./dom";
+import {
+  boardFiltered,
+  cardsIn,
+  columns,
+  isOurs,
+  itemLink,
+  paneItemId,
+  placeBadge,
+  placeRunButton,
+  SEL,
+} from "./dom";
 import type { PaneState } from "./workflows";
 import { HoverCard, type Applied } from "./hovercard";
 import { Judged } from "./judged";
@@ -124,6 +134,11 @@ class BoardAssistant<R> {
   private accepted = false;
   /** What the last Accept did; the pill shows it until the next Tackle or Cancel. */
   private applySummary: string | null = null;
+  /** Cards the board has drawn in the column, as of the last scan. */
+  private drawn: number[] = [];
+  private seen = "";
+  /** Items a write moved out of the column since the last read. */
+  private gone = new Set<number>();
 
   constructor(
     private page: Page,
@@ -186,6 +201,13 @@ class BoardAssistant<R> {
     }
     // Every card gets its badge from the start: before it is judged the badge is the card's own Tackle.
     const cards = cardsIn(document, this.column);
+    const drawn = cards.map((c) => c.restId);
+    const seen = `${drawn.join()}|${boardFiltered()}`;
+    if (col && seen !== this.seen) {
+      this.drawn = drawn;
+      this.seen = seen;
+      this.paintRunButton();
+    }
     for (const c of cards) {
       let badge = c.el.querySelector<HTMLElement>(SEL.badge);
       // GitHub can reuse a card element for another item; a badge (and tint) from the old item is stale.
@@ -219,6 +241,7 @@ class BoardAssistant<R> {
     if (this.load.state === "loading" || this.running() || this.busy()) return;
     this.started = true;
     this.accepted = false;
+    this.gone.clear();
     this.hover.close();
     this.applied.clear();
     this.skipped.clear();
@@ -377,7 +400,10 @@ class BoardAssistant<R> {
     let state: string;
     let text: string;
     let title: string;
-    if (!this.started) {
+    const empty = this.empty() && !this.busy();
+    if (empty) {
+      [state, text, title] = ["idle", "Tackle", `${this.column} is empty: nothing to tackle`];
+    } else if (!this.started) {
       [state, text, title] = ["idle", "Tackle", this.wf.runTip(this.column)];
     } else if (this.load.state === "loading") {
       [state, text, title] = ["running", "Loading", `Reading ${this.column}`];
@@ -409,7 +435,18 @@ class BoardAssistant<R> {
     const t = b.querySelector<HTMLElement>(".snba-run-text")!;
     if (t.textContent !== text) t.textContent = text;
     b.dataset.tip = title;
+    // Without keys a click still opens the options page.
+    b.setAttribute("aria-disabled", String(empty && this.configured.github && this.configured.typesafe));
     this.paintReview();
+  }
+
+  /** Nothing to tackle. Once the column is read, its items decide (a view filter can hide every card), less those a
+   *  write moved out, unless the board draws a card the read did not have; before, the drawn cards decide, when no
+   *  filter hides any. */
+  private empty(): boolean {
+    if (this.load.state === "loaded")
+      return [...this.items.keys(), ...this.drawn].every((id) => this.gone.has(id));
+    return this.load.state === "idle" && !this.drawn.length && !boardFiltered();
   }
 
   /** A write is in flight: the header's Accept, or one item's own button. Tackle and Cancel wait for it. */
@@ -420,7 +457,8 @@ class BoardAssistant<R> {
   /** Every item judged (or Accept under way): Accept and Cancel take Tackle's place in the header. */
   private reviewing(): boolean {
     if (this.applying) return true;
-    if (!this.started || this.load.state !== "loaded" || !this.items.size || this.running()) return false;
+    if (this.empty() || !this.started || this.load.state !== "loaded" || !this.items.size || this.running())
+      return false;
     // Once Accept has run, Tackle comes back to re-read what is left.
     return !this.accepted;
   }
@@ -549,6 +587,7 @@ class BoardAssistant<R> {
     try {
       await send({ type: "item.apply", board: this.board, restId, steps });
       this.applied.set(restId, { state: "done" });
+      if (steps.some((s) => s.kind === "move" && s.lane !== this.column)) this.gone.add(restId);
     } catch (e) {
       this.applied.set(restId, { state: "error", message: e instanceof Error ? e.message : String(e) });
     }

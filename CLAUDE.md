@@ -61,7 +61,10 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
 - **Labels:** the ones 95's items use were added to the test repo, among them `sig/scheduling`, `sig/testing`,
   `sig/api-machinery`, `kind/api-change`, `kind/kep`, `needs-priority`, `lifecycle/stale`, `lifecycle/rotten`,
   `lead-opted-in`, `tracked/yes`, `stage/alpha|beta|stable`, `wg/workload-aware-scheduling`.
-- **Items:** none yet. Add fake issues and PRs per column as its workflows are built.
+- **Items (New):** issues #39 (a sub-task: Ready), #41 (assigned bug with open fix PR #43: In progress), #42 (a gate
+  removal in a later release: Backlog), #40 (closed, added by hand since auto-add only takes open items); PRs #43
+  (open: In review), #44 (draft: In progress), #45 (merged: Done). All carry `wg/device-management` and none has
+  `sig/node`, so they stay off `harche/6`. To test New again, move them back to 🆕 New.
 
 ### Access
 

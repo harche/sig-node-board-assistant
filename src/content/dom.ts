@@ -94,3 +94,10 @@ export function isOurs(node: Node): boolean {
     el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, .snba-hovercard, #snba-pill"),
   );
 }
+
+/** The board's filter bar is set (typed, or saved with the view): drawn cards are then not the whole column. */
+export function boardFiltered(root: ParentNode = document): boolean {
+  return Boolean(
+    root.querySelector<HTMLInputElement>('input[name="filter-bar-component-inputname"]')?.value.trim(),
+  );
+}

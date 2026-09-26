@@ -182,6 +182,29 @@ duplicate grouping (`closeDuplicates`, now per column) and In progress's assigne
 - Old and quiet bugs are left to the lifecycle bot, which asks for a re-triage of accepted issues untouched for a
   year. Frozen issues get the same checks: past ones were closed by people as fixed, duplicate or not SIG Node's.
 
+## Dynamic Resource Allocation: New
+
+`src/core/dranew.ts` and `src/core/prompts/dra.ts`. kubernetes/95 documents no process (the WG's README and blog
+only link the board; the columns have no descriptions), so the rules come from its track record: the Status-change
+events in each item's timeline (`ProjectV2ItemStatusChangedEvent`), 485 moves out of New, about 750 of the board's
+moves by pohly and 120 by nojnhuh.
+
+- PRs: merged or closed → Done matched 56 of 60 moves; draft → In progress, otherwise In review, matched 234 of 262.
+  Adding `do-not-merge/work-in-progress`, `/hold` or a "WIP" title matched fewer (214 of 262).
+- Open issues are where the record is inconsistent (an open fix PR went to Ready as often as to In progress). Each
+  issue was rebuilt as it stood when it was moved (thread, labels, assignees, linked PRs, release cycle):
+
+  | approach                                                    | matched |
+  | ----------------------------------------------------------- | ------- |
+  | Jev picks the column (one question)                         | 105/162 |
+  | the same, with their most similar past decisions as context | 102/162 |
+  | Jev in two steps: under way?, then Ready or Backlog         | 95/162  |
+  | assigned or has a PR → In progress, else Ready              | 88/162  |
+  | majority of the five most similar past issues               | 61/162  |
+
+  Jev's picks at 0.95 or more: In progress 37/43, Backlog 10/14, Ready 8/12. So Accept applies only In progress at
+  ≥ 0.95 (86%); the rest are the reviewer's call.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

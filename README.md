@@ -211,6 +211,17 @@ cards had no priority and 64 were referenced by a merged PR while still open.
   check-in, as in Issues - In progress. An owner a triager assigned is left alone.
 - High Priority with nobody assigned: flagged for you.
 
+## Dynamic Resource Allocation: New
+
+Every issue and PR labelled `wg/device-management` lands in New on kubernetes/95, and a maintainer moves it on. The
+board has no written rules, so these follow its record: 485 moves out of New, most by the WG's leads. A move only
+changes the Status; they add no comments or labels in New, and neither does the extension.
+
+- PRs (code): merged or closed → Done; draft → In progress; otherwise In review.
+- Issues: closed → Done (code). Open ones: Jev reads the thread, the linked PRs, the assignees and the release cycle
+  and picks In progress, Ready or Backlog. Accept moves an issue itself only when Jev says In progress at 0.95 or more;
+  every other issue is your call, with Jev's pick suggested.
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
@@ -234,8 +245,8 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 | SIG Node CI/Test Board (test)      | harche/5       | the same, with writes, for testing          |
 | SIG Node Bugs                      | kubernetes/185 | judges all four active columns (read-only)  |
 | SIG Node Bugs (test)               | harche/6       | the same, with writes, for testing          |
-| Dynamic Resource Allocation        | kubernetes/95  | recognised, idle (workflow to come)         |
-| Dynamic Resource Allocation (test) | harche/7       | the same, for testing                       |
+| Dynamic Resource Allocation        | kubernetes/95  | judges New (read-only)                      |
+| Dynamic Resource Allocation (test) | harche/7       | the same, with writes, for testing          |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.

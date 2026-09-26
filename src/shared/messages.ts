@@ -7,6 +7,7 @@ import type { AuthorResult } from "../core/author";
 import type { BugResult } from "../core/bugs";
 import type { InfoResult } from "../core/needsinfo";
 import type { BacklogResult } from "../core/backlog";
+import type { DraNewResult } from "../core/dranew";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
@@ -43,6 +44,7 @@ export type Request =
   | { type: "info.judge"; item: BoardItem; refresh?: boolean }
   | { type: "backlog.judge"; item: BoardItem; refresh?: boolean }
   | { type: "backlog.duplicates"; board: BoardRef; targets: BoardItem[] }
+  | { type: "dranew.judge"; item: BoardItem; refresh?: boolean }
   | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] };
 
 export interface ResponseMap {
@@ -67,6 +69,7 @@ export interface ResponseMap {
   "backlog.judge": BacklogResult;
   /** For each target's restId, the card it duplicates and should be closed in favour of, or null. */
   "backlog.duplicates": Record<number, DuplicateOf | null>;
+  "dranew.judge": DraNewResult;
   "item.apply": { ok: true };
 }
 

@@ -14,6 +14,7 @@ import { decideApprove, type ApproveResult } from "../core/approver";
 import type { AuthorResult } from "../core/author";
 import { judgeBug } from "../core/bugs";
 import { judgeInfo } from "../core/needsinfo";
+import { judgeDraNew } from "../core/dranew";
 import { judgeBacklog, shortlist } from "../core/backlog";
 import { BUG_DUPLICATE_QUESTIONS } from "../core/prompts/backlog";
 import { noulReading } from "../core/readings";
@@ -459,6 +460,20 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       const r = await judgeInfo(req.item, detail, tl, jev, req.refresh);
       r.prow_fixes = await fixes(detail, jev, req.refresh);
       return r as Out;
+    }
+    case "dranew.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const { repository: repo, number: num } = req.item;
+      return (await judgeDraNew(
+        req.item,
+        jev,
+        {
+          detail: () => gh.itemDetail(repo, "Issue", num, req.refresh),
+          linkedPrs: () => gh.linkedPrs(repo, num, req.refresh),
+        },
+        req.refresh,
+      )) as Out;
     }
     case "backlog.judge": {
       const { gh, jev } = await clients();
