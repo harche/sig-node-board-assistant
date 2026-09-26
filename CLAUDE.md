@@ -5,15 +5,17 @@
 Every real SIG Node board has a private test copy under `harche`. **Test a board's workflows only on its test
 copy, never on the real board.** Real boards may be read to compare, never written to.
 
-| Real board (read only)                   | Test copy (test and write here)                                             | Registered as |
-| ---------------------------------------- | --------------------------------------------------------------------------- | ------------- |
-| kubernetes/151, "SIG Node CI/Test Board" | https://github.com/users/harche/projects/5, "SIG Node CI/Test Board (test)" | `harche/5`    |
-| kubernetes/185, "SIG Node Bugs"          | https://github.com/users/harche/projects/6, "SIG Node Bugs (test)"          | `harche/6`    |
+| Real board (read only)                       | Test copy (test and write here)                                                  | Registered as |
+| -------------------------------------------- | -------------------------------------------------------------------------------- | ------------- |
+| kubernetes/151, "SIG Node CI/Test Board"     | https://github.com/users/harche/projects/5, "SIG Node CI/Test Board (test)"      | `harche/5`    |
+| kubernetes/185, "SIG Node Bugs"              | https://github.com/users/harche/projects/6, "SIG Node Bugs (test)"               | `harche/6`    |
+| kubernetes/95, "Dynamic Resource Allocation" | https://github.com/users/harche/projects/7, "Dynamic Resource Allocation (test)" | `harche/7`    |
 
-Both test boards take their items from the private repo `harche/sig-node-board-test`. Everything there is fake
-and safe to change. Their auto-add filters don't overlap, so a new issue lands on only one of the two test
-boards. There is no Prow in the test repo, so set labels directly rather than with `/sig`, `/kind` or `/triage`
-commands. A test board is registered in `src/core/boards.ts` with `writable: true`. Only writable boards take
+All test boards take their items from the private repo `harche/sig-node-board-test`. Everything there is fake
+and safe to change. The CI/Test and Bugs filters don't overlap, so a new issue lands on only one of those two.
+The DRA filter is 95's own (`label:"wg/device-management"`), so, as on the real boards, a DRA bug with `kind/bug`
+and `sig/node` lands on both `harche/6` and `harche/7`: drop one of those labels to keep a test item on one board.
+There is no Prow in the test repo, so set labels directly rather than with `/sig`, `/kind` or `/triage` commands. A test board is registered in `src/core/boards.ts` with `writable: true`. Only writable boards take
 Apply/Accept writes, so any new real board needs its own test copy before its workflows are tested.
 
 ### CI/Test test board (`harche/5`, copy of kubernetes/151)
@@ -44,6 +46,22 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
   for Triaged a bug the thread says is fixed (#38). The labels Prow would set are set directly on these issues.
   Reminders and closing need an ask 20+ days old, which cannot be backdated: unit tests cover those. Add more the
   same way as other columns are built. A reply posted within a minute of the label counts as part of the ask.
+
+### DRA test board (`harche/7`, copy of kubernetes/95)
+
+- **How it was made:** with 95's "Make a copy". So these match 95:
+  - Status columns: 🆕 New, 📋 Backlog, 🔖 Ready, 🏗 In progress, 👀 In review, ✅ Done (no descriptions on 95).
+  - Fields Priority, Size, Area and Release Goal, and the views All, By Milestone, By Status, Reliability,
+    Enhancements and Core GA.
+  - The workflows: item added → 🆕 New. "Item closed" and "Pull request merged" are **off** on 95 (they have no
+    value set), so closed and merged items stay in their column until someone moves them.
+- **Difference:** 95 has five auto-add rules: k/k, enhancements, test-infra and website with
+  `is:issue,pr is:open label:"wg/device-management"`, and kubernetes-sigs/dra-example-driver with
+  `is:issue,pr is:open`. The copy has one, 95's filter on the test repo.
+- **Labels:** the ones 95's items use were added to the test repo, among them `sig/scheduling`, `sig/testing`,
+  `sig/api-machinery`, `kind/api-change`, `kind/kep`, `needs-priority`, `lifecycle/stale`, `lifecycle/rotten`,
+  `lead-opted-in`, `tracked/yes`, `stage/alpha|beta|stable`, `wg/workload-aware-scheduling`.
+- **Items:** none yet. Add fake issues and PRs per column as its workflows are built.
 
 ### Access
 

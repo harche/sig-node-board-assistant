@@ -67,6 +67,16 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     workflows: { bugs: "Triage", info: "Needs Information", backlog: "Triaged", high: "High Priority" },
     writable: true,
   },
+  {
+    // Private copy of kubernetes/95 (same Status columns, views and workflows) over fake items in
+    // harche/sig-node-board-test.
+    owner: "harche",
+    number: 7,
+    title: "Dynamic Resource Allocation (test)",
+    about: "Test copy of kubernetes/95",
+    workflows: {},
+    writable: true,
+  },
 ];
 
 export function knownBoard(ref: BoardRef): KnownBoard | undefined {

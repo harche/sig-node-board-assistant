@@ -22,8 +22,10 @@ describe("knownBoard", () => {
     expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual(all);
     expect(knownBoard({ owner: "harche", number: 6 })).toMatchObject({ workflows: all, writable: true });
   });
-  it("95 is known but has no workflow yet", () =>
-    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual({}));
+  it("95 and its test copy are known but have no workflow yet", () => {
+    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual({});
+    expect(knownBoard({ owner: "harche", number: 7 })).toMatchObject({ workflows: {}, writable: true });
+  });
   it("a sandbox board is unknown", () => expect(knownBoard({ owner: "harche", number: 1 })).toBeUndefined());
 });
 

@@ -228,13 +228,14 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 
 ## Boards
 
-| board                         | project        | what the extension does today               |
-| ----------------------------- | -------------- | ------------------------------------------- |
-| SIG Node CI/Test Board        | kubernetes/151 | judges all seven active columns (read-only) |
-| SIG Node CI/Test Board (test) | harche/5       | the same, with writes, for testing          |
-| SIG Node Bugs                 | kubernetes/185 | judges all four active columns (read-only)  |
-| SIG Node Bugs (test)          | harche/6       | the same, with writes, for testing          |
-| Dynamic Resource Allocation   | kubernetes/95  | recognised, idle (workflow to come)         |
+| board                              | project        | what the extension does today               |
+| ---------------------------------- | -------------- | ------------------------------------------- |
+| SIG Node CI/Test Board             | kubernetes/151 | judges all seven active columns (read-only) |
+| SIG Node CI/Test Board (test)      | harche/5       | the same, with writes, for testing          |
+| SIG Node Bugs                      | kubernetes/185 | judges all four active columns (read-only)  |
+| SIG Node Bugs (test)               | harche/6       | the same, with writes, for testing          |
+| Dynamic Resource Allocation        | kubernetes/95  | recognised, idle (workflow to come)         |
+| Dynamic Resource Allocation (test) | harche/7       | the same, for testing                       |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a
 workflow.
