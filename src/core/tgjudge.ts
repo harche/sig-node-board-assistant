@@ -58,7 +58,7 @@ async function text(fetchFn: typeof fetch, url: string): Promise<string | null> 
 /** One failed run's evidence. Runs never change once finished, so complete evidence is kept for a day; evidence a
  *  failed read left incomplete is not kept, and `refresh` reads it again. */
 export async function runEvidence(
-  d: TgDeps,
+  d: Pick<TgDeps, "cache" | "fetchFn">,
   gcs: string,
   build: string,
   started: number,
@@ -111,7 +111,7 @@ const brief = (x: RawSearchIssue, repo: string, via: string): Candidate => ({
  *  kubernetes/test-infra (job and infra problems are filed there), and SIG Node's failing-test and flake issues that
  *  share words with the job. All in one batched search. At most `max`, searches first. */
 export async function candidates(
-  d: TgDeps,
+  d: Pick<TgDeps, "search">,
   f: JobFacts,
   now: number,
   refresh = false,

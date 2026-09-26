@@ -91,7 +91,7 @@ export function paneItemId(url: string = location.href): number | null {
 export function isOurs(node: Node): boolean {
   const el = node instanceof Element ? node : node.parentElement;
   return Boolean(
-    el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, .snba-hovercard, #snba-pill"),
+    el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, .snba-ci, .snba-hovercard, #snba-pill"),
   );
 }
 

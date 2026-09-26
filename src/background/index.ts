@@ -16,6 +16,7 @@ import { judgeBug } from "../core/bugs";
 import { judgeInfo } from "../core/needsinfo";
 import { judgeDra } from "../core/dra";
 import { judgeTg } from "../core/tgjudge";
+import { judgeCi, prChecks, type CiDeps } from "../core/prcijudge";
 import {
   isTgDraft,
   mirrorTitle,
@@ -526,6 +527,24 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         req.status,
         req.refresh,
       )) as Out;
+    }
+    case "ci.checks": {
+      const { gh } = await clients();
+      return prChecks(await gh.pullChecks(req.repo, req.number, req.refresh)) as Out;
+    }
+    case "ci.judge": {
+      const { gh, jev } = await clients();
+      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      const tg = new TestGridClient(tgCache);
+      const deps: CiDeps = {
+        pull: (repo, n, r) => gh.pullChecks(repo, n, r),
+        resolvePresubmit: (job) => tg.resolvePresubmit(job),
+        failedTable: (ref, r) => tg.failedTable(ref, r),
+        search: (qs, n, r) => gh.searchIssues(qs, n, r),
+        jev,
+        cache,
+      };
+      return (await judgeCi(deps, req.repo, req.number, req.check, req.refresh)) as Out;
     }
     case "tg.apply": {
       // In test mode, TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a

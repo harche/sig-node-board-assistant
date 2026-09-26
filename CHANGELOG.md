@@ -35,6 +35,9 @@ test boards and `harche/sig-node-board-test`).
   the release to Backlog; everything else stays. No Jev question: state decides.
 - Dynamic Resource Allocation In review: merged or closed PRs to Done, drafts and issues to In progress; open PRs
   stay. No Jev question.
+- Failing CI on a pull request's page: for each failed Prow job, whether the PR broke it, a flake or infra, from the
+  run's junit and log, the job's runs on this PR and the same tests' record on other PRs (TestGrid's presubmit tabs),
+  with any flake issue that tracks it and the `/retest` or `/test` command to copy. Read-only.
 - TestGrid review on testgrid.k8s.io: per failing or flaky periodic job, what fails (from junit and build-log signal
   lines), whether an issue tracks it, and a comment or a new issue drafted from the k/k templates; writes go to the
   test repo while it is tried out.

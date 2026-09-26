@@ -135,7 +135,8 @@
 }
 
 /* ---------- evidence section (inside GitHub's sidebar: pane, issue page, PR page) */
-.snba-evidence {
+.snba-evidence,
+.snba-ci {
   font-size: 12px;
   line-height: 18px;
   color: var(--fgColor-default, #1f2328);
@@ -336,6 +337,34 @@
 .discussion-sidebar-item .snba-foot {
   margin-left: 0;
   margin-right: 0;
+}
+
+/* ---------- the PR page's Failing CI section (item/ci.ts) */
+.snba-ci-head {
+  margin: 0 0 4px;
+}
+.snba-ci-job {
+  padding: 6px 0;
+  border-top: 1px solid var(--borderColor-muted, #d8dee4);
+}
+.snba-ci-verdict {
+  font-weight: 600;
+}
+.snba-ci-job .snba-why {
+  margin-top: 2px;
+}
+.snba-ci-more {
+  margin-top: 4px;
+}
+.snba-ci-more .snba-hc-scores {
+  border-top: 0;
+  padding-top: 0;
+}
+.snba-ci-cmd {
+  margin-top: 8px;
+}
+.snba-ci-tide {
+  margin: 8px 0 0;
 }
 
 /* ---------- column run button (board header)

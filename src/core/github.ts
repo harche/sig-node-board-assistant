@@ -167,6 +167,54 @@ export class GitHubClient {
     );
   }
 
+  /** What the PR page's CI check reads about a pull request: its head commit, title and changed paths, and every
+   *  status on the head commit (the combined status: the newest per context). Kept two minutes: CI moves fast. */
+  pullChecks(repo: string, num: number, refresh = false): Promise<PullChecks> {
+    return this.cache.cached(
+      `pullchecks:${repo}#${num}`,
+      2 * MINUTE,
+      async () => {
+        const pr = await this.api<RawPullFull & { title: string; changed_files: number }>(
+          `/repos/${repo}/pulls/${num}`,
+        );
+        // The combined status is an object, not a list, so octokit's paginate cannot follow it: pages by hand.
+        const statuses = async () => {
+          const out: RawStatus[] = [];
+          for (let page = 1; page <= 5; page++) {
+            const r = await this.api<{ statuses: RawStatus[] }>(
+              `/repos/${repo}/commits/${pr.head.sha}/status`,
+              {
+                per_page: 100,
+                page,
+              },
+            );
+            out.push(...r.statuses);
+            if (r.statuses.length < 100) break;
+          }
+          return out;
+        };
+        const [files, status] = await Promise.all([
+          this.paged<RawFile>(`/repos/${repo}/pulls/${num}/files`),
+          statuses(),
+        ]);
+        return {
+          sha: pr.head.sha,
+          title: pr.title,
+          state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open",
+          files: files.map((f) => f.filename).slice(0, 300),
+          files_total: pr.changed_files,
+          statuses: status.map((x) => ({
+            context: x.context,
+            state: x.state,
+            description: x.description ?? "",
+            target_url: x.target_url ?? "",
+          })),
+        };
+      },
+      refresh,
+    );
+  }
+
   /** A file's text on the default branch (OWNERS, OWNERS_ALIASES), cached a day; null when it does not exist. */
   rawFile(repo: string, path: string): Promise<string | null> {
     return this.cache.cached(`raw:${repo}:${path}`, DAY, async () => {
@@ -690,6 +738,28 @@ export interface PullState {
   tide: { state: string; description: string } | null;
   failing: string[];
   reviews: { author: string; state: string; at: string; body: string }[];
+}
+/** A commit status, as the PR page's CI check reads it. */
+export interface CommitStatus {
+  context: string;
+  state: string;
+  description: string;
+  target_url: string;
+}
+interface RawStatus {
+  context: string;
+  state: string;
+  description: string | null;
+  target_url: string | null;
+}
+export interface PullChecks {
+  sha: string;
+  title: string;
+  state: "open" | "closed" | "merged";
+  /** Changed paths, at most 300 of `files_total`. */
+  files: string[];
+  files_total: number;
+  statuses: CommitStatus[];
 }
 interface RawPullFull {
   state: string;

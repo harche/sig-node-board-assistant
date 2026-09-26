@@ -106,6 +106,9 @@ export function jobFacts(
 
 export interface JunitFailure {
   test: string;
+  /** The case's classname, when it says more than the suite ("[sig-node] k8s.io/kubernetes/pkg/kubelet.cm" for a
+   *  Go package; not "E2eNode Suite"). TestGrid names a Go test's row `<classname>.<name>`. */
+  classname?: string;
   message: string;
 }
 
@@ -134,17 +137,34 @@ const unescape = (s: string) =>
   );
 const attr = (a: string, k: string) => new RegExp(`(?:^|\\s)${k}="([^"]*)"`).exec(a)?.[1] ?? "";
 
+/** A failure message that says nothing ("Failed", "see stderr for details"): the case's output says what failed. */
+const GENERIC = /^(?:failed|failure|error|see stderr for details|)$/i;
+const cdata = (s: string) =>
+  unescape(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"))
+    .replace(/\s+/g, " ")
+    .trim();
+
 /** Failed test cases of one junit file, by the test's `name` (not the suite's `classname`, which comes first in
- *  Ginkgo's output and names every case "E2eNode Suite"). */
+ *  Ginkgo's output and names every case "E2eNode Suite"). A generic message is replaced by the failure's text, else
+ *  the case's stderr (a verify script's reason is only there). */
 export function junitFailures(xml: string): JunitFailure[] {
   const out: JunitFailure[] = [];
   for (const m of xml.matchAll(/<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/g)) {
     const f = /<failure\b([^>]*)>([\s\S]*?)<\/failure>|<failure\b([^>]*)\/>/.exec(m[2]!);
     if (!f) continue;
-    const msg = attr(f[1] ?? f[3] ?? "", "message") || f[2] || "";
+    let msg = unescape(attr(f[1] ?? f[3] ?? "", "message"))
+      .replace(/\s+/g, " ")
+      .trim();
+    if (GENERIC.test(msg)) msg = cdata(f[2] ?? "");
+    if (GENERIC.test(msg)) {
+      const err = cdata(/<system-err>([\s\S]*?)<\/system-err>/.exec(m[2]!)?.[1] ?? "");
+      if (err) msg = err.slice(-400);
+    }
+    const classname = unescape(attr(m[1]!, "classname"));
     out.push({
       test: unescape(attr(m[1]!, "name")).slice(0, 250),
-      message: unescape(msg).replace(/\s+/g, " ").slice(0, 400),
+      ...(classname && !/suite$/i.test(classname) ? { classname: classname.slice(0, 150) } : {}),
+      message: msg.slice(0, 400),
     });
   }
   return out;

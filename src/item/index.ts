@@ -8,6 +8,7 @@ import { findSidebar, placeSection } from "../content/adapters";
 import { Judged } from "../content/judged";
 import { isOurs } from "../content/dom";
 import { WORKFLOWS, type ColumnWorkflow, type PaneState } from "../content/workflows";
+import { PrCi } from "./ci";
 
 /** The workflow of the column the item sits in. */
 function workflowFor(p: Placement): ColumnWorkflow<unknown> | null {
@@ -15,15 +16,16 @@ function workflowFor(p: Placement): ColumnWorkflow<unknown> | null {
   return (name && WORKFLOWS[name]) || null;
 }
 
-export function itemFromUrl(url: string): { repo: string; number: number } | null {
-  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:[/?#]|$)/.exec(url);
-  return m ? { repo: m[1]!, number: Number(m[2]) } : null;
+export function itemFromUrl(url: string): { repo: string; number: number; pull: boolean } | null {
+  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(pull|issues)\/(\d+)(?:[/?#]|$)/.exec(url);
+  return m ? { repo: m[1]!, number: Number(m[3]), pull: m[2] === "pull" } : null;
 }
 
 class ItemAssistant {
   private judged: Judged<unknown> | null = null;
   private wf: ColumnWorkflow<unknown> | null = null;
   private placement: Placement | null = null;
+  private ci: PrCi | null = null;
   /** "repo#number" of the item the page currently shows; hash and tab changes keep it the same. */
   private current = "";
   private generation = 0;
@@ -51,7 +53,9 @@ class ItemAssistant {
     if (key !== this.current) {
       this.current = key;
       this.placement = null;
+      this.ci = null;
       document.querySelector(".snba-evidence")?.remove();
+      document.querySelector(".snba-ci")?.remove();
       if (!ref) return;
       // Ticks for different items can overlap (fast navigation, a slow lookup): only the latest one may publish.
       const gen = ++this.generation;
@@ -59,6 +63,10 @@ class ItemAssistant {
       try {
         const s = await send({ type: "settings.get" });
         if (!live() || !s.configured.github || !s.configured.typesafe) return;
+        if (ref.pull) {
+          this.ci = new PrCi(ref.repo, ref.number, live);
+          void this.ci.run();
+        }
         const placement = await send({ type: "item.lookup", repo: ref.repo, number: ref.number });
         if (!live() || !placement) return;
         const wf = workflowFor(placement);
@@ -97,6 +105,7 @@ class ItemAssistant {
   }
 
   private sync(): void {
+    this.ci?.sync();
     const { placement, judged, wf } = this;
     if (!placement || !judged || !wf) return;
     const side = findSidebar(document);

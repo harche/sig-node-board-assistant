@@ -1,0 +1,274 @@
+/** The PR page's "Failing CI" section: for each Prow job failing on the head commit, whether the PR broke it or it
+ *  fails without the PR (a flake, the job's environment), the evidence, and the Prow command that reruns what is
+ *  not the PR's. Read-only: the command is for the reader to post. On every pull request with a failed Prow job. */
+import { findSidebar, placeSection } from "../content/adapters";
+import { readingsBlock } from "../content/hcparts";
+import { h } from "../content/ui";
+import {
+  CI_LABEL,
+  CI_TINT,
+  decideCi,
+  rerunCommand,
+  failName,
+  shortTest,
+  type CiJob,
+  type FailedCheck,
+  type PrChecks,
+} from "../core/prci";
+import { send } from "../shared/messages";
+
+type Slot = { state: "pending" } | { state: "error"; message: string } | { state: "done"; job: CiJob };
+
+/** Jobs judged at once: each reads a few MB of TestGrid and GCS. */
+const PARALLEL = 3;
+
+const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
+const shortJob = (job: string) => job.replace(/^pull-kubernetes-/, "");
+
+export class PrCi {
+  private checks: PrChecks | null = null;
+  private error: string | null = null;
+  private slots = new Map<string, Slot>();
+  private version = 0;
+  private rendered = "";
+  /** Bumped by each run, so a slower earlier run cannot overwrite a newer one's results. */
+  private runs = 0;
+
+  constructor(
+    private repo: string,
+    private number: number,
+    /** Whether this instance still owns the page (the reader has not moved to another item). */
+    private live: () => boolean,
+  ) {}
+
+  /** Reads the checks and judges each failed job. Until a first read finds a failure there is no section: a PR
+   *  that passes, a repo without Prow, or one the token cannot read shows nothing. "Check again" keeps the section
+   *  and reports its own failure in it. */
+  async run(refresh = false): Promise<void> {
+    const gen = ++this.runs;
+    const mine = () => gen === this.runs && this.live();
+    this.error = null;
+    this.slots.clear();
+    this.bump();
+    let checks: PrChecks;
+    try {
+      checks = await send({ type: "ci.checks", repo: this.repo, number: this.number, refresh });
+    } catch (e) {
+      if (mine() && this.checks) {
+        this.error = e instanceof Error ? e.message : String(e);
+        this.bump();
+      }
+      return;
+    }
+    if (!mine()) return;
+    this.checks = checks;
+    const queue = [...checks.failed];
+    for (const c of queue) this.slots.set(c.job, { state: "pending" });
+    this.bump();
+    const worker = async () => {
+      for (let c = queue.shift(); c && mine(); c = queue.shift()) await this.judge(c, refresh, mine);
+    };
+    await Promise.all(Array.from({ length: PARALLEL }, worker));
+  }
+
+  private async judge(check: FailedCheck, refresh: boolean, mine: () => boolean): Promise<void> {
+    let slot: Slot;
+    try {
+      const job = await send({ type: "ci.judge", repo: this.repo, number: this.number, check, refresh });
+      slot = { state: "done", job };
+    } catch (e) {
+      slot = { state: "error", message: e instanceof Error ? e.message : String(e) };
+    }
+    if (!mine()) return;
+    this.slots.set(check.job, slot);
+    this.bump();
+  }
+
+  private bump(): void {
+    this.version++;
+    this.sync();
+  }
+
+  /** Puts the section in the sidebar, or redraws it when anything changed (GitHub may also redraw the sidebar). */
+  sync(): void {
+    if (!this.live()) return;
+    const side = findSidebar(document);
+    const existing = document.querySelector<HTMLElement>(".snba-ci");
+    const key = `${this.repo}#${this.number}:${this.version}`;
+    if (existing && side?.el.contains(existing) && this.rendered === key) return;
+    existing?.remove();
+    // Nothing failing, not read yet, or not a Prow repo: no section.
+    if (!side || !this.checks?.failed.length) return;
+    this.rendered = key;
+    const { root, body } = side.adapter.section("Failing CI");
+    root.classList.add("snba-ci");
+    body.append(...this.content());
+    const evidence = side.el.querySelector(".snba-evidence");
+    if (evidence) evidence.after(root);
+    else placeSection(side.el, root);
+  }
+
+  private content(): (HTMLElement | string)[] {
+    if (this.error) return [h("p.snba-error", {}, this.error), this.again()];
+    const c = this.checks!;
+    const slots = c.failed.map((f) => this.slots.get(f.job));
+    const done = slots.flatMap((s) => (s?.state === "done" ? [s.job] : []));
+    // A job whose judge failed is finished too: it shows its error, and the others' verdicts still count.
+    const finished = slots.filter((s) => s && s.state !== "pending").length === c.failed.length;
+    const verdicts = done.map(decideCi);
+    const mine = verdicts.filter((v) => v.verdict === "this_pr").length;
+    const notMine = verdicts.filter((v) => v.verdict === "flake" || v.verdict === "infra").length;
+    const head = h(
+      "p.snba-ci-head",
+      {},
+      `${c.failed.length} failing, ${c.passing} passing${c.pending.length ? `, ${c.pending.length} running` : ""}`,
+      done.length
+        ? h(
+            "span.snba-muted",
+            {},
+            `: ${[mine && `${mine} this PR's`, notMine && `${notMine} not`, done.length - mine - notMine && `${done.length - mine - notMine} unsure`].filter(Boolean).join(", ")}`,
+          )
+        : null,
+    );
+    const out: HTMLElement[] = [head, ...c.failed.map((f) => this.jobBlock(f))];
+    const cmd = finished ? rerunCommand(done, c.failed.length) : null;
+    if (cmd) out.push(this.command(cmd));
+    if (c.tide) out.push(h("p.snba-muted.snba-ci-tide", {}, `Tide: ${c.tide}`));
+    const cost = done.reduce((a, j) => a + j.usage.cost, 0);
+    out.push(
+      h(
+        "div.snba-foot",
+        {},
+        h(
+          "span.snba-muted",
+          {},
+          finished
+            ? `Jev read ${done.length} job${done.length === 1 ? "" : "s"}${cost ? ` for $${cost.toFixed(5)}` : ", cached"}.`
+            : `Judging ${slots.filter((x) => !x || x.state === "pending").length} of ${c.failed.length}…`,
+        ),
+        this.again(),
+      ),
+    );
+    return out;
+  }
+
+  private jobBlock(f: FailedCheck): HTMLElement {
+    const s = this.slots.get(f.job);
+    const name = link(f.url, shortJob(f.job));
+    name.title = f.job;
+    if (!s || s.state === "pending")
+      return h("div.snba-ci-job", {}, h("div", {}, name, h("span.snba-muted", {}, " · judging…")));
+    if (s.state === "error")
+      return h("div.snba-ci-job", {}, h("div", {}, name), h("p.snba-error", {}, s.message));
+    const j = s.job;
+    const d = decideCi(j);
+    const details = h(
+      "details.snba-ci-more",
+      {},
+      h("summary.snba-link", {}, "Evidence"),
+      readingsBlock(j.readings),
+      h(
+        "dl.snba-hc-scores.snba-hc-facts",
+        {},
+        ...facts(j).flatMap(([k, v]) => [h("dt", {}, k), h("dd.snba-hc-text", {}, v)]),
+      ),
+    );
+    return h(
+      "div.snba-ci-job",
+      {},
+      h(
+        "div",
+        {},
+        h(`span.snba-ci-verdict.snba-${CI_TINT[d.verdict].toLowerCase()}`, {}, CI_LABEL[d.verdict]),
+        " ",
+        name,
+      ),
+      h("p.snba-why", {}, d.why),
+      details,
+    );
+  }
+
+  private command(cmd: string): HTMLElement {
+    const copy = h("button.snba-link", { type: "button" }, "Copy") as HTMLButtonElement;
+    copy.addEventListener("click", () => {
+      void navigator.clipboard.writeText(cmd).then(() => {
+        copy.textContent = "Copied";
+        setTimeout(() => (copy.textContent = "Copy"), 1500);
+      });
+    });
+    return h(
+      "div.snba-ci-cmd",
+      {},
+      h("div", {}, h("b", {}, "Rerun what is not this PR's"), " ", copy),
+      h("pre.snba-pre", {}, cmd),
+    );
+  }
+
+  private again(): HTMLElement {
+    const b = h("button.snba-link", { type: "button" }, "Check again") as HTMLButtonElement;
+    b.title = "Re-read the checks, logs and TestGrid and ask Jev again, bypassing the cache";
+    b.addEventListener("click", () => void this.run(true));
+    return b;
+  }
+}
+
+const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
+
+function facts(j: CiJob): [string, Node | string][] {
+  const out: [string, Node | string][] = [];
+  const e = j.evidence;
+  if (e.junit_failures.length)
+    out.push([
+      "Failing",
+      lines(
+        e.junit_failures
+          .slice(0, 4)
+          .map((f) =>
+            h("span", {}, failName(f), f.message ? h("code", {}, ` ${f.message.slice(0, 200)}`) : null),
+          ),
+      ),
+    ]);
+  const sig = (e.log_signals ?? []).filter((l) => !/^\[FAIL\]/.test(l)).slice(0, 4);
+  if (sig.length) out.push(["Log", lines(sig.map((l) => h("code", {}, l.slice(0, 220))))]);
+  else if (e.log_signals === null) out.push(["Log", j.check.description || "no build log"]);
+  if (j.elsewhere) {
+    const w = j.elsewhere;
+    const [dash, tab] = w.testgrid.split("#");
+    out.push([
+      "Other PRs",
+      lines([
+        h(
+          "span",
+          {},
+          `job failed ${w.job.failed} of ${w.job.runs} runs in ${w.window_days}d (`,
+          link(`https://testgrid.k8s.io/${dash}#${tab}`, "TestGrid"),
+          ")",
+        ),
+        ...w.tests.map((t) => `${shortTest(t.test)}: failed ${t.failed} of ${t.runs}`),
+      ]),
+    ]);
+  } else out.push(["Other PRs", "no TestGrid tab for this job"]);
+  if (j.this_pr.length)
+    out.push([
+      "This PR",
+      `${j.this_pr
+        .map((r) => `${(r.result ?? "running").toLowerCase()}${r.current === false ? " (older commit)" : ""}`)
+        .join(", ")} (newest first)`,
+    ]);
+  const issues = j.tracks.filter((t) => t.p >= 0.35).slice(0, 3);
+  if (issues.length)
+    out.push([
+      "Issues",
+      lines(
+        issues.map((t) =>
+          h(
+            "span",
+            {},
+            link(t.url, `${t.repo === "kubernetes/kubernetes" ? "" : t.repo}#${t.number}`),
+            ` ${t.state === "closed" ? "(closed) " : ""}${t.title.slice(0, 80)}`,
+          ),
+        ),
+      ),
+    ]);
+  return out;
+}

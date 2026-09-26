@@ -88,6 +88,11 @@ TestGrid (testgrid.k8s.io), GCS and GitHub search are only read; test on the rea
 kubernetes/kubernetes issue on a `[mirror] kubernetes/kubernetes#N` issue there (#55 mirrors #142268; #56 is a filed
 flaking-test issue). Never point writes at kubernetes/kubernetes without the user asking.
 
+### Failing CI on the PR page
+
+Read-only (it shows a Prow command, never posts it), so test it on real kubernetes/kubernetes PRs with failing jobs,
+e.g. #142200. If it ever posts, the post goes through test mode like every other write.
+
 ### Access
 
 - **Token:** a fine-grained GitHub token has one resource owner. The test boards need their own token with

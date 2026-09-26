@@ -272,6 +272,26 @@ their runs' logs.
   request, costs about a point of 5,000 an hour. One request per job: a dashboard of 16 jobs in about 7 seconds.
 - Not yet: clustering jobs that fail the same way into one issue.
 
+## Failing CI on the PR page
+
+`src/core/prci.ts` (failed checks, verdicts, the rerun command), `src/core/prcijudge.ts` (fetching and Jev),
+`src/core/prompts/prci.ts`, `src/item/ci.ts` (the sidebar section). Read-only, so tried on real kubernetes/kubernetes
+PRs.
+
+- The strongest fact is the job's record on other PRs. TestGrid's presubmit tabs (presubmits-kubernetes-blocking and
+  -nonblocking, sig-node-presubmits) hold every PR's runs of a job for about a week; with `exclude-non-failed-tests`
+  a blocking tab is about 2 MB instead of 7. This PR's own runs, listed from GCS, are left out by build id.
+- TestGrid names a Go test's row `<classname>.<name>` (the package) and an e2e test by its Ginkgo text, so junit
+  failures keep their classname. A Go case's message is "Failed" and a verify script's "see stderr for details": the
+  failure's text or the case's stderr is read instead, which the TestGrid review's evidence gains too.
+- Prow reports a job it could not schedule as `error` with no artifacts: that is infra, decided by code.
+- Jev reads the PR's title and changed paths, the failed run, this PR's runs and the record elsewhere. On #142200:
+  verify (a new alpha gate on by default) and the Windows unit job (the same) as the PR's at 0.99, a probe test that
+  failed on 14 of 436 other runs as a flake at 0.98, a GCE instance that could not be created as infra.
+- `/retest` reruns every failed job, so it is suggested only when none of them is the PR's.
+- Not yet: posting the command (it would go through test mode's mirror), GitHub Actions checks, and the periodic
+  jobs' record of the same test.
+
 ## Broken Prow commands
 
 `src/core/prowcmds.ts`, for every column. The To-do version was a regex plus the closest spelling; it could not tell

@@ -5,7 +5,8 @@ A Chrome extension that puts Jev's suggestion on every card of the
 [SIG Node Bugs](https://github.com/orgs/kubernetes/projects/185) and
 [Dynamic Resource Allocation](https://github.com/orgs/kubernetes/projects/95) boards, and on every failing or flaky
 job of a [TestGrid](https://testgrid.k8s.io) dashboard, with the evidence behind it, right on the page you already
-use. Nothing is written until you Apply or Accept.
+use. On a pull request's page it says, for each failing Prow job, whether the PR broke it. Nothing is written until
+you Apply or Accept.
 
 On the CI/Test board:
 
@@ -283,6 +284,19 @@ out) and badges each row: tracked `#N`, comment, file issue, or watch.
 
 The hover card takes TestGrid's look (its buttons, panel colours and status colours).
 
+## Failing CI on a pull request's page
+
+On any pull request with a failed Prow job, a "Failing CI" section in the sidebar says for each one whether the PR's
+change broke it or it fails without the PR, and why.
+
+- Code reads the facts: the failed run's junit failures (a verify script's reason from its stderr, a Go test's name
+  from its output) and build log signal lines, the job's earlier runs on this PR and whether they tested the current
+  commit, and from the job's presubmit tab on TestGrid how often the same tests failed on other PRs' runs.
+- Jev judges the cause: this PR, a flake, or infra, and whether a candidate flake issue tracks it (the same search as
+  the TestGrid review). A job Prow never ran ("Pod scheduling timeout", no log) is infra without asking Jev.
+- The section suggests the Prow command that reruns what is not the PR's: `/retest` when nothing failing is the PR's,
+  else one `/test <job>` per job. It only shows the command, with a Copy button: it writes nothing.
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
@@ -330,7 +344,7 @@ src/core/        pure logic, no browser APIs: GitHub, Jev and TestGrid clients, 
 src/background/  service worker: owns tokens and the cache, answers the content script's questions, checks writes
 src/content/     board page: column buttons, badges, hover cards, pane injection; workflows.ts holds what differs
                  per column
-src/item/        issue and PR pages: the same evidence block in the page sidebar
+src/item/        issue and PR pages: the same evidence block in the page sidebar, and the PR page's Failing CI
 src/options/     settings page
 tests/           vitest; fixtures/parity.json is a frozen snapshot of the CLI's outputs
 docs/design.md   why it is shaped this way

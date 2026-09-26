@@ -20,6 +20,14 @@ export const DASHBOARDS = [
   "sig-release-master-informing",
 ];
 
+/** Dashboards with kubernetes/kubernetes presubmit tabs: every PR's runs of a `pull-*` job, so a test failing
+ *  there on other PRs is not one PR's doing. sig-node-presubmits names some tabs `pr-*` for `pull-kubernetes-*`. */
+export const PRESUBMIT_DASHBOARDS = [
+  "presubmits-kubernetes-blocking",
+  "presubmits-kubernetes-nonblocking",
+  "sig-node-presubmits",
+];
+
 /** TestGrid TestStatus cell values that count as a failure: 9 TIMED_OUT, 10 CATEGORIZED_FAIL, 11 BUILD_FAIL,
  *  12 FAIL, 13 FLAKY (failed, then passed on retry), 14 TOOL_FAIL. */
 const FAIL = new Set([9, 10, 11, 12, 13, 14]);
@@ -187,6 +195,20 @@ export function overallRow(tbl: TgTable): TgRow | undefined {
   return tbl.tests.find((r) => /(^|\.)Overall$/.test(r.name));
 }
 
+/** How often `row` ran and failed in the columns whose build id is not in `skip` (a PR's own runs). */
+export function tally(tbl: TgTable, row: TgRow, skip: Set<string>): { runs: number; failed: number } {
+  const ids = tbl.column_ids ?? [];
+  const all = cells(row, tbl.timestamps.length);
+  let runs = 0;
+  let failed = 0;
+  all.forEach((v, i) => {
+    if (SILENT.has(v) || skip.has(ids[i] ?? "")) return;
+    runs++;
+    if (FAIL.has(v)) failed++;
+  });
+  return { runs, failed };
+}
+
 /** Run-length `statuses` expanded to one value per column, newest first. */
 export function cells(row: TgRow, n: number): number[] {
   const out: number[] = [];
@@ -253,6 +275,37 @@ export class TestGridClient {
     return this.cache.cached(`tg:tabs:${dashboard}`, 30 * MINUTE, async () =>
       Object.keys(await this.json<TgSummary>(`${encodeURIComponent(dashboard)}/summary`)),
     );
+  }
+
+  /** A presubmit tab's table with only the tests that failed in some run (a whole blocking tab is ~7 MB, this
+   *  ~2 MB): all a "does it fail on other PRs" check needs. */
+  failedTable(ref: TgRef, refresh = false): Promise<TgTable> {
+    return this.cache.cached(
+      `tg:failed:${ref.dashboard}#${ref.tab}`,
+      30 * MINUTE,
+      async () =>
+        compact(
+          await this.json<TgTable>(
+            `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}&exclude-non-failed-tests=`,
+          ),
+        ),
+      refresh,
+    );
+  }
+
+  /** The presubmit tab of a `pull-*` job, confirmed by its GCS query (`pr-logs/directory/<job>`). null if none of
+   *  the presubmit dashboards has it. */
+  async resolvePresubmit(job: string): Promise<TgRef | null> {
+    const guesses = [job, ...(job.startsWith("pull-kubernetes-") ? [`pr-${job.slice(16)}`] : [])];
+    for (const dashboard of PRESUBMIT_DASHBOARDS) {
+      const tabs = await this.tabs(dashboard).catch(() => [] as string[]);
+      for (const tab of tabs.filter((t) => guesses.includes(t))) {
+        const ref = { dashboard, tab };
+        const q = (await this.failedTable(ref).catch(() => null))?.query ?? "";
+        if (q.replace(/\/$/, "").split("/").pop() === job) return ref;
+      }
+    }
+    return null;
   }
 
   table(ref: TgRef, refresh = false): Promise<TgTable> {
