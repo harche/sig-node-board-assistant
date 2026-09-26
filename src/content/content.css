@@ -535,6 +535,9 @@
   background: var(--fgColor-muted, #59636e);
 }
 /* Jev's readings: one grid for the whole card, so every bar starts and ends at the same place. */
+.snba-readings:empty {
+  display: none;
+}
 .snba-readings {
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(48px, 1fr) 2.5em;

@@ -26,6 +26,8 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
 - Dynamic Resource Allocation (kubernetes/95) New: PRs to In review, In progress (drafts) or Done by their state,
   closed issues to Done, open issues to In progress, Ready or Backlog by Jev's pick, following the board's record of
   485 moves; only a Status move. Test copy at harche/7.
+- Dynamic Resource Allocation Backlog: closed items to Done, PRs by their state, KEPs opted into the release in
+  development (milestone and `lead-opted-in`) to In progress; other issues stay unless you pick a move.
 - Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
   option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
 - Asks include comments Jev reads as asking someone to review or approve.

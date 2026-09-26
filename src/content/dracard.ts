@@ -1,45 +1,46 @@
-/** What a reviewer sees for a card in the Dynamic Resource Allocation board's New column: for an open issue, Jev's
- *  pick of column as bars and the facts behind it (linked PRs, assignees, the release cycle); for a PR, its state.
+/** What a reviewer sees for a card in the Dynamic Resource Allocation board's New and Backlog columns: for an open
+ *  issue, Jev's pick of column as bars and the facts behind it (linked PRs, assignees, the release); for a PR, its
+ *  state.
  *  One action, the suggested one preselected unless it is the reviewer's call. */
 import {
-  decideDraNew,
-  DRA_NEW_LABEL,
-  DRA_NEW_TINT,
-  draNewActions,
-  draNewSteps,
-  type DraNewAction,
-  type DraNewResult,
-} from "../core/dranew";
+  decideDra,
+  draLabel,
+  DRA_TINT,
+  draActions,
+  draSteps,
+  type DraAction,
+  type DraResult,
+} from "../core/dra";
 import type { ActionStep, BoardItem } from "../core/types";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { actionBox, allReadings, describe, fact, readingsBlock, select } from "./hcparts";
 import { h } from "./ui";
 
-export interface DraNewOverrides {
+export interface DraOverrides {
   action?: string;
 }
 
-export function chosenDraNew(r: DraNewResult, o: DraNewOverrides): DraNewAction {
-  const a = o.action as DraNewAction | undefined;
-  return a && draNewActions(r).includes(a) ? a : decideDraNew(r).action;
+export function chosenDra(r: DraResult, o: DraOverrides): DraAction {
+  const a = o.action as DraAction | undefined;
+  return a && draActions(r).includes(a) ? a : decideDra(r).action;
 }
 
-export function chosenDraNewSteps(item: BoardItem, r: DraNewResult, o: DraNewOverrides): ActionStep[] {
-  return draNewSteps(item, chosenDraNew(r, o));
+export function chosenDraSteps(item: BoardItem, r: DraResult, o: DraOverrides): ActionStep[] {
+  return draSteps(item, chosenDra(r, o));
 }
 
-function heading(r: DraNewResult, action: DraNewAction, picked = false): HTMLElement {
-  const d = decideDraNew(r);
+function heading(r: DraResult, action: DraAction, picked = false): HTMLElement {
+  const d = decideDra(r);
   return h(
     "div.snba-decision",
     {},
     h(
       "div",
       {},
-      h(`span.snba-verdict.snba-${DRA_NEW_TINT[action].toLowerCase()}`, {}, DRA_NEW_LABEL[action]),
+      h(`span.snba-verdict.snba-${DRA_TINT[action].toLowerCase()}`, {}, draLabel(action, r.column)),
       action !== d.action
-        ? h("span.snba-muted", {}, ` (suggested: ${DRA_NEW_LABEL[d.action].toLowerCase()})`)
+        ? h("span.snba-muted", {}, ` (suggested: ${draLabel(d.action, r.column).toLowerCase()})`)
         : !d.auto && !picked
           ? h("span.snba-muted", {}, " (your call: Accept skips it until you choose an action)")
           : null,
@@ -50,7 +51,7 @@ function heading(r: DraNewResult, action: DraNewAction, picked = false): HTMLEle
 
 const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
-function facts(r: DraNewResult): [string, Node | string][] {
+function facts(r: DraResult): [string, Node | string][] {
   const out: [string, Node | string][] = [];
   if (r.type === "PullRequest") {
     out.push(["PR", r.state === "open" ? (r.draft ? "open, draft" : "open") : r.state]);
@@ -66,15 +67,20 @@ function facts(r: DraNewResult): [string, Node | string][] {
       : "none reference it",
   ]);
   out.push(["Assigned", r.assignees.join(", ") || "nobody"]);
+  if (r.milestone || r.opted_in)
+    out.push([
+      "Release",
+      [r.milestone ?? "no milestone", r.opted_in && "lead-opted-in"].filter(Boolean).join(", "),
+    ]);
   if (r.development_cycle) out.push(["Cycle", `${r.development_cycle} in development`]);
   return out;
 }
 
-export interface DraNewHoverContent {
+export interface DraHoverContent {
   fix(steps: ActionStep[]): ActionStep[];
   item: BoardItem;
-  result: DraNewResult;
-  overrides: DraNewOverrides;
+  result: DraResult;
+  overrides: DraOverrides;
   setOverride(key: string, value: string): void;
   applied: Applied | undefined;
   canApply: boolean;
@@ -83,12 +89,12 @@ export interface DraNewHoverContent {
   skip(): void;
 }
 
-export function renderDraNewHoverCard(c: DraNewHoverContent): HTMLElement {
+export function renderDraHoverCard(c: DraHoverContent): HTMLElement {
   const r = c.result;
   const o = c.overrides;
   const locked = c.applied?.state === "pending" || c.applied?.state === "done" || !c.canApply;
-  const action = chosenDraNew(r, o);
-  const d = decideDraNew(r);
+  const action = chosenDra(r, o);
+  const d = decideDra(r);
   const unpicked = !d.auto && !o.action;
   return h(
     "div.snba-hc-body",
@@ -107,9 +113,9 @@ export function renderDraNewHoverCard(c: DraNewHoverContent): HTMLElement {
           select(
             "Action",
             "action",
-            draNewActions(r).map((a): [string, string] => [
+            draActions(r).map((a): [string, string] => [
               a,
-              a === d.action ? `${DRA_NEW_LABEL[a]} (suggested)` : DRA_NEW_LABEL[a],
+              a === d.action ? `${draLabel(a, r.column)} (suggested)` : draLabel(a, r.column),
             ]),
             unpicked ? null : action,
             locked,
@@ -123,22 +129,22 @@ export function renderDraNewHoverCard(c: DraNewHoverContent): HTMLElement {
       scope: c.scope,
       applied: c.applied,
       canApply: c.canApply,
-      label: DRA_NEW_LABEL[action],
-      steps: c.fix(chosenDraNewSteps(c.item, r, o)),
-      where: "in New",
+      label: draLabel(action, r.column),
+      steps: c.fix(chosenDraSteps(c.item, r, o)),
+      where: `in ${r.column === "new" ? "New" : "Backlog"}`,
       apply: c.apply,
       skip: c.skip,
     }),
   );
 }
 
-export type DraNewPaneState =
-  { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: DraNewResult };
+export type DraPaneState =
+  { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: DraResult };
 
-export function renderDraNewEvidence(
+export function renderDraEvidence(
   adapter: SidebarAdapter,
   item: BoardItem,
-  st: DraNewPaneState,
+  st: DraPaneState,
   rejudge: (i: BoardItem) => Promise<void>,
   title: string,
 ): HTMLElement {
@@ -164,13 +170,13 @@ export function renderDraNewEvidence(
     return root;
   }
   const r = st.result;
-  const action = decideDraNew(r).action;
+  const action = decideDra(r).action;
   body.append(
     heading(r, action),
     readingsBlock(allReadings(r)),
     ...facts(r).map(([k, v]) => adapter.row(k, v)),
     h("div.snba-subhead", {}, "What the suggested action does"),
-    h("p.snba-muted", {}, describe(draNewSteps(item, action))),
+    h("p.snba-muted", {}, describe(draSteps(item, action))),
     h("div.snba-foot", {}, again),
   );
   return root;

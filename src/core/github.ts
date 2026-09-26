@@ -379,8 +379,9 @@ export class GitHubClient {
   }
 
   itemDetail(repo: string, kind: ItemKind, num: number, refresh = false): Promise<ItemDetail> {
+    // item2: details now carry the milestone; entries cached before that must not be reused.
     return this.cache.cached(
-      `item:${repo}#${num}`,
+      `item2:${repo}#${num}`,
       30 * MINUTE,
       async () => {
         const iss = await this.api<RawIssue>(`/repos/${repo}/issues/${num}`);
@@ -397,6 +398,7 @@ export class GitHubClient {
           author: { login: iss.user.login },
           createdAt: iss.created_at,
           url: iss.html_url,
+          milestone: iss.milestone?.title ?? null,
           comments: (await this.paged<RawComment>(`/repos/${repo}/issues/${num}/comments`)).map(cm),
         };
         if (kind === "PullRequest") {
@@ -496,6 +498,7 @@ interface RawIssue {
   user: { login: string };
   created_at: string;
   html_url: string;
+  milestone?: { title: string } | null;
 }
 /** Timeline events the extension reads, cut to the fields it reads: raw events carry full user objects and the
  *  whole cross-referenced issue, and the cache lives in chrome.storage.local's 10 MB (overflow clears it all). */

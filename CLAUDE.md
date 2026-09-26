@@ -65,6 +65,9 @@ Apply/Accept writes, so any new real board needs its own test copy before its wo
   removal in a later release: Backlog), #40 (closed, added by hand since auto-add only takes open items); PRs #43
   (open: In review), #44 (draft: In progress), #45 (merged: Done). All carry `wg/device-management` and none has
   `sig/node`, so they stay off `harche/6`. To test New again, move them back to 🆕 New.
+- **Items (Backlog):** #42 (stays), #46 (KEP, milestone `v1.38` + `lead-opted-in`: In progress), #47 (KEP opted into
+  `v1.36`: stays), #48 (closed: Done), #49 (open PR: In review). The test repo has milestones `v1.38` and `v1.36` and a
+  `lead-opted-in` label. To test Backlog again, move them back to 📋 Backlog.
 
 ### Access
 

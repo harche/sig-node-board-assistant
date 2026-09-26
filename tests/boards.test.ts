@@ -22,10 +22,13 @@ describe("knownBoard", () => {
     expect(knownBoard({ owner: "kubernetes", number: 185 })?.workflows).toEqual(all);
     expect(knownBoard({ owner: "harche", number: 6 })).toMatchObject({ workflows: all, writable: true });
   });
-  it("95 and its test copy work on New", () => {
-    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual({ dranew: "🆕 New" });
+  it("95 and its test copy work on New and Backlog", () => {
+    expect(knownBoard({ owner: "kubernetes", number: 95 })?.workflows).toEqual({
+      dranew: "🆕 New",
+      drabacklog: "📋 Backlog",
+    });
     expect(knownBoard({ owner: "harche", number: 7 })).toMatchObject({
-      workflows: { dranew: "🆕 New" },
+      workflows: { dranew: "🆕 New", drabacklog: "📋 Backlog" },
       writable: true,
     });
   });

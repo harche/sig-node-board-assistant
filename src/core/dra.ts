@@ -1,13 +1,21 @@
-/** The Dynamic Resource Allocation board's (kubernetes/95) 'New' column: every DRA issue and PR lands here, and a
- *  maintainer moves it on. The board has no written rules, so these follow its track record (485 moves out of New):
+/** The Dynamic Resource Allocation board (kubernetes/95). Its New and Backlog columns share the rules below; each
+ *  column adds its own for open issues.
  *
+ *  New: every DRA issue and PR lands here and a maintainer moves it on. The board documents no process, so these
+ *  follow its record (485 moves out of New):
  *  - PRs: merged or closed → Done, draft → In progress, otherwise In review (89–93% of their moves).
  *  - Closed issues → Done.
  *  - Open issues: Jev picks In progress, Ready or Backlog. Their record is not consistent enough to reproduce well
  *    (65% overall), so Accept moves an issue itself only when Jev says In progress at 0.95 or more (86% of their
  *    moves); every other issue is the reviewer's call, with Jev's pick suggested.
  *
- *  A move only changes the Status: the maintainers add no comments or labels in New. */
+ *  Backlog: later work. The board's "Item closed" workflow is off, so closed items stay until someone moves them.
+ *  - PRs and closed issues as in New.
+ *  - A KEP in the release being developed (milestone `v1.N` and `lead-opted-in`, which is how sig-release's
+ *    release_phases.md defines "in the release") → In progress; 10 of 13 KEPs moved there had the label.
+ *  - Other open issues stay. Only 9 left Backlog in two years, so Jev's reading is shown and a move is the reviewer's.
+ *
+ *  A move only changes the Status: the maintainers add no comments or labels. */
 import { isBot } from "./boards";
 import type { JevClient } from "./jev";
 import { laneQuestion } from "./prompts/dra";
@@ -15,6 +23,7 @@ import { choiceReading, type Reading } from "./readings";
 import type { ActionStep, BoardItem, ItemDetail, JevChoice, JevUsage, LinkedPr } from "./types";
 
 export const IN_PROGRESS_AT = 0.95;
+export const OPTED_IN = "lead-opted-in";
 
 export const DRA_LANE = {
   in_review: "👀 In review",
@@ -24,19 +33,18 @@ export const DRA_LANE = {
   done: "✅ Done",
 } as const;
 
-export const DRA_NEW_ACTIONS = ["in_review", "in_progress", "ready", "backlog", "done", "keep"] as const;
-export type DraNewAction = (typeof DRA_NEW_ACTIONS)[number];
+export type DraColumn = "new" | "backlog";
+const COLUMN_TITLE: Record<DraColumn, string> = { new: "New", backlog: "Backlog" };
 
-export const DRA_NEW_LABEL: Record<DraNewAction, string> = {
-  in_review: "Move to In review",
-  in_progress: "Move to In progress",
-  ready: "Move to Ready",
-  backlog: "Move to Backlog",
-  done: "Move to Done",
-  keep: "Leave in New",
-};
+export const DRA_ACTIONS = ["in_review", "in_progress", "ready", "backlog", "done", "keep"] as const;
+export type DraAction = (typeof DRA_ACTIONS)[number];
 
-export const DRA_NEW_TINT: Record<DraNewAction, "KEEP" | "REMOVE" | "BORDERLINE" | "MOVE"> = {
+export function draLabel(a: DraAction, column: DraColumn): string {
+  if (a === "keep") return `Leave in ${COLUMN_TITLE[column]}`;
+  return `Move to ${DRA_LANE[a].replace(/^\S+\s/, "")}`;
+}
+
+export const DRA_TINT: Record<DraAction, "KEEP" | "REMOVE" | "BORDERLINE" | "MOVE"> = {
   in_review: "MOVE",
   in_progress: "MOVE",
   ready: "MOVE",
@@ -45,8 +53,9 @@ export const DRA_NEW_TINT: Record<DraNewAction, "KEEP" | "REMOVE" | "BORDERLINE"
   keep: "KEEP",
 };
 
-export interface DraNewResult {
-  kind: "dranew";
+export interface DraResult {
+  kind: "dra";
+  column: DraColumn;
   item_id: string;
   repo: string;
   number: number;
@@ -59,21 +68,26 @@ export interface DraNewResult {
   /** Issues only: PRs that reference the issue, newest last. */
   linked_prs: { repository: string; number: number; title: string; state: string; opened_days_ago: number }[];
   development_cycle: string | null;
-  /** Issues only: Jev's pick of column. Null for PRs and closed issues, which code places. */
+  /** Open issues only: the issue's milestone and whether the SIG lead opted it into a release. */
+  milestone: string | null;
+  opted_in: boolean;
+  /** Open issues only: Jev's pick of column. Null for PRs and closed issues, which code places, and for a KEP in the
+   *  release, which its labels place. */
   lane: JevChoice | null;
   readings?: Reading[];
   usage: JevUsage;
   state_chars: number;
 }
 
-const LANE_ACTION: Record<string, DraNewAction> = {
-  in_progress: "in_progress",
-  ready: "ready",
-  backlog: "backlog",
-};
+/** A KEP the SIG opted into the release being developed. */
+export function inRelease(r: DraResult): boolean {
+  return r.opted_in && r.development_cycle !== null && r.milestone === `v${r.development_cycle}`;
+}
+
+type Decision = { action: DraAction; why: string; auto: boolean };
 
 /** The suggested action, why, and whether the header's Accept applies it without the reviewer picking it. */
-export function decideDraNew(r: DraNewResult): { action: DraNewAction; why: string; auto: boolean } {
+export function decideDra(r: DraResult): Decision {
   if (r.type === "PullRequest") {
     if (r.state === "merged") return { action: "done", why: "merged", auto: true };
     if (r.state === "closed") return { action: "done", why: "closed without merging", auto: true };
@@ -81,11 +95,20 @@ export function decideDraNew(r: DraNewResult): { action: DraNewAction; why: stri
     return { action: "in_review", why: "an open PR, ready for review", auto: true };
   }
   if (r.state !== "open") return { action: "done", why: "closed", auto: true };
-  const a = r.lane;
-  const action = a ? LANE_ACTION[a.choice] : undefined;
-  if (!a || !action) return { action: "keep", why: "Jev gave no column", auto: false };
+  return r.column === "new" ? decideNewIssue(r) : decideBacklogIssue(r);
+}
+
+const pick = (a: JevChoice) => {
   const p = a.probabilities[a.choice] ?? a.confidence;
-  const pct = `${Math.round(p * 100)}%`;
+  return { choice: a.choice, pct: `${Math.round(p * 100)}%`, p };
+};
+
+function decideNewIssue(r: DraResult): Decision {
+  const a = r.lane;
+  if (!a || !["in_progress", "ready", "backlog"].includes(a.choice))
+    return { action: "keep", why: "Jev gave no column", auto: false };
+  const { choice, pct, p } = pick(a);
+  const action = choice as DraAction;
   if (action === "in_progress" && p >= IN_PROGRESS_AT)
     return { action, why: `Jev: work is under way (${pct})`, auto: true };
   return {
@@ -95,13 +118,40 @@ export function decideDraNew(r: DraNewResult): { action: DraNewAction; why: stri
   };
 }
 
-export function draNewActions(r: DraNewResult): DraNewAction[] {
-  if (r.type === "PullRequest") return ["in_review", "in_progress", "done", "keep"];
-  if (r.state !== "open") return ["done", "keep"];
-  return ["in_progress", "ready", "backlog", "done", "keep"];
+function decideBacklogIssue(r: DraResult): Decision {
+  if (inRelease(r))
+    return {
+      action: "in_progress",
+      why: `a KEP in the ${r.development_cycle} release: milestone ${r.milestone} and ${OPTED_IN}`,
+      auto: true,
+    };
+  const a = r.lane;
+  if (a && (a.choice === "in_progress" || a.choice === "ready")) {
+    const { pct } = pick(a);
+    return {
+      action: a.choice,
+      why: `Jev reads it as ${a.choice === "ready" ? "ready to pick up" : "under way"} (${pct}); issues rarely leave Backlog, so it is your call`,
+      auto: false,
+    };
+  }
+  return {
+    action: "keep",
+    why: r.opted_in
+      ? `opted in for ${r.milestone ?? "an earlier release"}, not ${r.development_cycle}: later work`
+      : "later work: not in the release being developed",
+    auto: true,
+  };
 }
 
-export function draNewSteps(item: BoardItem, action: DraNewAction): ActionStep[] {
+export function draActions(r: DraResult): DraAction[] {
+  if (r.type === "PullRequest") return ["in_review", "in_progress", "done", "keep"];
+  if (r.state !== "open") return ["done", "keep"];
+  return r.column === "new"
+    ? ["in_progress", "ready", "backlog", "done", "keep"]
+    : ["in_progress", "ready", "done", "keep"];
+}
+
+export function draSteps(item: BoardItem, action: DraAction): ActionStep[] {
   if (action === "keep") return [];
   return [{ kind: "move", itemId: item.id, restId: item.restId, lane: DRA_LANE[action] }];
 }
@@ -171,15 +221,17 @@ export function draIssueState(item: BoardItem, d: ItemDetail, prs: LinkedPr[], n
 
 const COLUMN_NAMES = ["in_progress", "ready", "backlog"];
 
-export async function judgeDraNew(
+export async function judgeDra(
+  column: DraColumn,
   item: BoardItem,
   jev: JevClient,
   fetch: { detail(): Promise<ItemDetail>; linkedPrs(): Promise<LinkedPr[]> },
   refresh = false,
   now = Date.now(),
-): Promise<DraNewResult> {
-  const r: DraNewResult = {
-    kind: "dranew",
+): Promise<DraResult> {
+  const r: DraResult = {
+    kind: "dra",
+    column,
     item_id: item.id,
     repo: item.repository,
     number: item.number,
@@ -191,6 +243,8 @@ export async function judgeDraNew(
     assignees: item.assignees,
     linked_prs: [],
     development_cycle: null,
+    milestone: null,
+    opted_in: false,
     lane: null,
     readings: [],
     usage: { input_tokens: 0, cost: 0, cached: true },
@@ -202,6 +256,8 @@ export async function judgeDraNew(
   const st = draIssueState(item, d, prs, now);
   r.title = d.title;
   r.development_cycle = st.development_cycle;
+  r.milestone = d.milestone ?? null;
+  r.opted_in = d.labels.some((l) => l.name === OPTED_IN);
   r.linked_prs = prs.slice(-6).map((p) => ({
     repository: p.repository,
     number: p.number,
@@ -210,6 +266,8 @@ export async function judgeDraNew(
     opened_days_ago: daysAgo(p.createdAt, now),
   }));
   r.state_chars = JSON.stringify(st).length;
+  // A KEP in the release is placed by its labels.
+  if (column === "backlog" && inRelease(r)) return r;
   const res = await jev.askCached<{ lane: JevChoice }>(st, laneQuestion(), 4, refresh);
   r.usage = { ...res.usage };
   r.lane = res.answers.lane ?? null;

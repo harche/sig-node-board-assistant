@@ -222,6 +222,15 @@ changes the Status; they add no comments or labels in New, and neither does the 
   and picks In progress, Ready or Backlog. Accept moves an issue itself only when Jev says In progress at 0.95 or more;
   every other issue is your call, with Jev's pick suggested.
 
+## Dynamic Resource Allocation: Backlog
+
+Later work. The board's "Item closed" workflow is off, so closed items stay until someone moves them (22 on 95).
+
+- Closed issues and PRs → Done; open PRs as in New (code).
+- A KEP in the release being developed → In progress: its milestone is `v1.N` for that release and it has
+  `lead-opted-in`, which is how sig-release's `release_phases.md` defines "in the release" (code).
+- Other open issues stay. Jev reads each one as in New; when it reads In progress or Ready, that is your call.
+
 ## What the lifecycle bot does, the extension leaves alone
 
 The Kubernetes lifecycle bot marks quiet issues and PRs stale (90 days), rotten (30 more) and closes them (30 more),
@@ -245,7 +254,7 @@ labels and `/assign` and `/cc`: never `/lgtm`, `/approve`, `/close` or `/unassig
 | SIG Node CI/Test Board (test)      | harche/5       | the same, with writes, for testing          |
 | SIG Node Bugs                      | kubernetes/185 | judges all four active columns (read-only)  |
 | SIG Node Bugs (test)               | harche/6       | the same, with writes, for testing          |
-| Dynamic Resource Allocation        | kubernetes/95  | judges New (read-only)                      |
+| Dynamic Resource Allocation        | kubernetes/95  | judges New and Backlog (read-only)          |
 | Dynamic Resource Allocation (test) | harche/7       | the same, with writes, for testing          |
 
 Board and column names are configuration in `src/core/boards.ts`; adding a board is a table entry plus a

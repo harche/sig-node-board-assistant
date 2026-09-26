@@ -184,7 +184,7 @@ duplicate grouping (`closeDuplicates`, now per column) and In progress's assigne
 
 ## Dynamic Resource Allocation: New
 
-`src/core/dranew.ts` and `src/core/prompts/dra.ts`. kubernetes/95 documents no process (the WG's README and blog
+`src/core/dra.ts` and `src/core/prompts/dra.ts`. kubernetes/95 documents no process (the WG's README and blog
 only link the board; the columns have no descriptions), so the rules come from its track record: the Status-change
 events in each item's timeline (`ProjectV2ItemStatusChangedEvent`), 485 moves out of New, about 750 of the board's
 moves by pohly and 120 by nojnhuh.
@@ -204,6 +204,16 @@ moves by pohly and 120 by nojnhuh.
 
   Jev's picks at 0.95 or more: In progress 37/43, Backlog 10/14, Ready 8/12. So Accept applies only In progress at
   ≥ 0.95 (86%); the rest are the reviewer's call.
+
+## Dynamic Resource Allocation: Backlog
+
+Same module; the PR and closed-item rules are New's. 39 moves left Backlog: 10 to Done (9 of 10 closed items went
+there), KEPs to In progress in bursts at the start of each cycle, and 9 other issues in two years (5 to Ready, 4 to
+In progress). sig-release's `releases/release_phases.md` says a KEP is in the current release when its issue is in the
+release milestone and has `lead-opted-in`; 10 of the 13 KEPs moved from Backlog to In progress had the label. The
+release in development comes from the release table in `dra.ts`, so a milestone for a past release does not count.
+When 95 was first read, 10 KEPs opted into v1.38 were still in Backlog. Other issues get New's Jev question for the
+bars; a move is never applied by Accept.
 
 ## Broken Prow commands
 
