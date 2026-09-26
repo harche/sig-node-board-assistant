@@ -2,7 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
-First release. Reads and suggests on kubernetes/151; writes only on the test board.
+First release. Reads and suggests on kubernetes/151, 185 and 95 and on TestGrid; writes only in test mode (the
+test boards and `harche/sig-node-board-test`).
 
 - Issues - To do: per-card suggestion to keep, move to In progress, close as fixed, ask the thread, close as
   duplicate or archive, from the thread, linked PRs and TestGrid run history, with a fresh-fix guard and a
@@ -61,3 +62,9 @@ First release. Reads and suggests on kubernetes/151; writes only on the test boa
 - Policy: a confident "another SIG owns it" answer turns a KEEP into BORDERLINE (the CLI had dropped this).
 - State: every human `/sig` or `/area` routing comment is sent to Jev as `human_routing`, not only those in
   the last-10 comment window.
+- Settings page: a Test mode toggle, on by default. On, writes go only to the test boards and
+  `harche/sig-node-board-test`; off, Apply and Accept also write to the real boards, and TestGrid comments and
+  issues go to kubernetes/kubernetes and kubernetes/test-infra, labelled through Prow (`/sig node`, `/kind flake`) and never filed twice for the same title. The worker checks it on every write, and the page
+  lists where writes go in each mode. The page also describes every board and TestGrid, and which token reads the
+  real boards and which writes the test boards.
+- TestGrid mirror issues name the real issue in backticks, so a public test repo would not show on its timeline.

@@ -1,6 +1,8 @@
+import { KNOWN_BOARDS } from "../core/boards";
+import { TG_LIVE_REPOS, TG_TEST_REPO } from "../core/tgreview";
 import { send, type Settings } from "../shared/messages";
 
-const FIELDS: (keyof Settings)[] = ["githubToken", "typesafeApiKey", "typesafeModel"];
+const FIELDS = ["githubToken", "typesafeApiKey", "typesafeModel"] as const;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const status = $<HTMLSpanElement>("status");
 
@@ -18,11 +20,14 @@ function check(id: string, ok: boolean | null, text: string): void {
 async function load(): Promise<void> {
   const { settings } = await send({ type: "settings.get" });
   for (const f of FIELDS) $<HTMLInputElement>(f).value = settings[f];
+  testMode.checked = settings.testMode;
+  showWrites(settings.testMode);
 }
 
 async function save(): Promise<void> {
   const patch: Partial<Settings> = {};
   for (const f of FIELDS) patch[f] = $<HTMLInputElement>(f).value.trim();
+  patch.testMode = testMode.checked;
   await send({ type: "settings.set", settings: patch });
 }
 
@@ -61,5 +66,47 @@ $<HTMLButtonElement>("clear").addEventListener("click", async () => {
   const { removed } = await send({ type: "cache.clear" });
   say(`Cache cleared, ${removed} entries removed.`, "ok");
 });
+
+/** Where writes go, from the code that enforces it: the boards that take writes, and where TestGrid's go. */
+function showWrites(testMode: boolean): void {
+  const link = (href: string, text: string) =>
+    Object.assign(document.createElement("a"), {
+      href,
+      target: "_blank",
+      rel: "noopener",
+      textContent: text,
+    });
+  const board = (b: (typeof KNOWN_BOARDS)[number]) =>
+    link(
+      `https://github.com/${b.owner === "kubernetes" ? "orgs" : "users"}/${b.owner}/projects/${b.number}`,
+      `${b.owner}/${b.number}`,
+    );
+  const item = (...parts: (Node | string)[]) => {
+    const li = document.createElement("li");
+    li.append(...parts);
+    return li;
+  };
+  const joined = (bs: typeof KNOWN_BOARDS) => bs.flatMap((b, i) => (i ? [", ", board(b)] : [board(b)]));
+  const tests = KNOWN_BOARDS.filter((x) => x.writable);
+  const real = KNOWN_BOARDS.filter((x) => !x.writable);
+  const hint = $<HTMLParagraphElement>("testModeHint");
+  hint.textContent = testMode
+    ? "On: the real boards and kubernetes/kubernetes are only read."
+    : "Off: Apply and Accept write to the real boards and to kubernetes/kubernetes, as your token's owner.";
+  hint.className = `hint ${testMode ? "" : "bad"}`;
+  $<HTMLUListElement>("writes").replaceChildren(
+    item("Boards: ", ...joined(testMode ? tests : [...real, ...tests])),
+    testMode
+      ? item(
+          "TestGrid: new issues, and comments for a kubernetes/kubernetes issue on its [mirror] issue, in ",
+          link(`https://github.com/${TG_TEST_REPO}/issues`, TG_TEST_REPO),
+        )
+      : item(`TestGrid: new issues and comments in ${TG_LIVE_REPOS.join(" and ")}`),
+    ...(testMode ? [item("Read only: ", ...joined(real), ", kubernetes/kubernetes")] : []),
+  );
+}
+
+const testMode = $<HTMLInputElement>("testMode");
+testMode.addEventListener("change", () => showWrites(testMode.checked));
 
 void load();

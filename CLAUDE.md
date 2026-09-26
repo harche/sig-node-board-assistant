@@ -15,7 +15,11 @@ All test boards take their items from the private repo `harche/sig-node-board-te
 and safe to change. The CI/Test and Bugs filters don't overlap, so a new issue lands on only one of those two.
 The DRA filter is 95's own (`label:"wg/device-management"`), so, as on the real boards, a DRA bug with `kind/bug`
 and `sig/node` lands on both `harche/6` and `harche/7`: drop one of those labels to keep a test item on one board.
-There is no Prow in the test repo, so set labels directly rather than with `/sig`, `/kind` or `/triage` commands. A test board is registered in `src/core/boards.ts` with `writable: true`. Only writable boards take
+There is no Prow in the test repo, so set labels directly rather than with `/sig`, `/kind` or `/triage` commands.
+
+**Test mode** (settings page, `Settings.testMode`, on by default) is what keeps writes on the test copies: off, Apply
+and Accept write to the real boards and kubernetes/kubernetes. Keep it on in every browser profile used for testing,
+and never turn it off unless the user asks. A test board is registered in `src/core/boards.ts` with `writable: true`. Only writable boards take
 Apply/Accept writes, so any new real board needs its own test copy before its workflows are tested.
 
 ### CI/Test test board (`harche/5`, copy of kubernetes/151)

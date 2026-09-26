@@ -18,12 +18,16 @@ export interface Settings {
   githubToken: string;
   typesafeApiKey: string;
   typesafeModel: string;
+  /** On (the default): writes go only to the test boards and the test repo (boards.ts `writable`, TG_TEST_REPO).
+   *  Off: Apply and Accept also write to the real boards and TestGrid's issues. */
+  testMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   githubToken: "",
   typesafeApiKey: "",
   typesafeModel: "jev-latest",
+  testMode: true,
 };
 
 export type Request =

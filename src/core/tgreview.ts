@@ -351,9 +351,27 @@ export const TESTGRID_URL = "https://testgrid.k8s.io";
 const tabUrl = (f: JobFacts) => `${TESTGRID_URL}/${f.dashboard}#${encodeURIComponent(f.tab)}`;
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ") + " UTC";
 
-/** Where TestGrid writes go while the review is being tried out: new issues are opened here, and a comment meant
- *  for another repo's issue goes on a "[mirror] <repo>#<n>" issue here. Nothing is written anywhere else. */
+/** Where TestGrid writes go in test mode: new issues are opened here, and a comment meant for another repo's issue
+ *  goes on a "[mirror] <repo>#<n>" issue here. Nothing is written anywhere else. */
 export const TG_TEST_REPO = "harche/sig-node-board-test";
+/** With test mode off, the only repos TestGrid writes go to: where its issues are filed and tracked. */
+export const TG_LIVE_REPOS = ["kubernetes/kubernetes", "kubernetes/test-infra"];
+/** A title search that fits GitHub's 256-character query limit, with the ` sort:` searchIssues adds: the title's
+ *  words without quotes (search has no escape for them), cut at a word to fit. The exact title is matched after. */
+export function titleQuery(repo: string, title: string): string {
+  const head = `repo:${repo} is:issue is:open in:title `;
+  const room = 256 - head.length - " sort:updated-desc".length - 2;
+  let words = title.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  if (words.length > room) words = words.slice(0, room).replace(/\s+\S*$/, "");
+  return `${head}"${words}"`;
+}
+
+/** Prow commands for a new issue's labels: GitHub drops labels set at creation unless the author can push to the
+ *  repo, and on kubernetes/kubernetes labels go through Prow. `sig/node` -> `/sig node`. */
+export function prowLabels(labels: string[]): string {
+  return labels.map((l) => `/${l.replace("/", " ")}`).join("\n");
+}
+
 export const mirrorTitle = (repo: string, number: number) => `[mirror] ${repo}#${number}`;
 
 /** Marks every body this extension drafts, so the write path can tell its own from anything else. */

@@ -35,13 +35,13 @@ export function chosenTgSteps(r: TgResult, o: TgOverrides): TgStep[] {
 
 const ref = (repo: string, n: number) => (repo === "kubernetes/kubernetes" ? `#${n}` : `${repo}#${n}`);
 
-export function describeTg(steps: TgStep[]): string {
+export function describeTg(steps: TgStep[], testMode: boolean): string {
   if (!steps.length) return "nothing to write";
   return steps
     .map((s) =>
       s.kind === "issue"
-        ? `open "${s.title}" (${s.labels.join(", ")}); while testing, in ${TG_TEST_REPO}`
-        : `comment on ${ref(s.repo, s.number)} with the job, its run counts and the newest failed runs; while testing, on its mirror in ${TG_TEST_REPO}`,
+        ? `open "${s.title}" (${s.labels.join(", ")}) in ${testMode ? `${TG_TEST_REPO} (test mode)` : s.repo}`
+        : `comment on ${ref(s.repo, s.number)} with the job, its run counts and the newest failed runs${testMode ? `; in test mode, on its mirror in ${TG_TEST_REPO}` : ""}`,
     )
     .join(", then ");
 }
@@ -108,6 +108,7 @@ export interface TgHoverContent {
   setOverride(key: string, value: string): void;
   applied: Applied | undefined;
   canApply: boolean;
+  testMode: boolean;
   scope: ParentNode;
   apply(): void;
   skip(): void;
@@ -192,7 +193,7 @@ export function renderTgHoverCard(c: TgHoverContent): HTMLElement {
       canApply: c.canApply,
       label: TG_LABEL[action],
       steps: [],
-      summary: { text: describeTg(steps), writes: steps.length > 0 },
+      summary: { text: describeTg(steps, c.testMode), writes: steps.length > 0 },
       where: "",
       apply: c.apply,
       skip: c.skip,

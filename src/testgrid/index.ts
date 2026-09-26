@@ -1,7 +1,7 @@
 /** Content script for testgrid.k8s.io: on a dashboard's summary, a Tackle button judges every FAILING and FLAKY
  *  periodic tab (presubmits, `pull-*`, are left out: they fail as authors iterate), badges each with its verdict,
  *  and Accept applies the suggestions Accept may apply. Reads TestGrid, GCS and GitHub; writes only through the
- *  background worker, which sends them to the test repo (tgreview.ts, TG_TEST_REPO). */
+ *  background worker, which in test mode sends them to the test repo (tgreview.ts, TG_TEST_REPO). */
 import { HoverCard, type Applied } from "../content/hovercard";
 import { h } from "../content/ui";
 import { decideTg, TG_TINT, verdict, type TgResult } from "../core/tgreview";
@@ -25,6 +25,7 @@ class TestGridReview {
   private skipped = new Set<number>();
   private applying = false;
   private configured = { github: false, typesafe: false };
+  private testMode = true;
   private hover = new HoverCard(
     (id) => this.render(id),
     (id) => this.key(id),
@@ -38,7 +39,14 @@ class TestGridReview {
     if (!this.dashboard) return;
     // Our styles take TestGrid's look on this page (content.css, html.snba-tg).
     document.documentElement.classList.add("snba-tg");
-    this.configured = (await send({ type: "settings.get" })).configured;
+    const s = await send({ type: "settings.get" });
+    this.configured = s.configured;
+    this.testMode = s.settings.testMode;
+    // The toggle can change while this page is open; the worker checks it on every write, the card's wording follows.
+    chrome.storage.onChanged.addListener((ch) => {
+      const next = (ch.settings?.newValue as { testMode?: boolean } | undefined)?.testMode;
+      if (next !== undefined) this.testMode = next;
+    });
     this.runBtn.addEventListener("click", () => void this.run());
     this.acceptBtn.addEventListener("click", () => void this.accept());
     this.acceptBtn.hidden = true;
@@ -269,6 +277,7 @@ class TestGridReview {
       },
       applied: this.applied.get(id),
       canApply: !this.applying,
+      testMode: this.testMode,
       scope: document,
       apply: () => void this.apply(id).then(() => this.paintBar()),
       skip: () => {

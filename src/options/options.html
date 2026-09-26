@@ -164,6 +164,59 @@
         margin-top: 10px;
       }
 
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+      }
+      .toggle input {
+        appearance: none;
+        position: relative;
+        flex: none;
+        width: 34px;
+        height: 20px;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-radius: 10px;
+        background: var(--line);
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .toggle input::before {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+        transition: transform 0.15s;
+      }
+      .toggle input:checked {
+        background: var(--accent);
+      }
+      .toggle input:checked::before {
+        transform: translateX(14px);
+      }
+      .hint.bad {
+        color: var(--bad);
+      }
+      .writes {
+        margin: 6px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 12.5px;
+        display: grid;
+        row-gap: 4px;
+      }
+      .writes a {
+        color: var(--accent-ink);
+      }
+
       .actions {
         display: flex;
         align-items: center;
@@ -227,6 +280,7 @@
         font-size: 14px;
         font-weight: 600;
       }
+
       .promise ul {
         margin: 0;
         padding: 0;
@@ -258,17 +312,19 @@
         <div>
           <h1>SIG Node Board Assistant</h1>
           <p>
-            Jev's read of every card in the Triage column, on the board itself. You decide what happens next.
+            Jev's suggestion for every card on the SIG Node CI/Test, Bugs and Dynamic Resource Allocation
+            boards, and for every failing or flaky job on TestGrid, with the evidence behind it. Nothing is
+            written until you Apply or Accept.
           </p>
         </div>
       </div>
 
       <form id="form">
         <div class="group">
-          <h2>GitHub <small>read-only token</small></h2>
+          <h2>GitHub <small>reads the boards, writes where test mode allows</small></h2>
           <div>
             <div>
-              <label for="githubToken">Fine-grained personal access token</label>
+              <label for="githubToken">Personal access token</label>
               <input id="githubToken" type="password" autocomplete="off" spellcheck="false" />
               <p class="hint">
                 Create one at
@@ -277,10 +333,11 @@
                   target="_blank"
                   rel="noopener"
                   >github.com/settings/personal-access-tokens</a
-                >
-                with resource owner <b>kubernetes</b>, organization permission <b>Projects: read</b> and
-                access to public repositories. The extension only sends GET requests, so a read-only token is
-                all it can use.
+                >. A fine-grained token has one resource owner: <b>kubernetes</b> (organization permission
+                <b>Projects: read</b>, public repositories) reads the real boards;
+                <b>harche</b> (<b>Projects</b>, and <b>Issues</b> and <b>Pull requests</b> on
+                sig-node-board-test, read and write) reads and writes the test boards. A classic token with
+                the <b>repo</b> and <b>project</b> scopes works on both.
               </p>
               <div class="check" id="githubCheck"></div>
             </div>
@@ -311,6 +368,20 @@
           </div>
         </div>
 
+        <div class="group">
+          <h2>Test mode <small>where writes go</small></h2>
+          <div>
+            <div>
+              <label class="toggle"
+                ><input id="testMode" type="checkbox" role="switch" /> Write only to the test boards and
+                repo</label
+              >
+              <p class="hint" id="testModeHint"></p>
+              <ul class="writes" id="writes"></ul>
+            </div>
+          </div>
+        </div>
+
         <div class="actions">
           <button type="submit" class="primary" id="save">Save</button>
           <button type="button" id="test">Save and test</button>
@@ -329,28 +400,50 @@
               <path
                 d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
               /></svg
-            ><span>Reads the Triage column, each item's thread and changed files</span>
+            ><span
+              >Reads each column of the CI/Test, Bugs and Dynamic Resource Allocation boards: every item's
+              thread, linked PRs, changed files and TestGrid history</span
+            >
           </li>
           <li class="can">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
               <path
                 d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
               /></svg
-            ><span>Asks Jev four calibrated questions and applies the board's written policy</span>
+            ><span
+              >Reads TestGrid dashboards: each failing or flaky job's runs, their junit failures and build
+              logs, and the issues that may already track it</span
+            >
           </li>
           <li class="can">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
               <path
                 d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
               /></svg
-            ><span>Shows the verdict on the card and the evidence in a drawer</span>
+            ><span
+              >Asks Jev calibrated questions and applies each board's written policy or track record; the
+              suggestion shows as a badge, the evidence on hover</span
+            >
+          </li>
+          <li class="can">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path
+                d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
+              /></svg
+            ><span
+              >Writes only when you click Apply or Accept, and only what it drafted: Prow comments, labels,
+              Status moves, TestGrid comments and issues</span
+            >
           </li>
           <li class="cannot">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
               <path
                 d="M2.343 13.657A8 8 0 1 1 13.658 2.343 8 8 0 0 1 2.343 13.657ZM6.03 4.97a.75.75 0 0 0-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 1 0 1.06 1.06L8 9.06l1.97 1.97a.75.75 0 1 0 1.06-1.06L9.06 8l1.97-1.97a.75.75 0 1 0-1.06-1.06L8 6.94Z"
               /></svg
-            ><span>Never comments, labels, or moves a card. There is no write path in the code.</span>
+            ><span
+              >In test mode, never writes to the real boards or to kubernetes/kubernetes: only to the places
+              listed under Test mode</span
+            >
           </li>
         </ul>
       </div>

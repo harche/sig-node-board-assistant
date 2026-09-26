@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardFromUrl, isBot, knownBoard } from "../src/core/boards";
+import { boardFromUrl, isBot, knownBoard, writesTo } from "../src/core/boards";
 
 describe("boardFromUrl", () => {
   it.each([
@@ -54,4 +54,14 @@ describe("paneItemId", () => {
     ["https://github.com/orgs/kubernetes/projects/151", null],
     ["https://github.com/orgs/kubernetes/projects/151?pane=info", null],
   ])("%s", (url, want) => expect(paneItemId(url)).toBe(want));
+});
+
+describe("writesTo", () => {
+  const real = knownBoard({ owner: "kubernetes", number: 151 });
+  const test = knownBoard({ owner: "harche", number: 5 });
+  it("writes only to test copies in test mode, and to any known board with it off", () => {
+    expect([writesTo(real, true), writesTo(test, true)]).toEqual([false, true]);
+    expect([writesTo(real, false), writesTo(test, false)]).toEqual([true, true]);
+    expect(writesTo(undefined, false)).toBe(false);
+  });
 });

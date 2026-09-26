@@ -7,7 +7,7 @@ export interface KnownBoard extends BoardRef {
   about: string;
   /** Columns the extension decorates on this board, by workflow. */
   workflows: Record<string, string>;
-  /** Whether Accept may write to this board (Status moves, Prow comments). Only the test board, for now. */
+  /** A test copy: Apply and Accept write to it even in test mode. Real boards take writes only with test mode off. */
   writable?: boolean;
 }
 
@@ -90,6 +90,11 @@ export const KNOWN_BOARDS: KnownBoard[] = [
     writable: true,
   },
 ];
+
+/** Whether Apply and Accept may write to this board. */
+export function writesTo(b: KnownBoard | undefined, testMode: boolean): boolean {
+  return !!b && (b.writable === true || !testMode);
+}
 
 export function knownBoard(ref: BoardRef): KnownBoard | undefined {
   return KNOWN_BOARDS.find((b) => b.owner === ref.owner && b.number === ref.number);

@@ -1,8 +1,11 @@
 # SIG Node Board Assistant
 
-A Chrome extension that puts a calibrated opinion on the cards of the
-[SIG Node CI/Test board](https://github.com/orgs/kubernetes/projects/151) and the
-[SIG Node Bugs board](https://github.com/orgs/kubernetes/projects/185), right on the board you already use.
+A Chrome extension that puts Jev's suggestion on every card of the
+[SIG Node CI/Test](https://github.com/orgs/kubernetes/projects/151),
+[SIG Node Bugs](https://github.com/orgs/kubernetes/projects/185) and
+[Dynamic Resource Allocation](https://github.com/orgs/kubernetes/projects/95) boards, and on every failing or flaky
+job of a [TestGrid](https://testgrid.k8s.io) dashboard, with the evidence behind it, right on the page you already
+use. Nothing is written until you Apply or Accept.
 
 On the CI/Test board:
 
@@ -33,9 +36,13 @@ Click **Tackle** on the column (or on one card) and each card gets a badge and a
 evidence and the suggested action, which you can change before applying it; open the item the way you always
 do and the same evidence is there as one more section in GitHub's own sidebar.
 
-**Writes are limited to the test board for now.** Applying an action (a Prow comment and a Status move) only
-works on boards marked `writable` in `src/core/boards.ts`, today only the private test copies of 151 and 185. On
-kubernetes/151 and kubernetes/185 the extension reads and suggests; it never comments, labels or moves a card there. The worker
+**Test mode is on by default.** With it on, applying an action (a Prow comment and a Status move) only works on
+boards marked `writable` in `src/core/boards.ts`, the private test copies of 151, 185 and 95, and TestGrid's drafted
+issues and comments go only to `harche/sig-node-board-test` (`TG_TEST_REPO`). On kubernetes/151, kubernetes/185,
+kubernetes/95 and kubernetes/kubernetes the extension then reads and suggests; it never comments, labels, moves a
+card or opens an issue there. Turning test mode off on the settings page lets Apply and Accept write to the real
+boards too, and TestGrid's comments and issues go to the real issues in kubernetes/kubernetes and
+kubernetes/test-infra. The settings page lists where writes go in each mode. The worker
 checks every write against an allow-list: Status moves of the one item, and only the comments the extension
 drafts (`/triage accepted` with a priority, the To-do close / duplicate / check-in comments, and the
 In-progress nudge, `/unassign` and check-in comments, the Needs Reviewer `/cc` and re-pings, and the Bugs board's
@@ -81,9 +88,10 @@ npm run build
 Then open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked** and pick the `dist/`
 folder. Click the extension's icon to open its settings and add:
 
-- a GitHub **fine-grained personal access token** with resource owner `kubernetes`, organization permission
-  _Projects: read_, and access to public repositories. On kubernetes/151 the extension only reads, so a
-  read-only token is all it needs.
+- a GitHub **personal access token**. A fine-grained token has one resource owner: `kubernetes` (organization
+  permission _Projects: read_, public repositories) reads the real boards, where the extension only reads;
+  `harche` (_Projects_, and _Issues_ and _Pull requests_ on `sig-node-board-test`, read and write) reads and
+  writes the test boards. A classic token with the `repo` and `project` scopes works on both.
 - a **TypeSafe API key** from [typesafe.ai](https://typesafe.ai). Judging one card costs about $0.0002; answers
   are cached, so revisiting the board is free.
 

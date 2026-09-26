@@ -5,6 +5,8 @@ import {
   isTgDraft,
   jobFacts,
   junitFailures,
+  prowLabels,
+  titleQuery,
   signalLines,
   tgSteps,
   verdict,
@@ -271,4 +273,18 @@ describe("judgeTg", () => {
     await runEvidence(ok, "b/logs/j", "1", NOW);
     expect(await ok.cache.get("tgrun:b/logs/j/1", DAY)).toBeDefined();
   });
+});
+
+describe("writes with test mode off", () => {
+  it("keeps the title search within GitHub's query limit, without quotes it cannot escape", () => {
+    const long = `[Flaking Test] [It] [sig-node] a "quoted" step ${"with a very long name ".repeat(12)}`;
+    const q = titleQuery("kubernetes/kubernetes", long);
+    expect(q.length + " sort:updated-desc".length).toBeLessThanOrEqual(256);
+    expect(q).toMatch(
+      /^repo:kubernetes\/kubernetes is:issue is:open in:title "\[Flaking Test\] \[It\] .* a quoted step /,
+    );
+    expect(q.slice(q.indexOf('"') + 1, -1)).not.toContain('"');
+  });
+  it("sets labels through Prow", () =>
+    expect(prowLabels(["kind/flake", "sig/node"])).toBe("/kind flake\n/sig node"));
 });

@@ -3,7 +3,7 @@
 import { Cache, MemoryStore } from "../core/cache";
 import { GitHubClient } from "../core/github";
 import { JevClient } from "../core/jev";
-import { knownBoard } from "../core/boards";
+import { knownBoard, writesTo } from "../core/boards";
 import { findOnBoards } from "../core/lookup";
 import { DUPLICATE_QUESTIONS } from "../core/prompts/todo";
 import { TestGridClient } from "../core/testgrid";
@@ -16,7 +16,14 @@ import { judgeBug } from "../core/bugs";
 import { judgeInfo } from "../core/needsinfo";
 import { judgeDra } from "../core/dra";
 import { judgeTg } from "../core/tgjudge";
-import { isTgDraft, mirrorTitle, TG_TEST_REPO } from "../core/tgreview";
+import {
+  isTgDraft,
+  mirrorTitle,
+  prowLabels,
+  TG_LIVE_REPOS,
+  TG_TEST_REPO,
+  titleQuery,
+} from "../core/tgreview";
 import { judgeBacklog, shortlist } from "../core/backlog";
 import { BUG_DUPLICATE_QUESTIONS } from "../core/prompts/backlog";
 import { noulReading } from "../core/readings";
@@ -505,13 +512,13 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       return (await duplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "tg.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev, settings } = await clients();
       if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
       return (await judgeTg(
         {
           table: (ref, refresh) => new TestGridClient(tgCache).table(ref, refresh),
           search: (qs, n, r) => gh.searchIssues(qs, n, r),
-          issueText: (repo, n, r) => gh.issueText(repo, n, r, TG_TEST_REPO),
+          issueText: (repo, n, r) => gh.issueText(repo, n, r, settings.testMode ? TG_TEST_REPO : undefined),
           jev,
           cache,
         },
@@ -521,25 +528,49 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       )) as Out;
     }
     case "tg.apply": {
-      // TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a comment meant for
-      // another repo's issue goes on that issue's mirror there. Only bodies this extension drafted are written.
-      const { gh } = await clients();
+      // In test mode, TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a
+      // comment meant for another repo's issue goes on that issue's mirror there. With test mode off they go to the
+      // real issue, in TG_LIVE_REPOS only. Either way only bodies this extension drafted are written.
+      const { gh, settings } = await clients();
       const wrote: string[] = [];
-      for (const st of req.steps)
+      for (const st of req.steps) {
         if (!isTgDraft(st.body)) throw new Error("refusing a body the extension did not draft");
+        if (!settings.testMode && !TG_LIVE_REPOS.includes(st.repo))
+          throw new Error(`refusing a write to ${st.repo}`);
+      }
       for (const st of req.steps) {
         if (st.kind === "issue") {
+          const repo = settings.testMode ? TG_TEST_REPO : st.repo;
           const labels = st.labels.filter((l) => ["kind/failing-test", "kind/flake", "sig/node"].includes(l));
           // An open issue with the same title (an earlier Accept, or a create that timed out after GitHub made it)
-          // is the one to keep, not a second copy.
-          const open = await gh.paged<{ number: number; title: string; pull_request?: unknown }>(
-            `/repos/${TG_TEST_REPO}/issues`,
-            { state: "open" },
-          );
+          // is the one to keep, not a second copy. The test repo is small enough to list. On kubernetes/kubernetes,
+          // search finds anyone's, and the user's own recent issues are listed too: search lags new issues.
+          type Open = { number: number; title: string; pull_request?: unknown };
+          const open: Open[] = settings.testMode
+            ? await gh.paged<Open>(`/repos/${repo}/issues`, { state: "open" })
+            : (
+                await Promise.all([
+                  gh.searchIssues([titleQuery(repo, st.title)], 20, true).then((r) => r[0] ?? []),
+                  gh.viewer().then((me) =>
+                    gh.paged<Open>(`/repos/${repo}/issues`, {
+                      state: "open",
+                      creator: me.login,
+                      since: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+                    }),
+                  ),
+                ])
+              ).flat();
           const same = open.find((x) => !x.pull_request && x.title === st.title);
-          wrote.push(
-            `${TG_TEST_REPO}#${same?.number ?? (await gh.createIssue(TG_TEST_REPO, st.title, st.body, labels))}`,
-          );
+          if (same) {
+            wrote.push(`${repo}#${same.number}`);
+            continue;
+          }
+          const n = await gh.createIssue(repo, st.title, st.body, labels);
+          if (!settings.testMode && labels.length) await gh.comment(repo, n, prowLabels(labels));
+          wrote.push(`${repo}#${n}`);
+        } else if (!settings.testMode) {
+          await gh.comment(st.repo, st.number, st.body);
+          wrote.push(`${st.repo}#${st.number}`);
         } else {
           const title = mirrorTitle(st.repo, st.number);
           const all = await gh.paged<{ number: number; title: string }>(`/repos/${TG_TEST_REPO}/issues`, {
@@ -550,7 +581,8 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
             (await gh.createIssue(
               TG_TEST_REPO,
               title,
-              `Stands in for https://github.com/${st.repo}/issues/${st.number} while the TestGrid review is tried out.`,
+              // In backticks: a link from this repo would show up on the real issue's timeline.
+              `Stands in for \`${st.repo}#${st.number}\` while the TestGrid review is in test mode.`,
               [],
             ));
           await gh.comment(TG_TEST_REPO, n, st.body);
@@ -560,13 +592,15 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       return { wrote } as Out;
     }
     case "item.apply": {
-      // The only write path. Refused unless the board is registered as writable (the test board), and every step
+      // The only board write path. Refused unless the board takes writes (a test copy, or any known board with test
+      // mode off), and every step
       // must touch only the one item named: a Status move of that project item, or a Prow triage comment on the
       // issue / PR that GitHub says is behind it.
-      const b = knownBoard(req.board);
-      if (!b?.writable)
-        throw new Error(`${req.board.owner}/${req.board.number} is read-only in this extension`);
-      const { gh } = await clients();
+      const { gh, settings } = await clients();
+      if (!writesTo(knownBoard(req.board), settings.testMode))
+        throw new Error(
+          `${req.board.owner}/${req.board.number} is read-only${settings.testMode ? " in test mode" : " in this extension"}`,
+        );
       const target = await gh.projectItem(req.board, req.restId);
       if (!target) throw new Error(`project item ${req.restId} has no issue or PR behind it`);
       for (const st of req.steps) {
