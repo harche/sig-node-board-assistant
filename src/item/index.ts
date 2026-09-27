@@ -1,10 +1,14 @@
 /** Issue and pull request pages: if this item sits in a judged column of a known board, add the evidence section
- *  to the page's sidebar. PRs never get GitHub's project pane, so this is where their verdict lives. */
+ *  to the page's sidebar. PRs never get GitHub's project pane, so this is where their verdict lives. Nothing asks
+ *  Jev until the reader clicks: each section first offers its check with a button. */
 import { knownBoard } from "../core/boards";
 import type { Placement } from "../core/lookup";
 import type { BoardItem } from "../core/types";
 import { send } from "../shared/messages";
 import { findSidebar, placeSection } from "../content/adapters";
+import { SECTION_TITLE } from "../content/evidence";
+import { h } from "../content/ui";
+import { runButton } from "./button";
 import { Judged } from "../content/judged";
 import { isOurs } from "../content/dom";
 import { WORKFLOWS, type ColumnWorkflow, type PaneState } from "../content/workflows";
@@ -26,6 +30,8 @@ class ItemAssistant {
   private judged: Judged<unknown> | null = null;
   private wf: ColumnWorkflow<unknown> | null = null;
   private placement: Placement | null = null;
+  /** Whether the reader asked for the board verdict on this item. */
+  private requested = false;
   private ci: PrCi | IssueCheck | null = null;
   /** "repo#number" of the item the page currently shows; hash and tab changes keep it the same. */
   private current = "";
@@ -54,6 +60,7 @@ class ItemAssistant {
     if (key !== this.current) {
       this.current = key;
       this.placement = null;
+      this.requested = false;
       this.ci = null;
       document.querySelector(".snba-evidence")?.remove();
       document.querySelectorAll(".snba-ci").forEach((e) => e.remove());
@@ -67,7 +74,8 @@ class ItemAssistant {
         this.ci = ref.pull
           ? new PrCi(ref.repo, ref.number, live)
           : new IssueCheck(ref.repo, ref.number, live);
-        void this.ci.run();
+        // Only what decides whether to offer the check (the PR's failed jobs, the issue's scope): Jev runs on a click.
+        void this.ci.prepare();
         const placement = await send({ type: "item.lookup", repo: ref.repo, number: ref.number });
         if (!live() || !placement) return;
         const wf = workflowFor(placement);
@@ -78,7 +86,6 @@ class ItemAssistant {
         this.judged.onChange(() => this.sync());
         await this.judged.loadFields(placement.board);
         if (!live()) return;
-        void this.judgeOne(placement.item);
       } catch (e) {
         if (live() && this.placement)
           this.judged?.fail(this.placement.item.restId, e instanceof Error ? e.message : String(e));
@@ -112,6 +119,7 @@ class ItemAssistant {
     const side = findSidebar(document);
     if (!side) return;
     const item = placement.item;
+    if (!this.requested) return this.offer(side, placement);
     const slot = judged.slots.get(item.restId);
     const st: PaneState<unknown> =
       !slot || slot.state === "pending"
@@ -126,6 +134,34 @@ class ItemAssistant {
     const section = wf.pane(side.adapter, item, st, (it) => this.judgeOne(it, true));
     section.dataset.snbaKey = key;
     placeSection(side.el, section);
+  }
+
+  /** Before the reader asks: the section names the column and offers the verdict. */
+  private offer(side: NonNullable<ReturnType<typeof findSidebar>>, placement: Placement): void {
+    const key = `${placement.item.restId}:offer`;
+    const existing = document.querySelector<HTMLElement>(".snba-evidence");
+    if (existing?.dataset.snbaKey === key && side.el.contains(existing)) return;
+    existing?.remove();
+    const { root, body } = side.adapter.section(SECTION_TITLE);
+    root.classList.add("snba-evidence");
+    root.dataset.snbaKey = key;
+    body.append(
+      h(
+        "p.snba-muted",
+        {},
+        `In ${placement.column} on ${knownBoard(placement.board)?.title ?? "the board"}.`,
+      ),
+      h(
+        "div.snba-ci-start",
+        {},
+        runButton("Judge", "Read the thread and ask Jev what this column's workflow would do with it", () => {
+          this.requested = true;
+          this.sync();
+          void this.judgeOne(placement.item);
+        }),
+      ),
+    );
+    placeSection(side.el, root);
   }
 }
 

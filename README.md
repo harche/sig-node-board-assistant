@@ -101,7 +101,9 @@ and `api.typesafe.ai`. TestGrid (`testgrid.k8s.io`) is public and read without c
 
 Open the board and click **Tackle** on Triage or Issues - To do (or on one card's badge). Cards get a badge as
 they are judged; hover one for the evidence and the actions, or open it (issue pane or PR tab) and the
-"SIG Node board assistant" section appears in the sidebar.
+"SIG Node board assistant" section appears in the sidebar. On an issue or PR's own page nothing asks Jev until you
+click: each section (the board verdict, Failing CI, CI history and duplicates) first offers a **Judge** or **Check**
+button in GitHub's own style, and the same button reads **Judge again** / **Check again** once it has run.
 
 ## Issues - To do
 
@@ -291,8 +293,9 @@ The hover card takes TestGrid's look (its buttons, panel colours and status colo
 
 ## Failing CI on a pull request's page
 
-On any pull request with a failed Prow job, a "Failing CI" section in the sidebar says for each one whether the PR's
-change broke it or it fails without the PR, and why.
+On any pull request with a failed Prow job, a "Failing CI" section in the sidebar counts the failures and offers
+**Check failures**; clicked, it says for each one whether the PR's change broke it or it fails without the PR, and
+why.
 
 - Code reads the facts: the failed run's junit failures (a verify script's reason from its stderr, a Go test's name
   from its output) and build log signal lines, the job's earlier runs on this PR and whether they tested the current
@@ -308,8 +311,8 @@ change broke it or it fails without the PR, and why.
 
 ## CI history and duplicates on an issue's page
 
-On SIG Node and DRA issues (`sig/node` or `wg/device-management`), two sidebar sections, each shown only when it has
-something to say:
+On SIG Node and DRA issues (`sig/node` or `wg/device-management`), a **Check** button runs two checks; each gets its
+own sidebar section when it has something to say (else one line says nothing was found):
 
 - **CI history**, for an issue that names CI jobs or tests: their run history on TestGrid (as the To do column reads
   it), the newest failed run's junit failures and log lines, Jev's read of whether the problem is resolved (To do's

@@ -59,6 +59,7 @@ export type Request =
   | { type: "tg.apply"; steps: TgStep[] }
   | { type: "ci.checks"; repo: string; number: number; refresh?: boolean }
   | { type: "ci.judge"; repo: string; number: number; check: FailedCheck; refresh?: boolean }
+  | { type: "issue.scope"; repo: string; number: number }
   | { type: "issue.ci"; repo: string; number: number; refresh?: boolean }
   | { type: "issue.dups"; repo: string; number: number; refresh?: boolean };
 
@@ -91,6 +92,8 @@ export interface ResponseMap {
   "tg.apply": { wrote: string[] };
   "ci.checks": PrChecks;
   "ci.judge": CiJob;
+  /** Whether the issue is one the issue page's checks cover (SIG Node or DRA). */
+  "issue.scope": boolean;
   /** null when the issue is out of scope or names no job TestGrid has. */
   "issue.ci": IssueCiResult | null;
   /** null when the issue is out of scope. */

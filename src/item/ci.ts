@@ -14,6 +14,7 @@ import {
   type PrChecks,
 } from "../core/prci";
 import { send } from "../shared/messages";
+import { runButton } from "./button";
 
 type Slot = { state: "pending" } | { state: "error"; message: string } | { state: "done"; job: CiJob };
 
@@ -31,6 +32,8 @@ export class PrCi {
   private rendered = "";
   /** Bumped by each run, so a slower earlier run cannot overwrite a newer one's results. */
   private runs = 0;
+  /** Whether the reader asked for the check: until then the section only counts the failures and offers it. */
+  private started = false;
 
   constructor(
     private repo: string,
@@ -39,10 +42,24 @@ export class PrCi {
     private live: () => boolean,
   ) {}
 
-  /** Reads the checks and judges each failed job. Until a first read finds a failure there is no section: a PR
-   *  that passes, a repo without Prow, or one the token cannot read shows nothing. "Check again" keeps the section
-   *  and reports its own failure in it. */
+  /** Reads the checks only (no Jev): a PR with a failed Prow job gets the section and its button. A PR that passes,
+   *  a repo without Prow, or one the token cannot read shows nothing. */
+  async prepare(): Promise<void> {
+    const gen = this.runs;
+    try {
+      const checks = await send({ type: "ci.checks", repo: this.repo, number: this.number });
+      if (gen !== this.runs || !this.live() || this.started) return;
+      this.checks = checks;
+      this.bump();
+    } catch {
+      // Nothing to offer.
+    }
+  }
+
+  /** Re-reads the checks and judges each failed job: the button's first click reads through the cache, later ones
+   *  bypass it. A failed re-read keeps the section and reports its failure in it. */
   async run(refresh = false): Promise<void> {
+    this.started = true;
     const gen = ++this.runs;
     const mine = () => gen === this.runs && this.live();
     this.error = null;
@@ -109,6 +126,23 @@ export class PrCi {
   private content(): (HTMLElement | string)[] {
     if (this.error) return [h("p.snba-error", {}, this.error), this.again()];
     const c = this.checks!;
+    if (!this.started)
+      return [
+        h(
+          "p.snba-ci-head",
+          {},
+          `${c.failed.length} failing, ${c.passing} passing${c.pending.length ? `, ${c.pending.length} running` : ""}`,
+        ),
+        h(
+          "div.snba-ci-start",
+          {},
+          runButton(
+            "Check failures",
+            "Read each failed job's logs, its record on other PRs and this PR's diff, and ask Jev whether the PR caused it",
+            () => void this.run(),
+          ),
+        ),
+      ];
     const slots = c.failed.map((f) => this.slots.get(f.job));
     const done = slots.flatMap((s) => (s?.state === "done" ? [s.job] : []));
     // A job whose judge failed is finished too: it shows its error, and the others' verdicts still count.
@@ -203,9 +237,10 @@ export class PrCi {
   }
 
   private again(): HTMLElement {
-    const b = h("button.snba-link", { type: "button" }, "Check again") as HTMLButtonElement;
-    b.title = "Re-read the checks, logs and TestGrid and ask Jev again, bypassing the cache";
-    b.addEventListener("click", () => void this.run(true));
-    return b;
+    return runButton(
+      "Check again",
+      "Re-read the checks, logs and TestGrid and ask Jev again, bypassing the cache",
+      () => void this.run(true),
+    );
   }
 }

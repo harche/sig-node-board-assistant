@@ -340,6 +340,13 @@
 }
 
 /* ---------- the PR page's Failing CI section (item/ci.ts) */
+.snba-ci-start {
+  margin: 8px 0 4px;
+}
+.snba-foot .snba-run-check,
+.snba-ci-start .snba-run-check {
+  align-self: flex-start;
+}
 .snba-ci-head {
   margin: 0 0 4px;
 }

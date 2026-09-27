@@ -151,6 +151,15 @@ export function nativeButton(
   return { root, label: l, native: true };
 }
 
+/** A small default button drawn by GitHub's own styles, for the sidebar's "Check" and "Judge again": Primer React's
+ *  classes where the page has such a button to copy, else the classic pages' Primer CSS `btn btn-sm`. */
+export function pageButton(label: string): HTMLButtonElement {
+  const { root, native } = nativeButton(document, null, label, "default");
+  if (!native) root.className = "btn btn-sm";
+  root.classList.add("snba-run-check");
+  return root as HTMLButtonElement;
+}
+
 let tipSeq = 0;
 
 /** GitHub's own tooltip for `btn`: a popover span with the class of a Primer tooltip found in `scope` (the header's

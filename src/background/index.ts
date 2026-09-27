@@ -552,6 +552,11 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       };
       return (await judgeCi(deps, req.repo, req.number, req.check, req.refresh)) as Out;
     }
+    case "issue.scope": {
+      const { gh } = await clients();
+      const detail = await gh.itemDetail(req.repo, "Issue", req.number);
+      return inScope(detail.labels.map((l) => l.name)) as Out;
+    }
     case "issue.ci":
     case "issue.dups": {
       const { gh, jev } = await clients();

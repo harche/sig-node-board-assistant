@@ -1,6 +1,7 @@
 /** What a reviewer sees for a 'PRs - Needs Reviewer' or 'PRs - Needs Approver' card: whose move it is, who is
  *  reviewing or was asked, the people to /cc with their reasons, and one action, the suggested one preselected,
  *  that can be changed. The two columns share facts and layout; a PrSpec gives each its rules and actions. */
+import { pageButton } from "./adapters";
 import {
   APPROVE_LABEL,
   APPROVE_TINT,
@@ -233,7 +234,7 @@ export function renderReviewEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   again.title = "Re-read the PR, its reviews and history, and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;

@@ -1,5 +1,6 @@
 /** What a reviewer sees for an 'Issues - In progress' card: each assignee with Jev's reading of them (active,
  *  waiting out a check-in, quiet), and one action, the suggested one preselected, that the reviewer can change. */
+import { pageButton } from "./adapters";
 import {
   decideProgressCard,
   PROGRESS_LABEL,
@@ -129,7 +130,7 @@ export function renderProgressEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   again.title = "Re-read the thread and linked PRs and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;

@@ -1,5 +1,6 @@
 /** What a reviewer sees for a card in the SIG Node Bugs board's Needs Information column: Jev's readings of the
  *  thread since the ask, the dates behind the wait, and one action, the suggested one preselected. */
+import { pageButton } from "./adapters";
 import { laneFor } from "../core/bugs";
 import {
   decideInfo,
@@ -164,7 +165,7 @@ export function renderInfoEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   again.title = "Re-read the thread and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;

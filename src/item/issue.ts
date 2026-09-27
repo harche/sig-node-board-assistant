@@ -1,6 +1,8 @@
 /** The issue page's "CI history" (core/issuecheck.ts) and "Duplicates and related" (core/related.ts) sections, on
  *  SIG Node and DRA issues. A section appears only when it has something to say: an issue naming a job TestGrid
- *  has, a duplicate or a related issue Jev is sure of. Read-only: a suggested command is for the reader to post. */
+ *  has, a duplicate or a related issue Jev is sure of. Both run when the reader clicks "Check": until then, and when
+ *  neither has anything to say, one section offers the check. Read-only: a suggested command is for the reader to
+ *  post. */
 import { findSidebar, placeSection } from "../content/adapters";
 import { readingsBlock } from "../content/hcparts";
 import { h } from "../content/ui";
@@ -8,6 +10,7 @@ import { decideIssueCi, ISSUE_CI_LABEL, ISSUE_CI_TINT, type IssueCiResult } from
 import { shortTest } from "../core/prci";
 import { openDuplicate, type RelatedMatch, type RelatedResult } from "../core/related";
 import { send } from "../shared/messages";
+import { runButton } from "./button";
 
 const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
@@ -46,6 +49,10 @@ export class IssueCheck {
   private version = 0;
   private rendered = "";
   private runs = 0;
+  /** Whether the issue is SIG Node's or DRA's: only then is the check offered. */
+  private scope = false;
+  private started = false;
+  private busy = false;
 
   constructor(
     private repo: string,
@@ -53,18 +60,32 @@ export class IssueCheck {
     private live: () => boolean,
   ) {}
 
-  /** Both checks, side by side. A failed first read shows nothing; "Check again" reports its failure in place. */
+  /** Whether to offer the check: one cached GitHub read of the labels, no Jev. */
+  async prepare(): Promise<void> {
+    try {
+      const scope = await send({ type: "issue.scope", repo: this.repo, number: this.number });
+      if (!this.live()) return;
+      this.scope = scope;
+      this.bump();
+    } catch {
+      // Nothing to offer.
+    }
+  }
+
+  /** Both checks, side by side: the first click reads through the cache, "Check again" bypasses it. A failure is
+   *  reported in its section. */
   async run(refresh = false): Promise<void> {
+    this.started = true;
+    this.busy = true;
     const gen = ++this.runs;
     const mine = () => gen === this.runs && this.live();
-    const shown = { ci: this.ci.state === "done", dups: this.dups.state === "done" };
     const read = async <K extends "ci" | "dups">(k: K) => {
       const type = k === "ci" ? "issue.ci" : "issue.dups";
       try {
         const result = await send({ type, repo: this.repo, number: this.number, refresh });
         if (mine()) (this[k] as Part<unknown>) = { state: "done", result };
       } catch (e) {
-        if (mine() && shown[k])
+        if (mine())
           (this[k] as Part<unknown>) = {
             state: "error",
             message: e instanceof Error ? e.message : String(e),
@@ -72,7 +93,11 @@ export class IssueCheck {
       }
       if (mine()) this.bump();
     };
+    this.bump();
     await Promise.all([read("ci"), read("dups")]);
+    if (!mine()) return;
+    this.busy = false;
+    this.bump();
   }
 
   private bump(): void {
@@ -94,6 +119,10 @@ export class IssueCheck {
     if (ci) out.push(ci);
     const dups = this.dupSection(side.adapter);
     if (dups) out.push(dups);
+    if (!out.length) {
+      const start = this.startSection(side.adapter);
+      if (start) out.push(start);
+    }
     if (!out.length) return;
     // After the board's evidence section when there is one, else where it would go.
     let after = side.el.querySelector(".snba-evidence");
@@ -150,6 +179,12 @@ export class IssueCheck {
 
   private dupSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
     const title = "Duplicates and related";
+    // The slower of the two (dozens of candidates): say it is still coming once the CI history is in.
+    if (this.busy && this.dups.state === "idle" && this.ci.state !== "idle") {
+      const { root, body } = adapter.section(title);
+      body.append(h("p.snba-muted", {}, "Searching…"));
+      return root;
+    }
     if (this.dups.state === "idle" || (this.dups.state === "done" && !this.dups.result)) return null;
     if (this.dups.state === "error") {
       const { root, body } = adapter.section(title);
@@ -194,6 +229,35 @@ export class IssueCheck {
     return root;
   }
 
+  /** The section that offers the check, says it is running, or that it found nothing to show. */
+  private startSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
+    if (!this.scope) return null;
+    const { root, body } = adapter.section("CI history and duplicates");
+    body.append(
+      h(
+        "p.snba-muted",
+        {},
+        this.busy
+          ? "Checking…"
+          : this.started
+            ? "Nothing to show: no CI run history for what it names, and no duplicate or related issue Jev is sure of."
+            : "Whether the failure it reports still happens on CI, and any duplicate or related issue.",
+      ),
+      h(
+        "div.snba-ci-start",
+        {},
+        this.started
+          ? this.again()
+          : runButton(
+              "Check",
+              "Read the issue's CI run history and search for duplicates and related issues, and ask Jev",
+              () => void this.run(),
+            ),
+      ),
+    );
+    return root;
+  }
+
   private foot(cost: number): HTMLElement {
     return h(
       "div.snba-foot",
@@ -204,10 +268,11 @@ export class IssueCheck {
   }
 
   private again(): HTMLElement {
-    const b = h("button.snba-link", { type: "button" }, "Check again") as HTMLButtonElement;
-    b.title = "Re-read the issue, TestGrid and GitHub search and ask Jev again, bypassing the cache";
-    b.addEventListener("click", () => void this.run(true));
-    return b;
+    return runButton(
+      "Check again",
+      "Re-read the issue, TestGrid and GitHub search and ask Jev again, bypassing the cache",
+      () => void this.run(true),
+    );
   }
 }
 

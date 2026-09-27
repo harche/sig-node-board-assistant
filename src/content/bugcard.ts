@@ -1,6 +1,7 @@
 /** What a reviewer sees for a card in the SIG Node Bugs board's Triage column: Jev's reading of the report (what
  *  kind it is, who owns it, whether a maintainer can start on it), the labels a triager already set, and one
  *  action, the suggested one preselected, with the priority or the SIG it sets. */
+import { pageButton } from "./adapters";
 import {
   BUG_LABEL,
   BUG_TINT,
@@ -201,7 +202,7 @@ export function renderBugEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   again.title = "Re-read the report and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;

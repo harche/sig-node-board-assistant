@@ -1,6 +1,7 @@
 /** The evidence block: verdict, decision band, Jev's answers, the code's checks and what a reviewer could do.
  *  It is rendered into GitHub's own sidebar (the project pane for issues, the PR page for pull requests) through
  *  an adapter that supplies the page's native section and row markup, so it reads as part of the page. */
+import { pageButton } from "./adapters";
 import { f2, KEEP_AT, REMOVE_AT, tieBreak } from "../core/policy";
 import { proposedActions } from "../core/triage";
 import type { BoardFields, BoardItem, ProposedAction, Signals, TriageResult } from "../core/types";
@@ -93,7 +94,7 @@ export function renderEvidence(
 }
 
 function rejudgeLink(item: BoardItem, handlers: EvidenceHandlers): HTMLElement {
-  const b = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const b = pageButton("Judge again");
   b.title = "Re-fetch the thread and ask Jev again, bypassing the cache";
   b.addEventListener("click", async () => {
     b.disabled = true;

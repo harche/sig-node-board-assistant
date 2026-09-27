@@ -1,6 +1,7 @@
 /** What a reviewer sees for an 'Issues - To do' card: the hover card on the board and the section in GitHub's pane.
  *  Jev's P(resolved) on a band, the facts behind it (CI runs, linked PRs, assignees, labels, a likely duplicate),
  *  and one action, Jev's pick preselected, that the reviewer can change before applying it. */
+import { pageButton } from "./adapters";
 import { f2, PRIORITY_CHOICES } from "../core/policy";
 import {
   ACTION_LABEL,
@@ -228,7 +229,7 @@ export function renderTodoEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   again.title = "Re-fetch the thread, the linked PRs and TestGrid, and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;

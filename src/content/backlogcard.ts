@@ -1,6 +1,7 @@
 /** What a reviewer sees for a card in the SIG Node Bugs board's Triaged and High Priority columns: Jev's readings
  *  (fixed?, each assignee, the priority), the linked PRs and a likely duplicate, and one action, the suggested one
  *  preselected, with the priority that decides the column. */
+import { pageButton } from "./adapters";
 import {
   BACKLOG_LABEL,
   BACKLOG_TINT,
@@ -192,7 +193,7 @@ export function renderBacklogEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   again.title = "Re-read the thread and linked PRs and ask Jev again";
   again.addEventListener("click", async () => {
     again.disabled = true;

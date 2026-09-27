@@ -2,6 +2,7 @@
  *  issue, Jev's pick of column as bars and the facts behind it (linked PRs, assignees, the release); for a PR, its
  *  state.
  *  One action, the suggested one preselected unless it is the reviewer's call. */
+import { pageButton } from "./adapters";
 import {
   decideDra,
   COLUMN_TITLE,
@@ -154,7 +155,7 @@ export function renderDraEvidence(
   const { root, body } = adapter.section(title);
   root.classList.add("snba-evidence");
   root.dataset.snbaItem = String(item.restId);
-  const again = h("button.snba-link", { type: "button" }, "Judge again") as HTMLButtonElement;
+  const again = pageButton("Judge again");
   // In progress and In review are placed by state alone (dra.ts): no Jev there.
   const jev = column !== "progress" && column !== "review";
   again.title = jev ? "Re-read the thread and linked PRs and ask Jev again" : "Re-read the item";
