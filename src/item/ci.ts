@@ -2,15 +2,12 @@
  *  fails without the PR (a flake, the job's environment), the evidence, and the Prow command that reruns what is
  *  not the PR's. Read-only: the command is for the reader to post. On every pull request with a failed Prow job. */
 import { findSidebar, placeSection } from "../content/adapters";
-import { readingsBlock } from "../content/hcparts";
 import { h } from "../content/ui";
 import {
   CI_LABEL,
   CI_TINT,
   decideCi,
   rerunCommand,
-  failName,
-  shortTest,
   type CiJob,
   type FailedCheck,
   type PrChecks,
@@ -162,17 +159,6 @@ export class PrCi {
       return h("div.snba-ci-job", {}, h("div", {}, name), h("p.snba-error", {}, s.message));
     const j = s.job;
     const d = decideCi(j);
-    const details = h(
-      "details.snba-ci-more",
-      {},
-      h("summary.snba-link", {}, "Evidence"),
-      readingsBlock(j.readings),
-      h(
-        "dl.snba-hc-scores.snba-hc-facts",
-        {},
-        ...facts(j).flatMap(([k, v]) => [h("dt", {}, k), h("dd.snba-hc-text", {}, v)]),
-      ),
-    );
     return h(
       "div.snba-ci-job",
       {},
@@ -184,7 +170,6 @@ export class PrCi {
         name,
       ),
       h("p.snba-why", {}, d.why),
-      details,
     );
   }
 
@@ -210,65 +195,4 @@ export class PrCi {
     b.addEventListener("click", () => void this.run(true));
     return b;
   }
-}
-
-const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
-
-function facts(j: CiJob): [string, Node | string][] {
-  const out: [string, Node | string][] = [];
-  const e = j.evidence;
-  if (e.junit_failures.length)
-    out.push([
-      "Failing",
-      lines(
-        e.junit_failures
-          .slice(0, 4)
-          .map((f) =>
-            h("span", {}, failName(f), f.message ? h("code", {}, ` ${f.message.slice(0, 200)}`) : null),
-          ),
-      ),
-    ]);
-  const sig = (e.log_signals ?? []).filter((l) => !/^\[FAIL\]/.test(l)).slice(0, 4);
-  if (sig.length) out.push(["Log", lines(sig.map((l) => h("code", {}, l.slice(0, 220))))]);
-  else if (e.log_signals === null) out.push(["Log", j.check.description || "no build log"]);
-  if (j.elsewhere) {
-    const w = j.elsewhere;
-    const [dash, tab] = w.testgrid.split("#");
-    out.push([
-      "Other PRs",
-      lines([
-        h(
-          "span",
-          {},
-          `job failed ${w.job.failed} of ${w.job.runs} runs in ${w.window_days}d (`,
-          link(`https://testgrid.k8s.io/${dash}#${tab}`, "TestGrid"),
-          ")",
-        ),
-        ...w.tests.map((t) => `${shortTest(t.test)}: failed ${t.failed} of ${t.runs}`),
-      ]),
-    ]);
-  } else out.push(["Other PRs", "no TestGrid tab for this job"]);
-  if (j.this_pr.length)
-    out.push([
-      "This PR",
-      `${j.this_pr
-        .map((r) => `${(r.result ?? "running").toLowerCase()}${r.current === false ? " (older commit)" : ""}`)
-        .join(", ")} (newest first)`,
-    ]);
-  const issues = j.tracks.filter((t) => t.p >= 0.35).slice(0, 3);
-  if (issues.length)
-    out.push([
-      "Issues",
-      lines(
-        issues.map((t) =>
-          h(
-            "span",
-            {},
-            link(t.url, `${t.repo === "kubernetes/kubernetes" ? "" : t.repo}#${t.number}`),
-            ` ${t.state === "closed" ? "(closed) " : ""}${t.title.slice(0, 80)}`,
-          ),
-        ),
-      ),
-    ]);
-  return out;
 }
