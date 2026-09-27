@@ -8,6 +8,7 @@ import {
   CI_TINT,
   decideCi,
   rerunCommand,
+  suspectFile,
   type CiJob,
   type FailedCheck,
   type PrChecks,
@@ -169,8 +170,20 @@ export class PrCi {
         " ",
         name,
       ),
-      h("p.snba-why", {}, d.why),
+      h("p.snba-why", {}, ...this.why(d.why, d.verdict === "this_pr" ? suspectFile(j) : null)),
     );
+  }
+
+  /** The why, with the suspect file (its tail) linked to that file on the PR's Files changed tab. GitHub anchors a
+   *  file's diff at `#diff-<sha256 of its path>`; until the hash is ready the link opens the tab's top. */
+  private why(why: string, file: string | null): (string | HTMLElement)[] {
+    if (!file || !why.endsWith(file)) return [why];
+    const a = h("a", { href: `/${this.repo}/pull/${this.number}/files` }, file) as HTMLAnchorElement;
+    void crypto.subtle.digest("SHA-256", new TextEncoder().encode(file)).then((buf) => {
+      const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      a.href = `/${this.repo}/pull/${this.number}/files#diff-${hex}`;
+    });
+    return [why.slice(0, -file.length), a];
   }
 
   private command(cmd: string): HTMLElement {

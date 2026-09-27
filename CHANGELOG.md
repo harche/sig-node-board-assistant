@@ -36,8 +36,8 @@ test boards and `harche/sig-node-board-test`).
 - Dynamic Resource Allocation In review: merged or closed PRs to Done, drafts and issues to In progress; open PRs
   stay. No Jev question.
 - Failing CI on a pull request's page: for each failed Prow job, whether the PR broke it, a flake or infra, from the
-  run's junit and log, the job's runs on this PR and the same tests' record on other PRs (TestGrid's presubmit tabs),
-  with any flake issue that tracks it and the `/retest` or `/test` command to copy. Read-only.
+  run's junit and log, the job's runs on this PR, the same tests' record on other PRs (TestGrid's presubmit tabs) and
+  Jev's file-by-file reading of the PR's diff (naming the changed file likely to cause a PR-caused failure), with any flake issue that tracks it and the `/retest` or `/test` command to copy. Read-only.
 - CI history and duplicates on a SIG Node or DRA issue's page: whether the failure it reports still happens (run
   history, the newest failure and whether it is still the issue's, Jev's resolved read, the fresh-fix guard; a closed
   issue failing again), and duplicates and concretely related issues, current and past: six searches (keyword,

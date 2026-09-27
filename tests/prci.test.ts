@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideCi, failedChecks, failName, rerunCommand, type CiJob } from "../src/core/prci";
+import { decideCi, failedChecks, failName, rerunCommand, suspectFile, type CiJob } from "../src/core/prci";
 import { tally, type TgTable } from "../src/core/testgrid";
 import { junitFailures } from "../src/core/tgreview";
 
@@ -119,6 +119,7 @@ const job = (over: Partial<CiJob> = {}, cause?: Record<string, number>): CiJob =
   cause: cause
     ? { type: "choice", choice: Object.keys(cause)[0]!, confidence: 1, probabilities: cause }
     : null,
+  suspects: [],
   tracks: [],
   readings: [],
   usage: { input_tokens: 0, cost: 0 },
@@ -163,6 +164,16 @@ describe("decideCi", () => {
     expect(d.why).toBe(
       "90%: [sig-node] Probing container restarts failed on 14 of 400 other PRs' runs in 6d; tracked by #9",
     );
+  });
+  it("names the changed file Jev judges likely to cause a PR's failure", () => {
+    const mine = (p: number) =>
+      decideCi(job({ suspects: [{ file: "pkg/kubelet/prober/prober_manager.go", p }] }, { this_pr: 0.9 }));
+    expect(mine(0.8).why).toBe(
+      "90%: [sig-node] Probing container restarts fails here; likely from the change to pkg/kubelet/prober/prober_manager.go",
+    );
+    expect(mine(0.3).why).toBe("90%: [sig-node] Probing container restarts fails here");
+    expect(suspectFile({ suspects: [{ file: "a.go", p: 0.5 }] })).toBe("a.go");
+    expect(suspectFile({ suspects: [] })).toBeNull();
   });
   it("leaves a close call to the reader, with no command", () =>
     expect(decideCi(job({}, { this_pr: 0.5, flake: 0.45, infra: 0.05 }))).toMatchObject({

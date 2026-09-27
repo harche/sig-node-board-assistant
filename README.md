@@ -297,6 +297,10 @@ change broke it or it fails without the PR, and why.
 - Code reads the facts: the failed run's junit failures (a verify script's reason from its stderr, a Go test's name
   from its output) and build log signal lines, the job's earlier runs on this PR and whether they tested the current
   commit, and from the job's presubmit tab on TestGrid how often the same tests failed on other PRs' runs.
+- Jev reads the PR's diff one changed file at a time: could this file's change cause this failure? The files most
+  likely to, with their hunks, go into the cause question, and a PR-caused failure names the likeliest file. A huge
+  diff is read whole this way, each file cut at 8,000 characters. Generated and vendored files, binary ones and any
+  Jev did not answer for are listed to it as not judged, never as unlikely.
 - Jev judges the cause: this PR, a flake, or infra, and whether a candidate flake issue tracks it (the same search as
   the TestGrid review). A job Prow never ran ("Pod scheduling timeout", no log) is infra without asking Jev.
 - The section suggests the Prow command that reruns what is not the PR's: `/retest` when nothing failing is the PR's,

@@ -541,6 +541,9 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       const tg = new TestGridClient(tgCache);
       const deps: CiDeps = {
         pull: (repo, n, r) => gh.pullChecks(repo, n, r),
+        // Kept in memory: a head's diff never changes, and a big one is too large for storage.
+        diff: (repo, n, sha, r) =>
+          tgCache.cached(`prdiff:${repo}#${n}@${sha}`, 86_400_000, () => gh.pullDiff(repo, n, sha), r),
         resolvePresubmit: (job) => tg.resolvePresubmit(job),
         failedTable: (ref, r) => tg.failedTable(ref, r),
         search: (qs, n, r) => gh.searchIssues(qs, n, r),

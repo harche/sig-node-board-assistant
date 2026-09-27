@@ -298,9 +298,24 @@ PRs.
   failures keep their classname. A Go case's message is "Failed" and a verify script's "see stderr for details": the
   failure's text or the case's stderr is read instead, which the TestGrid review's evidence gains too.
 - Prow reports a job it could not schedule as `error` with no artifacts: that is infra, decided by code.
-- Jev reads the PR's title and changed paths, the failed run, this PR's runs and the record elsewhere. On #142200:
-  verify (a new alpha gate on by default) and the Windows unit job (the same) as the PR's at 0.99, a probe test that
+- Jev reads the PR's title, changed paths and per-file suspects, the failed run, this PR's runs and the record
+  elsewhere. On #142200: verify (a new alpha gate on by default) and the Windows unit job (the same) as the PR's at 0.99, a probe test that
   failed on 14 of 436 other runs as a flake at 0.98, a GCE instance that could not be created as infra.
+- The diff, read one file at a time. A trial on 167 recent failures of kubernetes/kubernetes PRs, labelled from each
+  PR's own runs (84 failed, then passed only after the author changed the code; 83 failed, then passed on a rerun of
+  the same commit), compared three ways of asking the cause:
+
+  |                                                             | PR's: right / wrong / unsure | not the PR's: right / wrong / unsure |
+  | ----------------------------------------------------------- | ---------------------------- | ------------------------------------ |
+  | changed paths only                                          | 38 / 16 / 30                 | 73 / 1 / 9                           |
+  | plus the hunks linked to the failure (≤20 KB)               | 40 / 15 / 29                 | 73 / 1 / 9                           |
+  | plus P(could cause it) per changed file, top 5 files' hunks | 51 / 13 / 20                 | 69 / 1 / 13                          |
+
+  Hunks picked by keyword barely helped; a question per file did, most on cmd, verify and DRA integration jobs, where the
+  failure names what the PR changed. Half the diffs were over 20 KB (the largest 665 KB): per file, nothing is left
+  out, each file cut at 8,000 characters. Most remaining "wrong" PR cases look mislabelled: a test that also fails on
+  other PRs, which passed after an unrelated push. The cost is a Jev call per changed file (median 7).
+
 - `/retest` reruns every failed job, so it is suggested only when none of them is the PR's.
 - Not yet: posting the command (it would go through test mode's mirror), GitHub Actions checks, and the periodic
   jobs' record of the same test.

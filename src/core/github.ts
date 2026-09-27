@@ -152,6 +152,26 @@ export class GitHubClient {
     );
   }
 
+  /** The pull request's diff file by file, each patch cut at PATCH_MAX (null for a binary file or one GitHub will not
+   *  diff). null when the head is no longer `sha`: a diff read after a push is not the one the run tested. */
+  async pullDiff(repo: string, num: number, sha: string): Promise<ChangedFile[] | null> {
+    const [pr, files] = await Promise.all([
+      this.api<RawPullFull>(`/repos/${repo}/pulls/${num}`),
+      this.paged<RawFile & { status: string; patch?: string }>(`/repos/${repo}/pulls/${num}/files`),
+    ]);
+    if (pr.head.sha !== sha) return null;
+    return files.map((f) => ({
+      file: f.filename,
+      status: f.status,
+      patch:
+        f.patch === undefined
+          ? null
+          : f.patch.length > PATCH_MAX
+            ? `${f.patch.slice(0, PATCH_MAX)}\n…cut`
+            : f.patch,
+    }));
+  }
+
   /** What the PR page's CI check reads about a pull request: its head commit, title and changed paths, and every
    *  status on the head commit (the combined status: the newest per context). Kept two minutes: CI moves fast. */
   pullChecks(repo: string, num: number, refresh = false): Promise<PullChecks> {
@@ -841,6 +861,14 @@ interface RawStatus {
   state: string;
   description: string | null;
   target_url: string | null;
+}
+/** A changed file's patch is cut here: one file of a huge change is judged from its first hunks. */
+export const PATCH_MAX = 8000;
+export interface ChangedFile {
+  file: string;
+  /** added, modified, removed, renamed… */
+  status: string;
+  patch: string | null;
 }
 export interface PullChecks {
   sha: string;

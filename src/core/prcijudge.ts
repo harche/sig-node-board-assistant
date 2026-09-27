@@ -1,18 +1,20 @@
 /** Judging one failed presubmit on a PR page: evidence from GCS (as for TestGrid, tgjudge.ts), the job's runs on
  *  this PR, its record on other PRs from TestGrid, candidate flake issues from GitHub search, Jev's readings. The
  *  pure parts are in prci.ts. */
-import type { PullChecks } from "./github";
+import type { ChangedFile, PullChecks } from "./github";
 import type { JevClient } from "./jev";
-import { causeQuestion } from "./prompts/prci";
+import { causeQuestion, suspectQuestion } from "./prompts/prci";
 import { tracksQuestion } from "./prompts/testgrid";
 import {
   failedChecks,
   neverRan,
+  SUSPECT_AT,
   type CiJob,
   type Elsewhere,
   type FailedCheck,
   type PrChecks,
   type PrRun,
+  type Suspect,
 } from "./prci";
 import { choiceReading, noulReading, type Reading } from "./readings";
 import { matchRows, tally, type TgRef, type TgTable } from "./testgrid";
@@ -30,10 +32,22 @@ import type { JevChoice, JevUsage } from "./types";
 
 export interface CiDeps extends Pick<TgDeps, "search" | "cache" | "fetchFn"> {
   pull(repo: string, number: number, refresh?: boolean): Promise<PullChecks>;
+  /** The PR's diff at `sha`, its head; null once the head has moved on. */
+  diff(repo: string, number: number, sha: string, refresh?: boolean): Promise<ChangedFile[] | null>;
   resolvePresubmit(job: string): Promise<TgRef | null>;
   failedTable(ref: TgRef, refresh?: boolean): Promise<TgTable>;
   jev: JevClient;
 }
+
+/** suspect_changes: the files listed, and those given with their hunks (within HUNKS characters). */
+const SUSPECTS = 20;
+const WITH_HUNKS = 5;
+const HUNKS = 20_000;
+
+/** Generated and vendored files: listed as not judged rather than asked about one by one (a vendor bump changes
+ *  hundreds), since a check that fails over them names them anyway. */
+const GENERATED =
+  /(^|\/)vendor\/|(^|\/)zz_generated[^/]*$|\.pb\.go$|(^|\/)generated[^/]*\.go$|^api\/(openapi-spec|discovery)\/|(^|\/)go\.sum$/;
 
 /** Runs of the job on this PR read for `this_pr`, newest first. */
 const RUNS = 6;
@@ -164,7 +178,8 @@ export async function judgeCi(
   ]);
   const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
   const base = { check, evidence, this_pr, elsewhere: other };
-  if (neverRan({ check, evidence })) return { ...base, cause: null, tracks: [], readings: [], usage };
+  if (neverRan({ check, evidence }))
+    return { ...base, cause: null, suspects: [], tracks: [], readings: [], usage };
 
   const ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
     const res = await d.jev.askCached<A>(state, q, 4, refresh);
@@ -194,9 +209,48 @@ export async function judgeCi(
   const cands = await candidates(d, searchFacts(check, evidence.junit_failures), now, refresh, 6).catch(
     () => [],
   );
+  // Every changed file with a text diff, judged on its own against the run. A file that was not judged (no text diff,
+  // generated, or Jev did not answer) is listed as such, never as unlikely; an unreadable diff leaves the question out.
+  const files = await d.diff(repo, number, pr.sha, refresh).catch(() => null);
+  const unjudged: { file: string; why: string }[] = [];
+  const judged = (
+    await Promise.all(
+      (files ?? []).map(async (f) => {
+        if (f.patch === null) return void unjudged.push({ file: f.file, why: "no text diff" });
+        if (GENERATED.test(f.file)) return void unjudged.push({ file: f.file, why: "generated or vendored" });
+        const patch = f.patch;
+        try {
+          const a = await ask<{ suspect?: { noul: number } }>(
+            { run: { job: check.job, ...run }, change: { file: f.file, status: f.status, hunks: patch } },
+            suspectQuestion(),
+          );
+          if (a.suspect) return { file: f.file, p: a.suspect.noul, patch };
+        } catch {
+          // counted below as not judged
+        }
+        unjudged.push({ file: f.file, why: "Jev did not answer" });
+      }),
+    )
+  ).filter((x) => x !== undefined);
+  judged.sort((a, b) => b.p - a.p);
+  let room = HUNKS;
+  const suspect_changes = judged.slice(0, SUSPECTS).map((x, i) => {
+    const hunks = i < WITH_HUNKS && room > 0 ? x.patch.slice(0, room) : "";
+    room -= hunks.length;
+    return { file: x.file, p: Math.round(x.p * 100) / 100, ...(hunks ? { hunks } : {}) };
+  });
+  const suspects: Suspect[] = judged.map((x) => ({ file: x.file, p: x.p }));
+  const cstate = files
+    ? {
+        ...state,
+        suspect_changes,
+        suspect_note: `${judged.length} changed files judged; ${Math.max(0, judged.length - SUSPECTS)} lowest left out`,
+        ...(unjudged.length ? { not_judged: { files: unjudged.slice(0, 50), total: unjudged.length } } : {}),
+      }
+    : state;
   const st = { job: check.job, runs: [run] };
   const [cause, answers] = await Promise.all([
-    ask<{ cause: JevChoice }>(state, causeQuestion()).then((a) => a.cause ?? null),
+    ask<{ cause: JevChoice }>(cstate, causeQuestion()).then((a) => a.cause ?? null),
     Promise.all(
       cands.map((c) =>
         ask<TrackAnswer>(
@@ -228,6 +282,10 @@ export async function judgeCi(
     .sort((a, b) => b.p - a.p);
   const readings: Reading[] = [
     ...choiceReading("Cause", cause),
+    ...suspects
+      .filter((x) => x.p >= SUSPECT_AT)
+      .slice(0, 3)
+      .flatMap((x) => noulReading(`${x.file} could cause it`, { type: "noul", noul: x.p })),
     ...tracks
       .filter((t) => t.p >= MAYBE_AT)
       .slice(0, 3)
@@ -238,5 +296,5 @@ export async function judgeCi(
         }),
       ),
   ];
-  return { ...base, cause, tracks, readings, usage };
+  return { ...base, cause, suspects, tracks, readings, usage };
 }

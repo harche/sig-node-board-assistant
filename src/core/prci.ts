@@ -63,6 +63,12 @@ export interface Elsewhere {
   tests: { test: string; runs: number; failed: number }[];
 }
 
+/** A changed file of the PR with Jev's P(its change could cause this failure). */
+export interface Suspect {
+  file: string;
+  p: number;
+}
+
 export interface CiJob {
   check: FailedCheck;
   evidence: RunEvidence;
@@ -70,6 +76,8 @@ export interface CiJob {
   /** null when TestGrid has no presubmit tab for the job. */
   elsewhere: Elsewhere | null;
   cause: JevChoice | null;
+  /** The PR's changed files, most likely to cause the failure first. */
+  suspects: Suspect[];
   /** Candidate flake issues with Jev's P(tracks), highest first. */
   tracks: Track[];
   readings: Reading[];
@@ -87,6 +95,9 @@ export interface PrChecks {
 }
 
 export type CiVerdict = "this_pr" | "flake" | "infra" | "unsure";
+
+/** A changed file is named as the likely source of a PR-caused failure at this P. */
+export const SUSPECT_AT = 0.5;
 
 /** Jev's top cause counts only at this probability; below, the reader decides. */
 export const CAUSE_AT = 0.6;
@@ -147,6 +158,12 @@ export function trackedBy(j: CiJob): Track | null {
   return j.tracks.find((t) => t.state === "open" && t.p >= TRACKED_AT) ?? null;
 }
 
+/** The changed file a PR-caused failure most likely comes from: the top suspect, when Jev judged it likely enough. */
+export function suspectFile(j: Pick<CiJob, "suspects">): string | null {
+  const top = j.suspects[0];
+  return top && top.p >= SUSPECT_AT ? top.file : null;
+}
+
 /** The verdict, why, and the Prow command that reruns the job when the PR is not to blame. */
 export function decideCi(j: CiJob): { verdict: CiVerdict; why: string; command: string | null } {
   const rerun = `/test ${j.check.job}`;
@@ -174,9 +191,10 @@ export function decideCi(j: CiJob): { verdict: CiVerdict; why: string; command: 
     const first = j.evidence.junit_failures[0];
     const what = first ? failName(first) : "the job";
     const clean = j.elsewhere?.tests.length && j.elsewhere.tests.every((t) => t.failed === 0);
+    const file = suspectFile(j);
     return {
       verdict: "this_pr",
-      why: `${pct(p)}: ${what} fails here${clean ? " and on no other PR's runs" : ""}`,
+      why: `${pct(p)}: ${what} fails here${clean ? " and on no other PR's runs" : ""}${file ? `; likely from the change to ${file}` : ""}`,
       command: null,
     };
   }
