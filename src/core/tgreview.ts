@@ -287,8 +287,81 @@ export interface TgResult {
   failure_kind: JevChoice | null;
   /** Candidates with Jev's P(tracks), highest first. */
   tracks: Track[];
+  /** Issues the failure's own words found that cause it or group it (relatedRuns); absent in older results. */
+  related?: TgRelated[];
   readings?: Reading[];
   usage: JevUsage;
+}
+
+/** An issue beyond the tracking one: a bug that causes this failure, or an open umbrella it belongs to. */
+export interface TgRelated {
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed";
+  kind: "root_cause" | "umbrella";
+  /** Jev's P of the relation, and of the verification (fixing it would stop these failures; it covers them). */
+  p: number;
+  verify: number;
+}
+
+/** Umbrella candidates: SIG Node's open flake and failing-test issues. Their titles are broad ("Probe tests are
+ *  flaking often on some jobs"), so neither a test's words nor its meaning find them; Jev reads the whole open pool,
+ *  outside the searches' cap. */
+export function umbrellaPool(repo: string): string[] {
+  return ["kind/flake", "kind/failing-test"].map(
+    (l) => `repo:${repo} is:issue is:open label:sig/node label:${l}`,
+  );
+}
+
+/** A relation counts from this P, and is shown when its verification is at least VERIFY_AT: "fixing it would stop
+ *  these failures" for a root cause, "it covers this failure" for an umbrella. The good root causes tried verified
+ *  at 0.69-0.81, the doubtful ones at 0.50-0.56. */
+export const RELATED_AT = 0.65;
+export const VERIFY_AT = { root_cause: 0.6, umbrella: 0.5 } as const;
+/** A closed root cause is shown this long after it closed: its fix may be why the failure stops, or not yet. */
+export const ROOT_CAUSE_CLOSED_DAYS = 60;
+
+/** Whether a candidate is worth reading for a relation: an open issue, or a root cause closed recently. A closed
+ *  umbrella groups failures that are over. */
+export function relatedEligible(state: "open" | "closed", closedAt: string | null, now: number): boolean {
+  return state === "open" || (!!closedAt && now - Date.parse(closedAt) <= ROOT_CAUSE_CLOSED_DAYS * DAY);
+}
+
+/** The searches for issues related to a failure: its distinctive strings verbatim (error text, Go identifiers,
+ *  .go files, from the junit messages and log lines), and semantic and hybrid search on the failing test and its
+ *  first error. */
+export function relatedQueries(
+  repo: string,
+  e: Pick<RunEvidence, "junit_failures" | "log_signals">[],
+  /** The job's failing tests, harness rows left out (JobFacts.failing_tests), most failures first. */
+  tests: string[],
+  job: string,
+  distinctive: (text: string, max: number) => string[],
+): ({ q: string; type: "ISSUE_SEMANTIC" | "ISSUE_HYBRID" } | string)[] {
+  const base = `repo:${repo} is:issue`;
+  const clean = (x: string) => x.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  // The harness's own rows (Node Tests, Overall, kubetest.*) fail around every test: they say nothing.
+  const real = (j: { test: string }) => !HARNESS.test(j.test);
+  const text = e
+    .flatMap((r) => [...r.junit_failures.filter(real).map((j) => j.message), ...(r.log_signals ?? [])])
+    .join("\n");
+  const firstErr =
+    e.flatMap((r) => r.junit_failures.filter(real)).find((j) => j.message)?.message ??
+    e[0]?.log_signals?.find((l) => /FAILED|error/i.test(l)) ??
+    "";
+  const name = (t: string) => clean(t.replace(/^[\w.-]+ Suite\.?\s*/, "").replace(/\[[^\]]*\]/g, " "));
+  const probe = clean(`${tests[0] ? name(tests[0]) : job} ${firstErr.slice(0, 120)}`);
+  return [
+    ...distinctive(text, 4).map((x) => `${base} "${clean(x)}"`),
+    // Each failing test by its name alone: an umbrella names tests, not their errors.
+    ...tests
+      .slice(0, 2)
+      .map((t) => ({ q: `${base} ${name(t)}`.slice(0, 250), type: "ISSUE_SEMANTIC" as const })),
+    { q: `${base} ${probe}`.slice(0, 250), type: "ISSUE_SEMANTIC" },
+    { q: `${base} ${probe}`.slice(0, 250), type: "ISSUE_HYBRID" },
+  ];
 }
 
 export type TgVerdict = "tracked" | "regression" | "maybe" | "untracked";

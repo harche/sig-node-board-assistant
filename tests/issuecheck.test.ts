@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  decideIssueCi,
-  dupQueries,
-  likelyDuplicate,
-  overlap,
-  type IssueCiResult,
-  type IssueDup,
-} from "../src/core/issuecheck";
+import { decideIssueCi, type IssueCiResult } from "../src/core/issuecheck";
+import type { RelatedMatch } from "../src/core/related";
 import { newestFailure, type JobSignal, type TgTable } from "../src/core/testgrid";
 
 const job = (over: Partial<JobSignal> = {}, failures = 3, last: number | null = 1): JobSignal => ({
@@ -45,14 +39,16 @@ const result = (over: Partial<IssueCiResult> = {}, resolved = 0.1): IssueCiResul
   ...over,
 });
 
-const dup = (number: number, p: number, state: "open" | "closed" = "open"): IssueDup => ({
+const dup = (number: number, p: number, state: "open" | "closed" = "open"): RelatedMatch => ({
   repository: "kubernetes/kubernetes",
   number,
   title: "t",
   url: "u",
   state,
+  relation: "duplicate",
+  older: true,
   p,
-  keep: "this",
+  probabilities: {},
 });
 
 describe("decideIssueCi", () => {
@@ -121,38 +117,6 @@ describe("decideIssueCi", () => {
     expect(decideIssueCi(result({ ci: [job({ ...untested, named_in_title: true })] })).verdict).toBe(
       "failing",
     );
-  });
-});
-
-describe("duplicates", () => {
-  it("searches the tests, the jobs and the title's telling words", () => {
-    const qs = dupQueries(
-      "kubernetes/kubernetes",
-      "[Flaking Test] restarted with a non-local redirect http liveness probe",
-      "### Which jobs are flaking?\nci-kubernetes-node-e2e-containerd\n### Which tests are flaking?\nProbing container should not be restarted with a non-local redirect\n",
-      "2025-09-26",
-    );
-    expect(qs).toContain(
-      'repo:kubernetes/kubernetes is:issue "Probing container should not be restarted with a non-local" updated:>=2025-09-26',
-    );
-    expect(qs).toContain(
-      'repo:kubernetes/kubernetes is:issue "ci-kubernetes-node-e2e-containerd" updated:>=2025-09-26',
-    );
-    expect(qs.some((q) => q.includes("in:title") && q.includes("redirect"))).toBe(true);
-  });
-  it("scores shared words, not stop words", () => {
-    expect(overlap("liveness probe redirect", "liveness probe redirect")).toBe(1);
-    expect(overlap("the failing test", "the flaky test")).toBe(0);
-  });
-  it("names a sure duplicate, and only an open one when asked", () => {
-    const r = {
-      kind: "issuedups" as const,
-      candidates: [dup(1, 0.9, "closed"), dup(2, 0.7), dup(3, 0.4)],
-      usage: { input_tokens: 0, cost: 0 },
-    };
-    expect(likelyDuplicate(r)?.number).toBe(1);
-    expect(likelyDuplicate(r, true)?.number).toBe(2);
-    expect(likelyDuplicate(null)).toBeNull();
   });
 });
 

@@ -99,6 +99,24 @@ function facts(r: TgResult): [string, Node | string][] {
           ),
       ),
     ]);
+  const rel = r.related ?? [];
+  if (rel.length)
+    out.push([
+      "Related",
+      lines(
+        rel
+          .slice(0, 3)
+          .map((t) =>
+            h(
+              "span",
+              {},
+              t.kind === "root_cause" ? "may cause this: " : "part of ",
+              link(t.url, ref(t.repo, t.number)),
+              ` ${t.state === "closed" ? "(closed) " : ""}${t.title.slice(0, 80)}`,
+            ),
+          ),
+      ),
+    ]);
   return out;
 }
 

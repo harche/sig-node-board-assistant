@@ -114,6 +114,21 @@ describe("GitHubClient", () => {
     await expect(rl.viewer()).rejects.toThrow(/429 for \/user: rate limited \(rate limit resets/);
     expect(calls).toBe(1);
 
+    // A secondary limit (no reset given) is backed off and retried: 2s, 4s … with jitter.
+    calls = 0;
+    sleeps.length = 0;
+    const burst = (async () =>
+      ++calls < 4
+        ? new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit" }), {
+            status: 403,
+            headers: json,
+          })
+        : new Response(JSON.stringify({ login: "b" }), { status: 200, headers: json })) as typeof fetch;
+    const sec = new GitHubClient("tok", new Cache(new MemoryStore()), burst, sleep);
+    await expect(sec.viewer()).resolves.toEqual({ login: "b" });
+    expect(calls).toBe(4);
+    expect(sleeps.map((ms, i) => ms >= 2000 * 2 ** i && ms <= 3000 * 2 ** i)).toEqual([true, true, true]);
+
     calls = 0;
     const offline = (async () => {
       calls++;

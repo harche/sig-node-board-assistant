@@ -34,27 +34,12 @@ type Params = Record<string, string | number>;
  *  after ~30s idle unless a request is in flight. Network failures are not retried. */
 const RETRY_DELAYS_MS = [500, 1000];
 /** Rate limits (429, or a 403 that says so) are retried for reads and writes alike: GitHub rejected the request,
- *  so repeating it cannot double a write. Waits follow Retry-After / the reset time, up to this long. */
-const RATE_LIMIT_RETRIES = 3;
+ *  so repeating it cannot double a write. Callers fan out freely (a whole column, forty candidates at once) with no
+ *  cap on requests in flight; a burst GitHub pushes back on is waited out: Retry-After or the limit's reset when
+ *  GitHub says, else 2s, 4s … backing off, each wait up to this long, for up to RATE_LIMIT_RETRIES. The service
+ *  worker stays alive while a request is in flight (background keepalive). */
+const RATE_LIMIT_RETRIES = 8;
 const RATE_LIMIT_MAX_WAIT_MS = 60_000;
-
-/** GitHub's documented ceiling on concurrent requests. Callers fan out freely (a whole column at once); this keeps
- *  the requests actually on the wire at or under it. Module-level because the worker builds a client per message. */
-const MAX_IN_FLIGHT = 100;
-let inFlight = 0;
-const waiting: (() => void)[] = [];
-async function limited<T>(fn: () => Promise<T>): Promise<T> {
-  // A freed place is handed straight to the next waiter (the count stays up), so nothing can slip in between.
-  if (inFlight >= MAX_IN_FLIGHT) await new Promise<void>((r) => waiting.push(r));
-  else inFlight++;
-  try {
-    return await fn();
-  } finally {
-    const next = waiting.shift();
-    if (next) next();
-    else inFlight--;
-  }
-}
 
 export class GitHubClient {
   readonly octokit: InstanceType<typeof Client>;
@@ -78,7 +63,7 @@ export class GitHubClient {
       let rateLimited = 0;
       for (;;) {
         try {
-          return await limited(async () => request(options));
+          return await request(options);
         } catch (e) {
           const wait = rateLimitWait(e, rateLimited);
           if (wait !== null && rateLimited < RATE_LIMIT_RETRIES) {
@@ -305,23 +290,29 @@ export class GitHubClient {
     return { repository: c.html_url.split("/").slice(3, 5).join("/"), number: c.number };
   }
 
-  /** Issues matching each search query, newest-updated first, at most `n` each. One GraphQL request carries every
-   *  query not already cached (aliased searches cost about one point of the 5,000 an hour, and do not count against
-   *  REST search's 30 a minute). Results are kept for 30 minutes. */
-  async searchIssues(queries: string[], n = 10, refresh = false): Promise<RawSearchIssue[][]> {
-    const key = (q: string) => `gsearch2:${n}:${q}`;
+  /** Issues matching each search query, at most `n` each. A plain query is a keyword search, newest-updated first;
+   *  `{ q, type }` asks GitHub's semantic or hybrid (semantic and keyword) search, best match first. One GraphQL
+   *  request carries every query not already cached (aliased searches cost about one point of the 5,000 an hour,
+   *  and do not count against REST search's 30 a minute). Results are kept for 30 minutes. */
+  async searchIssues(queries: SearchQuery[], n = 10, refresh = false): Promise<RawSearchIssue[][]> {
+    const norm = (x: SearchQuery) => (typeof x === "string" ? { q: x, type: "ISSUE" as const } : x);
+    const id = (x: SearchQuery) => {
+      const { q, type } = norm(x);
+      return type === "ISSUE" ? q : `${type}|${q}`;
+    };
+    const key = (x: SearchQuery) => `gsearch2:${n}:${id(x)}`;
     const out = new Map<string, RawSearchIssue[]>();
     if (!refresh)
-      for (const q of queries) {
-        const hit = await this.cache.get<RawSearchIssue[]>(key(q), 30 * MINUTE);
-        if (hit) out.set(q, hit);
+      for (const x of queries) {
+        const hit = await this.cache.get<RawSearchIssue[]>(key(x), 30 * MINUTE);
+        if (hit) out.set(id(x), hit);
       }
-    const todo = [...new Set(queries.filter((q) => !out.has(q)))];
+    const todo = [...new Map(queries.filter((x) => !out.has(id(x))).map((x) => [id(x), norm(x)])).values()];
     if (todo.length) {
       const fields =
         "nodes { ... on Issue { number title state closedAt createdAt url body author { login } assignees(first: 5) { nodes { login } } } }";
       const query = `query(${todo.map((_, i) => `$q${i}: String!`).join(", ")}) { ${todo
-        .map((_, i) => `s${i}: search(query: $q${i}, type: ISSUE, first: ${n}) { ${fields} }`)
+        .map((x, i) => `s${i}: search(query: $q${i}, type: ${x.type}, first: ${n}) { ${fields} }`)
         .join(" ")} }`;
       type Node = {
         number?: number;
@@ -336,30 +327,99 @@ export class GitHubClient {
       };
       const data = await this.graphql<Record<string, { nodes: Node[] }>>(
         query,
-        Object.fromEntries(todo.map((q, i) => [`q${i}`, `${q} sort:updated-desc`])),
+        // Keyword searches newest first; semantic and hybrid keep their own ranking.
+        Object.fromEntries(
+          todo.map((x, i) => [`q${i}`, x.type === "ISSUE" ? `${x.q} sort:updated-desc` : x.q]),
+        ),
       );
-      for (const [i, q] of todo.entries()) {
+      for (const [i, x] of todo.entries()) {
         // A failed alias comes back null beside the others' data: an error, not "nothing found".
         const hit = data[`s${i}`];
-        if (!hit) throw new Error(`GitHub search failed for: ${q}`);
+        if (!hit) throw new Error(`GitHub search failed for: ${x.q}`);
         const xs = hit.nodes
-          .filter((x) => x.number)
-          .map((x) => ({
-            number: x.number!,
-            title: x.title,
-            state: x.state.toLowerCase() as "open" | "closed",
-            closed_at: x.closedAt,
-            html_url: x.url,
-            body: (x.body ?? "").slice(0, 3000),
-            created_at: x.createdAt,
-            author: x.author?.login ?? "ghost",
-            assignees: (x.assignees?.nodes ?? []).map((a) => a.login),
+          .filter((y) => y.number)
+          .map((y) => ({
+            number: y.number!,
+            title: y.title,
+            state: y.state.toLowerCase() as "open" | "closed",
+            closed_at: y.closedAt,
+            html_url: y.url,
+            body: (y.body ?? "").slice(0, 3000),
+            created_at: y.createdAt,
+            author: y.author?.login ?? "ghost",
+            assignees: (y.assignees?.nodes ?? []).map((a) => a.login),
           }));
-        await this.cache.set(key(q), xs);
-        out.set(q, xs);
+        await this.cache.set(key(x), xs);
+        out.set(id(x), xs);
       }
     }
-    return queries.map((q) => out.get(q) ?? []);
+    return queries.map((x) => out.get(id(x)) ?? []);
+  }
+
+  /** Issues with their recent thread, by number, in one GraphQL request (pull requests and missing numbers come back
+   *  null). For the duplicates check: each candidate's title, body, labels and last 15 comments. Kept 30 minutes. */
+  async issueThreads(
+    repo: string,
+    numbers: number[],
+    refresh = false,
+  ): Promise<Map<number, ThreadIssue | null>> {
+    const key = (n: number) => `thread2:${repo}#${n}`;
+    const out = new Map<number, ThreadIssue | null>();
+    if (!refresh)
+      for (const n of numbers) {
+        const hit = await this.cache.get<ThreadIssue | { none: true }>(key(n), 30 * MINUTE);
+        if (hit) out.set(n, "none" in hit ? null : hit);
+      }
+    const todo = [...new Set(numbers.filter((n) => !out.has(n)))];
+    const [owner, name] = repo.split("/");
+    for (let i = 0; i < todo.length; i += 25) {
+      const chunk = todo.slice(i, i + 25);
+      const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${chunk
+        .map(
+          (n) =>
+            `i${n}: issueOrPullRequest(number: ${n}) { __typename ... on Issue { number title body state createdAt closedAt url author { login } labels(first: 20) { nodes { name } } comments(last: 15) { nodes { author { login } body createdAt } } } }`,
+        )
+        .join(" ")} } }`;
+      type Node = {
+        __typename: string;
+        number: number;
+        title: string;
+        body: string;
+        state: string;
+        createdAt: string;
+        closedAt: string | null;
+        url: string;
+        author: { login: string } | null;
+        labels: { nodes: { name: string }[] };
+        comments: { nodes: { author: { login: string } | null; body: string; createdAt: string }[] };
+      };
+      const data = await this.graphql<{ repository: Record<string, Node | null> }>(query, { owner, name });
+      for (const n of chunk) {
+        const x = data.repository?.[`i${n}`];
+        const v: ThreadIssue | null =
+          x && x.__typename === "Issue"
+            ? {
+                number: x.number,
+                title: x.title,
+                body: (x.body ?? "").slice(0, 6000),
+                state: x.state.toLowerCase() as "open" | "closed",
+                created_at: x.createdAt,
+                closed_at: x.closedAt,
+                url: x.url,
+                author: x.author?.login ?? "ghost",
+                labels: x.labels.nodes.map((l) => l.name),
+                comments: x.comments.nodes.map((c) => ({
+                  author: c.author?.login ?? "ghost",
+                  body: (c.body ?? "").slice(0, 2000),
+                  created_at: c.createdAt,
+                })),
+              }
+            : null;
+        await this.cache.set(key(n), v ?? { none: true });
+        out.set(n, v);
+      }
+    }
+    return out;
   }
 
   /** An issue's whole body and every comment, as one text. With `mirrorRepo`, the comments on its
@@ -583,15 +643,15 @@ function isServerError(e: unknown): boolean {
 }
 
 /** How long to wait before retrying a rate-limited request, or null when `e` is not a rate limit or the wait would
- *  be too long to hold the service worker for. Primary limit: until x-ratelimit-reset. Secondary limit: Retry-After
- *  if given, else GitHub's advice of a minute's wait, shortened here to an exponential 5s, 10s, 20s. Each wait is
+ *  be longer than a minute (a primary limit resetting later: the error says when). Primary limit: until
+ *  x-ratelimit-reset. Secondary limit: Retry-After if given, else an exponential 2s, 4s … 60s. Each wait is
  *  stretched by up to half again at random. */
 function rateLimitWait(e: unknown, attempt: number): number | null {
   const err = e as RequestErrorLike;
   if (!err?.response || (err.status !== 429 && err.status !== 403)) return null;
   const h = err.response.headers ?? {};
   const message = (err.response.data as { message?: string } | undefined)?.message ?? "";
-  const backoff = 5000 * 2 ** attempt;
+  const backoff = Math.min(RATE_LIMIT_MAX_WAIT_MS, 2000 * 2 ** attempt);
   let wait: number | null = null;
   if (h["retry-after"]) wait = Number(h["retry-after"]) * 1000;
   else if (h["x-ratelimit-remaining"] === "0" && h["x-ratelimit-reset"])
@@ -637,6 +697,22 @@ interface RawProjectItem {
     closed_at?: string | null;
   };
 }
+export type SearchQuery = string | { q: string; type: "ISSUE" | "ISSUE_SEMANTIC" | "ISSUE_HYBRID" };
+
+/** An issue and its recent thread, as the duplicates check reads a candidate. */
+export interface ThreadIssue {
+  number: number;
+  title: string;
+  body: string;
+  state: "open" | "closed";
+  created_at: string;
+  closed_at: string | null;
+  url: string;
+  author: string;
+  labels: string[];
+  comments: { author: string; body: string; created_at: string }[];
+}
+
 export interface RawSearchIssue {
   number: number;
   title: string;

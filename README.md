@@ -6,7 +6,7 @@ A Chrome extension that puts Jev's suggestion on every card of the
 [Dynamic Resource Allocation](https://github.com/orgs/kubernetes/projects/95) boards, and on every failing or flaky
 job of a [TestGrid](https://testgrid.k8s.io) dashboard, with the evidence behind it, right on the page you already
 use. On a pull request's page it says, for each failing Prow job, whether the PR broke it; on an issue's page, whether
-the failure it reports still happens and which issues it duplicates. Nothing is written until you Apply or Accept.
+the failure it reports still happens, and which issues it duplicates or is concretely related to. Nothing is written until you Apply or Accept.
 
 On the CI/Test board:
 
@@ -279,6 +279,11 @@ out) and badges each row: tracked `#N`, comment, file issue, or watch.
 - Tracked (P ≥ 0.65) by an issue that already names the job: nothing to do. Tracked by one that does not: a comment
   adding the job. A closed match, or 0.35–0.65: your call. Untracked and FAILING: a new issue from the k/k
   failing-test template. Untracked and FLAKY: an issue is your call when it failed 5+ runs or 20%+ of them, else watch.
+- Beyond the tracking issue, the card names issues that cause the failure or group it ("may cause this: #N", "part
+  of #N"): found by the failure's own words (its error text and Go identifiers verbatim, semantic and hybrid search
+  on the test and its error) and among SIG Node's open flake and failing-test issues, read by Jev for their
+  relation, and shown only when a second question confirms it (fixing it would stop these failures; it covers this
+  one). Display only.
 - While the review is tried out, writes go to `harche/sig-node-board-test` only: new issues are opened there, and a
   comment meant for a kubernetes/kubernetes issue goes on its `[mirror]` issue there.
 
@@ -307,9 +312,12 @@ something to say:
   question), and whether that newest failure is still the one the issue reports. Verdicts: still failing, fails
   differently now, looks fixed (suggest closing), looks fixed but too soon to close (the fresh-fix guard), and for a
   closed issue failing again (suggest `/reopen`, unless an open duplicate tracks it now).
-- **Possible duplicates**: issues from the last year found by GitHub search on the issue's tests, jobs and title,
-  the five closest by shared words asked pairwise with To do's duplicate question (flake and failing-test issues) or
-  the Bugs backlog's (others). Shown from P 0.35; at 0.65 it names the likely duplicate and which one Jev would keep.
+- **Duplicates and related**, current and past: about 40 candidates from six searches (keyword, GitHub's semantic
+  and hybrid search, exact error strings and Go identifiers from the body, and the issues the thread links), each
+  read by Jev against the issue with both threads. A duplicate (or the same root cause) is shown when Jev is sure
+  and says one could be closed in favour of the other, with what links them (same error, test, code path, request
+  or trigger). A related issue is shown only for a concrete relation: an umbrella or sub-item, a follow-up, or a
+  regression.
 
 Read-only: a suggested command is for the reader to post.
 

@@ -1,30 +1,48 @@
-/** The issue page's "CI history" and "Possible duplicates" sections (core/issuecheck.ts), on SIG Node and DRA
- *  issues. A section appears only when it has something to say: an issue naming a job TestGrid has, a duplicate
- *  candidate at P ≥ 0.35. Read-only: a suggested command is for the reader to post. */
+/** The issue page's "CI history" (core/issuecheck.ts) and "Duplicates and related" (core/related.ts) sections, on
+ *  SIG Node and DRA issues. A section appears only when it has something to say: an issue naming a job TestGrid
+ *  has, a duplicate or a related issue Jev is sure of. Read-only: a suggested command is for the reader to post. */
 import { findSidebar, placeSection } from "../content/adapters";
 import { readingsBlock } from "../content/hcparts";
 import { h } from "../content/ui";
-import {
-  decideIssueCi,
-  ISSUE_CI_LABEL,
-  ISSUE_CI_TINT,
-  likelyDuplicate,
-  type IssueCiResult,
-  type IssueDupsResult,
-} from "../core/issuecheck";
+import { decideIssueCi, ISSUE_CI_LABEL, ISSUE_CI_TINT, type IssueCiResult } from "../core/issuecheck";
 import { shortTest } from "../core/prci";
-import { MAYBE_AT } from "../core/tgreview";
+import { openDuplicate, type RelatedMatch, type RelatedResult } from "../core/related";
 import { send } from "../shared/messages";
 
 const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 const ref = (repo: string, n: number, own: string) => `${repo === own ? "" : repo}#${n}`;
 
+/** How a match relates to the issue on the page, in the page's terms. */
+function relationLabel(m: RelatedMatch): string {
+  switch (m.relation) {
+    case "duplicate":
+      return "duplicate";
+    case "same_root_cause":
+      return "same root cause";
+    case "regression":
+      return m.older ? "this is it coming back" : "it came back there";
+    case "follow_up":
+      return m.older ? "this follows up on it" : "follows up on this";
+    case "part_of":
+      return "umbrella or sub-item";
+    default:
+      return m.relation;
+  }
+}
+const LINK_LABEL: Record<string, string> = {
+  same_error: "same error",
+  same_test: "same test",
+  same_code_path: "same code path",
+  same_request: "same request",
+  same_trigger: "same trigger",
+};
+
 type Part<T> = { state: "idle" } | { state: "done"; result: T } | { state: "error"; message: string };
 
 export class IssueCheck {
   private ci: Part<IssueCiResult | null> = { state: "idle" };
-  private dups: Part<IssueDupsResult | null> = { state: "idle" };
+  private dups: Part<RelatedResult | null> = { state: "idle" };
   private version = 0;
   private rendered = "";
   private runs = 0;
@@ -96,7 +114,7 @@ export class IssueCheck {
     }
     const r = this.ci.result!;
     const dups = this.dups.state === "done" ? this.dups.result : null;
-    const d = decideIssueCi(r, likelyDuplicate(dups, true));
+    const d = decideIssueCi(r, openDuplicate(dups));
     // No run history for what the issue names: the section would only say so.
     if (d.verdict === "open") return null;
     const { root, body } = adapter.section("CI history");
@@ -131,37 +149,47 @@ export class IssueCheck {
   }
 
   private dupSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
+    const title = "Duplicates and related";
     if (this.dups.state === "idle" || (this.dups.state === "done" && !this.dups.result)) return null;
     if (this.dups.state === "error") {
-      const { root, body } = adapter.section("Possible duplicates");
+      const { root, body } = adapter.section(title);
       body.append(h("p.snba-error", {}, this.dups.message), this.again());
       return root;
     }
     const r = this.dups.result!;
-    const shown = r.candidates.filter((c) => c.p >= MAYBE_AT);
-    if (!shown.length) return null;
-    const { root, body } = adapter.section("Possible duplicates");
-    const top = likelyDuplicate(r);
+    if (!r.duplicates.length && !r.related.length) return null;
+    const { root, body } = adapter.section(title);
+    const row = (m: RelatedMatch) =>
+      h(
+        "div.snba-rel",
+        {},
+        h(
+          "div",
+          {},
+          link(m.url, ref(m.repository, m.number, this.repo)),
+          ` ${m.state === "closed" ? "(closed) " : ""}${m.title.slice(0, 90)}`,
+        ),
+        h(
+          "div.snba-muted",
+          {},
+          [relationLabel(m), m.link ? LINK_LABEL[m.link] : null, `P ${m.p.toFixed(2)}`]
+            .filter(Boolean)
+            .join(" · "),
+        ),
+      );
+    if (r.duplicates.length) body.append(h("div.snba-subhead", {}, "Duplicates"), ...r.duplicates.map(row));
+    if (r.related.length) body.append(h("div.snba-subhead", {}, "Related"), ...r.related.map(row));
     body.append(
       h(
-        "p.snba-why",
+        "div.snba-foot",
         {},
-        top
-          ? `Likely the same as ${ref(top.repository, top.number, this.repo)} (${top.state}); Jev would keep ${top.keep === "this" ? "this one" : `${ref(top.repository, top.number, this.repo)}`} open.`
-          : "Maybe the same as:",
-      ),
-      readingsBlock(shown.map((c) => ({ label: `#${c.number} is the same`, p: c.p }))),
-      lines(
-        shown.map((c) =>
-          h(
-            "span",
-            {},
-            link(c.url, ref(c.repository, c.number, this.repo)),
-            ` ${c.state === "closed" ? "(closed) " : ""}${c.title.slice(0, 90)}`,
-          ),
+        h(
+          "span.snba-muted",
+          {},
+          `Jev read ${r.asked} candidates${r.usage.cost ? ` for $${r.usage.cost.toFixed(5)}` : ", cached"}.`,
         ),
+        this.again(),
       ),
-      this.foot(r.usage.cost),
     );
     return root;
   }

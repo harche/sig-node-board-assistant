@@ -363,6 +363,9 @@
 .snba-ci-cmd {
   margin-top: 8px;
 }
+.snba-rel {
+  padding: 4px 0;
+}
 .snba-ci-tide {
   margin: 8px 0 0;
 }

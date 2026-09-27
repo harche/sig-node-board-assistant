@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Cache, MemoryStore } from "../src/core/cache";
-import { JevClient, stableStringify } from "../src/core/jev";
+import { JevClient, retryAfter, stableStringify } from "../src/core/jev";
 
 const okResponse = (answers: unknown) =>
   new Response(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 5 } }), {
@@ -46,6 +46,21 @@ describe("JevClient", () => {
     const jev = new JevClient({ apiKey: "k", backoffMs: 0 }, new Cache(new MemoryStore()), fetchFn);
     await expect(jev.askCached({}, { q: {} }, 3)).rejects.toThrow(/Jev failed after 3 attempts/);
     expect(calls).toBe(3);
+  });
+
+  it("waits out a rate limit longer, honouring Retry-After", async () => {
+    let calls = 0;
+    const fetchFn = (async () =>
+      ++calls < 6
+        ? new Response("slow down", { status: 429, headers: { "retry-after": "0" } })
+        : okResponse({ q: { type: "noul", noul: 0.5 } })) as typeof fetch;
+    const jev = new JevClient({ apiKey: "k", backoffMs: 0 }, new Cache(new MemoryStore()), fetchFn);
+    // Five 429s would exhaust the 4 attempts other failures get; a rate limit gets RATE_LIMIT_ATTEMPTS.
+    await expect(jev.askCached({}, { q: {} }, 4)).resolves.toMatchObject({ answers: { q: { noul: 0.5 } } });
+    expect(calls).toBe(6);
+    expect(retryAfter("2")).toBe(2000);
+    expect(retryAfter("600")).toBe(60_000);
+    expect(retryAfter(null)).toBeUndefined();
   });
 
   it("keeps the body of a non-JSON error response", async () => {
@@ -115,19 +130,19 @@ describe("JevClient", () => {
     expect(calls).toBe(0);
   });
 
-  it("does not wait on Retry-After from a 429", async () => {
+  it("waits the Retry-After a 429 asks for", async () => {
     let calls = 0;
     const fetchFn = (async () => {
       calls++;
       return calls === 1
-        ? new Response("slow down", { status: 429, headers: { "retry-after": "45" } })
+        ? new Response("slow down", { status: 429, headers: { "retry-after": "1" } })
         : okResponse({ q: { type: "noul", noul: 0.5 } });
     }) as typeof fetch;
     const jev = new JevClient({ apiKey: "k", backoffMs: 0 }, new Cache(new MemoryStore()), fetchFn);
     const started = Date.now();
     await jev.askCached({}, { q: {} });
     expect(calls).toBe(2);
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(950);
   });
 
   it("refuses to construct without a key", () => {

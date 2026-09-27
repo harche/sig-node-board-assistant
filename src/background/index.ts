@@ -17,7 +17,8 @@ import { judgeInfo } from "../core/needsinfo";
 import { judgeDra } from "../core/dra";
 import { judgeTg } from "../core/tgjudge";
 import { judgeCi, prChecks, type CiDeps } from "../core/prcijudge";
-import { inScope, judgeIssueCi, judgeIssueDups } from "../core/issuecheck";
+import { inScope, judgeIssueCi } from "../core/issuecheck";
+import { judgeRelated } from "../core/related";
 import {
   isTgDraft,
   mirrorTitle,
@@ -521,6 +522,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
           table: (ref, refresh) => new TestGridClient(tgCache).table(ref, refresh),
           search: (qs, n, r) => gh.searchIssues(qs, n, r),
           issueText: (repo, n, r) => gh.issueText(repo, n, r, settings.testMode ? TG_TEST_REPO : undefined),
+          threads: (repo, ns, r) => gh.issueThreads(repo, ns, r),
           jev,
           cache,
         },
@@ -553,14 +555,19 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
       const detail = await gh.itemDetail(req.repo, "Issue", req.number, req.refresh);
       if (!inScope(detail.labels.map((l) => l.name))) return null as Out;
-      const deps = {
-        tg: new TestGridClient(tgCache),
-        search: (qs: string[], n?: number, r?: boolean) => gh.searchIssues(qs, n, r),
-        jev,
-        cache,
-      };
       if (req.type === "issue.dups")
-        return (await judgeIssueDups(deps, req.repo, req.number, detail, req.refresh)) as Out;
+        return (await judgeRelated(
+          {
+            search: (qs, n, r) => gh.searchIssues(qs, n, r),
+            threads: (repo, ns, r) => gh.issueThreads(repo, ns, r),
+            jev,
+          },
+          req.repo,
+          req.number,
+          detail,
+          req.refresh,
+        )) as Out;
+      const deps = { tg: new TestGridClient(tgCache), jev, cache };
       const prs = await gh.linkedPrs(req.repo, req.number, req.refresh);
       return (await judgeIssueCi(deps, req.repo, req.number, detail, prs, req.refresh)) as Out;
     }

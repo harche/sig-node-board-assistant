@@ -70,3 +70,80 @@ const tracks = {
 export function tracksQuestion(): { tracks: typeof tracks } {
   return { tracks };
 }
+
+/** How an issue the failure's own words found relates to it: beyond the tracking issue, a bug that causes it or an
+ *  umbrella it belongs to. Tried on the 28 issues with runs: the root causes and umbrellas it named all came from
+ *  searching the failure's text, which today's tracking search never reaches (docs/design.md). */
+const relation = {
+  type: "choice",
+  instructions: {
+    question: "How does `issue` relate to the failure these runs show?",
+    focus:
+      "Name a relation only when you can say what links them. The same job, component or feature alone is not a link.",
+    note: "`runs` are failed runs of one CI job: their junit failures and build log lines, computed by code.",
+  },
+  criteria: {
+    tracks: {
+      what: "The issue reports this failure: the same test failing the same way, or the same job-level symptom with the same cause.",
+      examples: ["a [Flaking Test] issue for this test with this error"],
+    },
+    root_cause: {
+      what: "The issue reports a bug or change that causes this failure, though it is not about this test or job.",
+      not_for: "a bug in the same area with no stated link to this error",
+      examples: ["a kubelet bug report whose misbehaviour produces this test's error"],
+    },
+    umbrella: {
+      what: "The issue tracks a group of failures this one belongs to: several tests or jobs failing from one cause, or a list of such failures.",
+      examples: ["probe tests flaking often on some jobs, listing this test"],
+    },
+    unrelated: { what: "A different failure, or no concrete link." },
+  },
+};
+
+const RELATED_NOTE =
+  "`runs` are failed runs of one CI job: their junit failures and build log lines, computed by code.";
+
+/** For a root cause: would fixing it stop these failures? Dropped the same-area bugs with no path to this error. */
+const fixes = {
+  type: "noul",
+  instructions: {
+    question:
+      "Would fixing the bug, or making the change, that `issue` reports stop the failures these runs show?",
+    focus:
+      "The issue must explain this error in this test or job: its misbehaviour produces what the runs show. A bug in the same component with no path to this error does not.",
+    note: RELATED_NOTE,
+  },
+  criteria: {
+    true: {
+      what: "The issue's bug or missing change is what produces these failures; fixing it would stop them.",
+    },
+    false: {
+      what: "These failures have another cause, or nothing in the issue connects its bug to this error.",
+    },
+  },
+};
+
+/** For an umbrella: does it cover this failure? */
+const covers = {
+  type: "noul",
+  instructions: {
+    question:
+      "Does `issue` track a group of failures that includes this one: does it list or plainly cover this test or job failing this way?",
+    focus: "An umbrella for the same area or SIG is not enough: it must cover this failure.",
+    note: RELATED_NOTE,
+  },
+  criteria: {
+    true: { what: "It lists this test or job, or its stated scope plainly includes this failure." },
+    false: { what: "Its scope is another area, other tests or jobs, or only loosely the same area." },
+  },
+};
+
+export function relationQuestion(): { relation: typeof relation } {
+  return { relation };
+}
+export function fixesQuestion(): { fixes: typeof fixes } {
+  return { fixes };
+}
+export function coversQuestion(): { covers: typeof covers } {
+  return { covers };
+}

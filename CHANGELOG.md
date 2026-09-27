@@ -40,10 +40,13 @@ test boards and `harche/sig-node-board-test`).
   with any flake issue that tracks it and the `/retest` or `/test` command to copy. Read-only.
 - CI history and duplicates on a SIG Node or DRA issue's page: whether the failure it reports still happens (run
   history, the newest failure and whether it is still the issue's, Jev's resolved read, the fresh-fix guard; a closed
-  issue failing again), and likely duplicates from GitHub search judged pairwise. Read-only.
+  issue failing again), and duplicates and concretely related issues, current and past: six searches (keyword,
+  semantic, hybrid, exact error strings, the thread's links), each candidate read by Jev with both threads, a
+  duplicate shown only when one could be closed in favour of the other. Read-only.
 - TestGrid review on testgrid.k8s.io: per failing or flaky periodic job, what fails (from junit and build-log signal
   lines), whether an issue tracks it, and a comment or a new issue drafted from the k/k templates; writes go to the
-  test repo while it is tried out.
+  test repo while it is tried out. The card also names issues that may cause the failure or are its umbrella,
+  found by the failure's own words and confirmed by a second question.
 - Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
   option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
 - Asks include comments Jev reads as asking someone to review or approve.
@@ -63,8 +66,10 @@ test boards and `harche/sig-node-board-test`).
 - Parity test suite against a frozen snapshot of the Python CLI's outputs (signals, state, prompts, policy,
   commands). No Python needed to build, test or run.
 - GitHub calls go through Octokit.js (pagination via Link headers, REST API version `2026-03-10`); Jev calls go
-  through the TypeSafe SDK (`@typesafe-ai/sdk`). Retries stay short so the service worker is never stopped
-  mid-call: GitHub retries only a 5xx it actually answered, and never a rate limit or a network failure.
+  through the TypeSafe SDK (`@typesafe-ai/sdk`). Neither caps how many calls are in flight: a rate limit is waited
+  out with backoff (Retry-After or GitHub's reset when given, else 2s doubling to 60s with jitter; up to 8 tries),
+  and the service worker is kept alive meanwhile. Other failures retry briefly: GitHub a 5xx it answered to a read,
+  Jev a 5xx, timeout or connection failure; never a GitHub network failure.
 - Policy: a confident "another SIG owns it" answer turns a KEEP into BORDERLINE (the CLI had dropped this).
 - State: every human `/sig` or `/area` routing comment is sent to Jev as `human_routing`, not only those in
   the last-10 comment window.

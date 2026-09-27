@@ -32,6 +32,8 @@ export class JevError extends Error {
     public status?: number,
     /** Worth another attempt: 408, 429, 5xx, a connection failure or a malformed 200. */
     public retryable = false,
+    /** For a 429: how long the server asked to wait (its Retry-After), when it said. */
+    public retryAfterMs?: number,
   ) {
     super(message);
     this.name = "JevError";
@@ -90,6 +92,7 @@ export class JevClient {
           `TypeSafe HTTP ${s}: ${body.slice(0, 200)}`,
           s,
           s === 408 || s === 429 || s >= 500,
+          retryAfter(e.headers?.get?.("retry-after") ?? null),
         );
       }
       // APIConnectionError covers timeouts too; anything else is the SDK rejecting the request before sending it
@@ -111,7 +114,9 @@ export class JevClient {
 
   /** ask() with a permanent cache keyed by hash(state + questions) and exponential-backoff retries on retryable
    *  failures. `refresh` skips the cached answer (the new one still replaces it). Backoff is 0.5s, 1s, 2s between
-   *  attempts, never after the last one: the extension's service worker is killed after ~30s without activity. */
+   *  attempts, never after the last one. A rate limit (429) is waited out longer: the server's Retry-After, else 2s,
+   *  4s … up to 30s with jitter, for up to RATE_LIMIT_ATTEMPTS: callers fan out freely (a page asks tens of
+   *  questions at once), and the service worker stays alive while a request is in flight (background keepalive). */
   async askCached<A>(
     state: unknown,
     questions: Record<string, unknown>,
@@ -135,12 +140,28 @@ export class JevClient {
         return out;
       } catch (e) {
         if (!(e instanceof JevError) || !e.retryable) throw e;
-        if (attempt >= retries)
+        const limited = e.status === 429;
+        if (attempt >= (limited ? Math.max(retries, RATE_LIMIT_ATTEMPTS) : retries))
           throw new JevError(`Jev failed after ${attempt} attempts: ${e.message}`, e.status);
-        await new Promise((r) => setTimeout(r, this.backoffMs * 2 ** (attempt - 1)));
+        const wait = limited
+          ? (e.retryAfterMs ?? Math.min(30_000, this.backoffMs * 4 * 2 ** (attempt - 1))) +
+            Math.random() * this.backoffMs
+          : this.backoffMs * 2 ** (attempt - 1);
+        await new Promise((r) => setTimeout(r, wait));
       }
     }
   }
+}
+
+/** Attempts for a rate-limited call. */
+export const RATE_LIMIT_ATTEMPTS = 8;
+
+/** A Retry-After header in ms (seconds, or an HTTP date), capped at a minute; undefined when absent or unreadable. */
+export function retryAfter(h: string | null): number | undefined {
+  if (!h) return undefined;
+  const secs = Number(h);
+  const ms = Number.isFinite(secs) ? secs * 1000 : Date.parse(h) - Date.now();
+  return Number.isFinite(ms) && ms >= 0 ? Math.min(ms, 60_000) : undefined;
 }
 
 /** Short per-call cost tag, e.g. '$0.00022 · 5,124 tok' (adds 'cached' when served from the cache). */

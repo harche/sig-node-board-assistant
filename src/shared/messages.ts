@@ -10,7 +10,8 @@ import type { BacklogResult } from "../core/backlog";
 import type { DraColumn, DraResult } from "../core/dra";
 import type { TgStep, TgResult } from "../core/tgreview";
 import type { CiJob, FailedCheck, PrChecks } from "../core/prci";
-import type { IssueCiResult, IssueDupsResult } from "../core/issuecheck";
+import type { IssueCiResult } from "../core/issuecheck";
+import type { RelatedResult } from "../core/related";
 import type { TgRef } from "../core/testgrid";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
@@ -93,7 +94,7 @@ export interface ResponseMap {
   /** null when the issue is out of scope or names no job TestGrid has. */
   "issue.ci": IssueCiResult | null;
   /** null when the issue is out of scope. */
-  "issue.dups": IssueDupsResult | null;
+  "issue.dups": RelatedResult | null;
 }
 
 export type Response<R extends Request> = ResponseMap[R["type"]];

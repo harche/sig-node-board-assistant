@@ -6,6 +6,8 @@ import {
   jobFacts,
   junitFailures,
   prowLabels,
+  relatedEligible,
+  relatedQueries,
   titleQuery,
   signalLines,
   tgSteps,
@@ -295,4 +297,41 @@ describe("writes with test mode off", () => {
   });
   it("sets labels through Prow", () =>
     expect(prowLabels(["kind/flake", "sig/node"])).toBe("/kind flake\n/sig node"));
+});
+
+describe("related issues", () => {
+  const now = Date.parse("2026-09-26T00:00:00Z");
+  it("reads open issues, and root causes closed in the last 60 days", () => {
+    expect(relatedEligible("open", null, now)).toBe(true);
+    expect(relatedEligible("closed", "2026-08-30T00:00:00Z", now)).toBe(true);
+    expect(relatedEligible("closed", "2026-06-01T00:00:00Z", now)).toBe(false);
+  });
+  it("searches the failure's own words: its strings verbatim, each test by name, and the test with its error", () => {
+    const qs = relatedQueries(
+      "kubernetes/kubernetes",
+      [
+        {
+          junit_failures: [
+            { test: "Node Tests", message: "error during go run run_remote.go" },
+            { test: "t", message: 'pod "p" not ready: GetVfsStats timed out' },
+          ],
+          log_signals: [],
+        },
+      ],
+      ["E2eNode Suite.[It] [sig-node] Probing container restarts"],
+      "ci-node-e2e",
+      () => ["GetVfsStats"],
+    );
+    expect(qs[0]).toBe('repo:kubernetes/kubernetes is:issue "GetVfsStats"');
+    expect(qs[1]).toEqual({
+      q: "repo:kubernetes/kubernetes is:issue Probing container restarts",
+      type: "ISSUE_SEMANTIC",
+    });
+    // The harness's "Node Tests" row is not the error.
+    expect(qs[2]).toEqual({
+      q: "repo:kubernetes/kubernetes is:issue Probing container restarts pod p not ready: GetVfsStats timed out",
+      type: "ISSUE_SEMANTIC",
+    });
+    expect(qs[3]).toMatchObject({ type: "ISSUE_HYBRID" });
+  });
 });

@@ -270,6 +270,19 @@ their runs' logs.
 - TestGrid marks a failed cell with several values (FAIL 12, FLAKY 13, TIMED_OUT 9, BUILD_FAIL 11, …); all count.
 - Search: REST search allows 30 requests a minute even with a token; GraphQL search, several queries aliased in one
   request, costs about a point of 5,000 an hour. One request per job: a dashboard of 16 jobs in about 7 seconds.
+- Related issues (root causes and umbrellas), from trials on the same 28 issues: the tracking search already found
+  26 of 28 tracking issues and the issue page's sources added none, but every root cause and nearly every umbrella
+  Jev named came from searching the failure's own words (error text and Go identifiers verbatim, semantic and hybrid
+  search on the test and its error). A relation question (tracks, root cause, umbrella, unrelated) named 21 root
+  causes and 13 umbrellas, about half and two thirds of them meaningful. A second question keeps them honest: for a
+  root cause "would fixing it stop these failures?" (at ≥ 0.6 it kept the allocation manager and hugepage eviction
+  bugs behind their flakes and dropped the kubectl TLS retry behind a DRA timeout), for an umbrella "does it cover
+  this one?", and only open umbrellas (12 of 13 were closed, some since 2018).
+- Live on sig-node-containerd: umbrellas are SIG Node's open flake and failing-test issues with broad titles
+  ("Probe tests are flaking often on some jobs") that neither words nor meaning find, so Jev reads that whole pool
+  outside the searches' cap. Harness rows (Node Tests) and struct field names from status dumps (`LastProbeTime:`)
+  are left out of the searches. 3 of 17 jobs got a related issue: the probe umbrella #116123, and
+  PodAndContainerStatsFromCRI breaking metrics (#111276) behind the alpha Summary API failure.
 - Not yet: clustering jobs that fail the same way into one issue.
 
 ## Failing CI on the PR page
@@ -296,18 +309,44 @@ PRs.
 
 `src/core/issuecheck.ts`, `src/item/issue.ts`. Read-only, tried on real kubernetes/kubernetes issues. Every question
 is one the extension already asks elsewhere: To do's `resolved` and `resolution` on To do's state, the TestGrid
-review's `tracks` on the newest failed run, and To do's or the Bugs backlog's duplicate pair.
+review's `tracks` on the newest failed run.
 
 - The verdict uses the named test that failed most; the whole job only when the title names it, as the fresh-fix
   guard does. #142439 names `pull-kubernetes-kind-dra-all` only as where a data race showed, and that job fails half
   its runs for other reasons.
 - A closed issue whose test fails again suggests `/reopen`, unless the duplicate check finds an open issue tracking
   it: #141469 (closed) fails again, and #141786 tracks it (P 0.81).
-- Duplicate candidates: GitHub search on the tests' names, the jobs and the title's longest words (four, three,
-  two), updated within a year, then the five sharing the most words. A test-name fragment is cut at a word: a quoted
-  search for half a word finds nothing (the TestGrid review's search had the same fault).
 - On #141786: still failing (3 and 10 of 179 runs, the newest failure the issue's at 0.95, the fix merged 4 days
-  ago and 49 of 50 runs clean since, too soon to close), duplicates #141614 (0.82) and #141469 (0.68), both closed.
+  ago and 49 of 50 runs clean since, too soon to close).
+
+### Duplicates and related (`src/core/related.ts`, `src/core/prompts/related.ts`)
+
+Designed from offline trials on 153 SIG Node issues people marked as duplicates ("duplicate of #N", "dup of #N" or
+GitHub's marked-as-duplicate, 2016-2026), each judged as of the day it was filed, with 449 hard negatives (the top
+semantic-search results that were not the original). Comments were cut before the mark, and none naming the other
+issue was shown.
+
+- Finding the original is the hard part. Found among the first 20 results: keyword search on the title 12%,
+  semantic search on the title 31%, on title and body 29%, hybrid 38%, distinctive strings (error text, Go
+  identifiers, .go files) 36%, the thread's own links 14%; all together 71% (about 42 candidates per issue).
+  Searching the duplicate's thread added 2.6 points for 15 more candidates (duplicates are usually marked early),
+  so a thread is searched only when it is long. GraphQL has `ISSUE_SEMANTIC` and `ISSUE_HYBRID` search, batched
+  with the keyword ones.
+- Judging: today's single duplicate question put 39% of originals at P ≥ 0.65; a relation choice (duplicate,
+  same root cause, regression, part of, follow-up, unrelated) reading both threads, counting duplicate or same root
+  cause, put 68% there, with 9 of 449 negatives, several of them real duplicates nobody marked. What people call a
+  duplicate is often the same root cause. Splitting the question into symptom, cause and conditions did no better.
+- End to end, as of each duplicate's filing: the original shown for 46% (today's search and question: about 5%),
+  with 0.8 other matches per issue, about two thirds of them real. A second question on each shown match, "could
+  one be closed in favour of the other?" at ≥ 0.35, removed 35 of 120 extras, mostly same-area pairs needing
+  separate fixes, for 3 originals: 44%, 0.55 extras per issue. What links them (same error, test, code path,
+  request, trigger) does not filter, but it is the reason shown.
+- Related (regression, part of, follow-up at ≥ 0.65): 0.14 per issue, mostly real (#141469 is part of the probe
+  flake umbrella #116123; the seccomp umbrella and its issue).
+- The ceiling is search: 29% of originals were never found; people linked those by investigation, not by anything
+  either text said.
+- Live, about 40 candidates, one relation question each and a verification for the few that pass; about 9 seconds
+  the first time, cached afterwards.
 
 ## Broken Prow commands
 

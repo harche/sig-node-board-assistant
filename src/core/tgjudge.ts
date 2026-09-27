@@ -1,9 +1,16 @@
 /** Judging one TestGrid tab: facts from TestGrid, evidence from GCS, candidate issues from GitHub search, Jev's
  *  readings. The pure parts are in tgreview.ts. */
 import { type Cache, MINUTE } from "./cache";
-import type { RawSearchIssue } from "./github";
+import type { RawSearchIssue, SearchQuery, ThreadIssue } from "./github";
 import type { JevClient } from "./jev";
-import { failureKindQuestion, tracksQuestion } from "./prompts/testgrid";
+import {
+  coversQuestion,
+  failureKindQuestion,
+  fixesQuestion,
+  relationQuestion,
+  tracksQuestion,
+} from "./prompts/testgrid";
+import { distinctive } from "./related";
 import { choiceReading, noulReading, type Reading } from "./readings";
 import type { TgRef, TgTable } from "./testgrid";
 import {
@@ -14,6 +21,11 @@ import {
   MAYBE_AT,
   poolMatches,
   PROW,
+  RELATED_AT,
+  relatedEligible,
+  relatedQueries,
+  umbrellaPool,
+  VERIFY_AT,
   signalLines,
   stripRuns,
   type Candidate,
@@ -21,6 +33,7 @@ import {
   type RunEvidence,
   type TgAnswers,
   type TgResult,
+  type TgRelated,
   type Track,
   type TrackAnswer,
 } from "./tgreview";
@@ -29,12 +42,14 @@ import type { JevUsage } from "./types";
 export interface TgDeps {
   table(ref: TgRef, refresh?: boolean): Promise<TgTable>;
   /** Issues matching each query, in order (one batched request). */
-  search(queries: string[], n?: number, refresh?: boolean): Promise<RawSearchIssue[][]>;
+  search(queries: SearchQuery[], n?: number, refresh?: boolean): Promise<RawSearchIssue[][]>;
   /** An issue's whole body and every comment, as one text (and, in test mode, its mirror's comments). */
   issueText(repo: string, number: number, refresh?: boolean): Promise<string>;
   jev: JevClient;
   cache: Cache;
   fetchFn?: typeof fetch;
+  /** Issues with their threads, for the related search; without it, no related issues are looked for. */
+  threads?(repo: string, numbers: number[], refresh?: boolean): Promise<Map<number, ThreadIssue | null>>;
 }
 
 const HOUR = 60 * MINUTE;
@@ -147,6 +162,88 @@ export async function candidates(
   return [...out.values()].slice(0, max);
 }
 
+/** Candidates the related search reads, at most. */
+const MAX_RELATED = 30;
+
+/** Issues that cause this failure or group it, beyond the tracking issue: found by the failure's own words
+ *  (relatedQueries) and among the tracking search's finds Jev did not read as tracking, read by Jev for their
+ *  relation, and shown only when a second question confirms it: fixing a root cause would stop these failures, an
+ *  umbrella covers this one. Tried on 28 issues with runs: nearly every root cause and umbrella came from the
+ *  failure's words, which the tracking search never reaches (docs/design.md). */
+export async function relatedRuns(
+  d: TgDeps,
+  f: JobFacts,
+  st: { job: string; runs: unknown[] },
+  evidence: RunEvidence[],
+  skip: Set<number>,
+  /** Tracking candidates Jev did not read as tracking: read for a relation too. */
+  also: number[],
+  ask: <A>(state: unknown, q: Record<string, unknown>) => Promise<A>,
+  now: number,
+  refresh = false,
+): Promise<TgRelated[]> {
+  if (!d.threads) return [];
+  const repo = "kubernetes/kubernetes";
+  const tests = f.failing_tests.map((t) => t.name);
+  const queries = relatedQueries(repo, evidence, tests, f.job, distinctive);
+  const umbrellas = umbrellaPool(repo);
+  const found = await d.search([...queries, ...umbrellas], 20, refresh);
+  const searched: number[] = [];
+  for (let i = 0; i < 20; i++)
+    for (const r of found.slice(0, queries.length)) {
+      const n = r[i]?.number;
+      if (n !== undefined && !searched.includes(n)) searched.push(n);
+    }
+  // The searches' best, capped; the tracking search's other finds and the umbrella pool, whole.
+  const nums = [
+    ...new Set([
+      ...searched.slice(0, MAX_RELATED),
+      ...also,
+      ...found.slice(queries.length).flatMap((r) => r.map((x) => x.number)),
+    ]),
+  ].filter((n) => !skip.has(n));
+  const threads = await d.threads(repo, nums, refresh);
+  const cands = [...threads.values()].filter(
+    (t): t is ThreadIssue => !!t && relatedEligible(t.state, t.closed_at, now),
+  );
+  // Every candidate at once: rate limits are the Jev client's retries' job. A candidate whose calls still fail is
+  // dropped on its own, so it does not take the others with it.
+  const out = await Promise.all(
+    cands
+      .map(async (t): Promise<TgRelated | null> => {
+        const s = {
+          ...st,
+          issue: { number: t.number, title: t.title, state: t.state, body: stripRuns(t.body).slice(0, 2500) },
+        };
+        const rel = await ask<{ relation?: { probabilities: Record<string, number> } }>(
+          s,
+          relationQuestion(),
+        );
+        const pr = rel.relation?.probabilities ?? {};
+        const kind = (["root_cause", "umbrella"] as const).find((k) => (pr[k] ?? 0) >= RELATED_AT);
+        // A closed umbrella groups failures that are over.
+        if (!kind || (kind === "umbrella" && t.state !== "open")) return null;
+        const v =
+          kind === "root_cause"
+            ? (await ask<{ fixes?: { noul: number } }>(s, fixesQuestion())).fixes?.noul
+            : (await ask<{ covers?: { noul: number } }>(s, coversQuestion())).covers?.noul;
+        if ((v ?? 0) < VERIFY_AT[kind]) return null;
+        return {
+          repo,
+          number: t.number,
+          title: t.title,
+          url: t.url,
+          state: t.state,
+          kind,
+          p: pr[kind]!,
+          verify: v!,
+        };
+      })
+      .map((p) => p.catch(() => null)),
+  );
+  return out.filter((x): x is TgRelated => x !== null).sort((a, b) => b.verify - a.verify);
+}
+
 export async function judgeTg(
   d: TgDeps,
   ref: TgRef,
@@ -212,6 +309,24 @@ export async function judgeTg(
       names_job: named[i]!,
     }))
     .sort((a, b) => b.p - a.p);
+  // Only with evidence: the related search is the failure's own words.
+  const related = runs.length
+    ? await relatedRuns(
+        d,
+        facts,
+        st,
+        evidence,
+        // Issues Jev reads as tracking are the tracking candidates; the rest of them may still be a root cause
+        // or an umbrella, and are read like the related search's own finds.
+        new Set(
+          tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p >= MAYBE_AT).map((t) => t.number),
+        ),
+        tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p < MAYBE_AT).map((t) => t.number),
+        ask,
+        now,
+        refresh,
+      ).catch(() => [])
+    : [];
   const readings: Reading[] = [
     ...choiceReading("Kind of failure", kind?.failure_kind),
     ...tracks
@@ -224,5 +339,22 @@ export async function judgeTg(
         }),
       ),
   ];
-  return { kind: "tg", facts, evidence, failure_kind: kind?.failure_kind ?? null, tracks, readings, usage };
+  readings.push(
+    ...related.flatMap((r) =>
+      noulReading(r.kind === "root_cause" ? `#${r.number} may cause it` : `part of #${r.number}`, {
+        type: "noul",
+        noul: r.verify,
+      }),
+    ),
+  );
+  return {
+    kind: "tg",
+    facts,
+    evidence,
+    failure_kind: kind?.failure_kind ?? null,
+    tracks,
+    related,
+    readings,
+    usage,
+  };
 }
