@@ -19,8 +19,12 @@ import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from 
 
 export interface Settings {
   githubToken: string;
+  /** Where Jev is called: TypeSafe, or OpenRouter (the same model, billed to an OpenRouter key). */
+  jevProvider: "typesafe" | "openrouter";
   typesafeApiKey: string;
   typesafeModel: string;
+  openrouterApiKey: string;
+  openrouterModel: string;
   /** On (the default): writes go only to the test boards and the test repo (boards.ts `writable`, TG_TEST_REPO).
    *  Off: Apply and Accept also write to the real boards and TestGrid's issues. */
   testMode: boolean;
@@ -28,8 +32,11 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   githubToken: "",
+  jevProvider: "typesafe",
   typesafeApiKey: "",
   typesafeModel: "jev-latest",
+  openrouterApiKey: "",
+  openrouterModel: "~typesafe/jev-latest",
   testMode: true,
 };
 
@@ -64,9 +71,9 @@ export type Request =
   | { type: "issue.dups"; repo: string; number: number; refresh?: boolean };
 
 export interface ResponseMap {
-  "settings.get": { settings: Settings; configured: { github: boolean; typesafe: boolean } };
+  "settings.get": { settings: Settings; configured: { github: boolean; jev: boolean } };
   "settings.set": { ok: true };
-  "settings.test": { github: { ok: boolean; detail: string }; typesafe: { ok: boolean; detail: string } };
+  "settings.test": { github: { ok: boolean; detail: string }; jev: { ok: boolean; detail: string } };
   "options.open": { ok: true };
   "cache.clear": { removed: number };
   "board.fields": BoardFields;
@@ -113,4 +120,15 @@ export function send<R extends Request>(req: R): Promise<Response<R>> {
       else reject(new Error(env.error));
     });
   });
+}
+
+/** The Jev key and model of the chosen provider. */
+export function jevSettings(s: Settings): {
+  provider: Settings["jevProvider"];
+  apiKey: string;
+  model: string;
+} {
+  return s.jevProvider === "openrouter"
+    ? { provider: "openrouter", apiKey: s.openrouterApiKey, model: s.openrouterModel }
+    : { provider: "typesafe", apiKey: s.typesafeApiKey, model: s.typesafeModel };
 }

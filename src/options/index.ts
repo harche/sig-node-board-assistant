@@ -2,7 +2,13 @@ import { KNOWN_BOARDS } from "../core/boards";
 import { TG_LIVE_REPOS, TG_TEST_REPO } from "../core/tgreview";
 import { send, type Settings } from "../shared/messages";
 
-const FIELDS = ["githubToken", "typesafeApiKey", "typesafeModel"] as const;
+const FIELDS = [
+  "githubToken",
+  "typesafeApiKey",
+  "typesafeModel",
+  "openrouterApiKey",
+  "openrouterModel",
+] as const;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const status = $<HTMLSpanElement>("status");
 
@@ -20,6 +26,8 @@ function check(id: string, ok: boolean | null, text: string): void {
 async function load(): Promise<void> {
   const { settings } = await send({ type: "settings.get" });
   for (const f of FIELDS) $<HTMLInputElement>(f).value = settings[f];
+  provider.value = settings.jevProvider;
+  showProvider();
   testMode.checked = settings.testMode;
   showWrites(settings.testMode);
 }
@@ -27,6 +35,7 @@ async function load(): Promise<void> {
 async function save(): Promise<void> {
   const patch: Partial<Settings> = {};
   for (const f of FIELDS) patch[f] = $<HTMLInputElement>(f).value.trim();
+  patch.jevProvider = provider.value === "openrouter" ? "openrouter" : "typesafe";
   patch.testMode = testMode.checked;
   await send({ type: "settings.set", settings: patch });
 }
@@ -43,17 +52,15 @@ $<HTMLButtonElement>("test").addEventListener("click", async () => {
   btn.disabled = true;
   say("Testing…");
   check("githubCheck", null, "");
-  check("typesafeCheck", null, "");
+  check("jevCheck", null, "");
   try {
     await save();
     const r = await send({ type: "settings.test" });
     check("githubCheck", r.github.ok, r.github.ok ? `Works: ${r.github.detail}.` : r.github.detail);
-    check("typesafeCheck", r.typesafe.ok, r.typesafe.ok ? `Works: ${r.typesafe.detail}.` : r.typesafe.detail);
+    check("jevCheck", r.jev.ok, r.jev.ok ? `Works: ${r.jev.detail}.` : r.jev.detail);
     say(
-      r.github.ok && r.typesafe.ok
-        ? "Saved. Both connections work."
-        : "Saved. One connection failed, see above.",
-      r.github.ok && r.typesafe.ok ? "ok" : "bad",
+      r.github.ok && r.jev.ok ? "Saved. Both connections work." : "Saved. One connection failed, see above.",
+      r.github.ok && r.jev.ok ? "ok" : "bad",
     );
   } catch (err) {
     say(err instanceof Error ? err.message : String(err), "bad");
@@ -107,6 +114,14 @@ function showWrites(testMode: boolean): void {
 }
 
 const testMode = $<HTMLInputElement>("testMode");
+const provider = $<HTMLSelectElement>("jevProvider");
+
+/** Only the chosen provider's key and model are shown. */
+function showProvider(): void {
+  for (const el of document.querySelectorAll<HTMLElement>("[data-provider]"))
+    el.hidden = el.dataset.provider !== provider.value;
+}
+provider.addEventListener("change", showProvider);
 testMode.addEventListener("change", () => showWrites(testMode.checked));
 
 void load();

@@ -93,11 +93,16 @@ folder. Click the extension's icon to open its settings and add:
   permission _Projects: read_, public repositories) reads the real boards, where the extension only reads;
   `harche` (_Projects_, and _Issues_ and _Pull requests_ on `sig-node-board-test`, read and write) reads and
   writes the test boards. A classic token with the `repo` and `project` scopes works on both.
-- a **TypeSafe API key** from [typesafe.ai](https://typesafe.ai). Judging one card costs about $0.0002; answers
-  are cached, so revisiting the board is free.
+- a key for **Jev**, from either provider (pick it under Jev on the settings page):
+  - **TypeSafe**, from [typesafe.ai](https://typesafe.ai). Judging one card costs about $0.0002.
+  - **OpenRouter**, from [openrouter.ai](https://openrouter.ai/settings/keys): the same model
+    (`~typesafe/jev-latest`) through OpenRouter's System One endpoint, billed to the OpenRouter account, which
+    reports each call's cost.
 
-Both are stored in the browser's local extension storage, never synced, and sent only to `api.github.com`
-and `api.typesafe.ai`. TestGrid (`testgrid.k8s.io`) is public and read without credentials.
+  Answers are cached by question, so revisiting the board is free and switching providers keeps them.
+
+The keys are stored in the browser's local extension storage, never synced, and sent only to `api.github.com`
+and the chosen Jev provider (`api.typesafe.ai` or `openrouter.ai`). TestGrid (`testgrid.k8s.io`) is public and read without credentials.
 
 Open the board and click **Tackle** on Triage or Issues - To do (or on one card's badge). Cards get a badge as
 they are judged; hover one for the evidence and the actions, or open it (issue pane or PR tab) and the

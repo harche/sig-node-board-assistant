@@ -1,4 +1,5 @@
-/** TypeSafe Jev client on the TypeSafe SDK. Jev answers calibrated yes/no (noul), multiple-choice and score
+/** Jev client on the TypeSafe SDK, against TypeSafe's own API or OpenRouter's System One endpoint (the same model
+ *  and request, billed to an OpenRouter key). Jev answers calibrated yes/no (noul), multiple-choice and score
  *  questions about a JSON state; it never generates text and never acts. The SDK owns transport and timeouts;
  *  this class owns retries (kept short for the service worker), the permanent answer cache (keyed by
  *  hash(state + questions)) and the cost ledger. */
@@ -6,11 +7,22 @@ import { APIConnectionError, APIError, TypeSafeClient, type Questions } from "@t
 import type { Cache } from "./cache";
 import type { JevUsage } from "./types";
 
+/** Where Jev is served: TypeSafe itself, or OpenRouter (`/api/v1/systemone`, same request and answers). */
+export type JevProvider = "typesafe" | "openrouter";
+
+export const JEV_PROVIDERS: Record<JevProvider, { name: string; baseUrl: string; model: string }> = {
+  typesafe: { name: "TypeSafe", baseUrl: "https://api.typesafe.ai", model: "jev-latest" },
+  openrouter: { name: "OpenRouter", baseUrl: "https://openrouter.ai/api", model: "~typesafe/jev-latest" },
+};
+
 export interface JevConfig {
   apiKey: string;
+  /** Default typesafe. */
+  provider?: JevProvider;
   baseUrl?: string;
   model?: string;
-  /** TypeSafe reports tokens, not dollars; list price of jev-latest input tokens keeps the ledger an estimate. */
+  /** TypeSafe reports tokens, not dollars: list price of jev-latest input tokens keeps the ledger an estimate.
+   *  OpenRouter reports the cost itself, which is used instead. */
   usdPerMtok?: number;
   /** First backoff delay in ms, doubled per retry (default 500; tests set 0). */
   backoffMs?: number;
@@ -42,6 +54,8 @@ export class JevError extends Error {
 
 export class JevClient {
   private client: TypeSafeClient;
+  /** The provider's name, for errors. */
+  private name: string;
   private usdPerMtok: number;
   private backoffMs: number;
   readonly ledger = { calls: 0, cached: 0, input_tokens: 0, cost: 0 };
@@ -51,13 +65,15 @@ export class JevClient {
     private cache: Cache,
     fetchFn: typeof fetch = (...a) => fetch(...a),
   ) {
-    if (!config.apiKey) throw new JevError("no TypeSafe key: set it in the extension options");
+    const provider = JEV_PROVIDERS[config.provider ?? "typesafe"];
+    this.name = provider.name;
+    if (!config.apiKey) throw new JevError(`no ${provider.name} key: set it in the extension options`);
     this.usdPerMtok = config.usdPerMtok ?? JEV_DEFAULTS.usdPerMtok;
     this.backoffMs = config.backoffMs ?? 500;
     this.client = new TypeSafeClient({
       apiKey: config.apiKey,
-      baseURL: config.baseUrl || JEV_DEFAULTS.baseUrl,
-      defaultModel: config.model || JEV_DEFAULTS.model,
+      baseURL: config.baseUrl || provider.baseUrl,
+      defaultModel: config.model || provider.model,
       // The key is the user's own, kept in extension storage and used only from the service worker.
       dangerouslyAllowBrowser: true,
       timeout: TIMEOUT_MS,
@@ -65,19 +81,22 @@ export class JevClient {
       // worker after ~30s idle.
       retry: { maxRetries: 0 },
       logLevel: "off",
-      // "/" is sent as the equivalent JSON escape "\/": Cloudflare in front of the API answers 403 to any body
-      // containing a path like /etc/hosts, which kubelet issues quote all the time. The server decodes it back.
-      fetch: (url, init) =>
-        fetchFn(
-          url,
-          typeof init?.body === "string" ? { ...init, body: init.body.replace(/\//g, "\\/") } : init,
-        ),
+      // "/" is sent as the equivalent JSON escape "\/": Cloudflare in front of TypeSafe's API answers 403 to any
+      // body containing a path like /etc/hosts, which kubelet issues quote all the time. The server decodes it back.
+      fetch:
+        (config.provider ?? "typesafe") === "typesafe"
+          ? (url, init) =>
+              fetchFn(
+                url,
+                typeof init?.body === "string" ? { ...init, body: init.body.replace(/\//g, "\\/") } : init,
+              )
+          : fetchFn,
     });
   }
 
   /** One systemOne call, one HTTP attempt. */
   async ask<A>(state: unknown, questions: Record<string, unknown>): Promise<JevResponse<A>> {
-    let j: { answers?: A; usage?: { input_tokens: number; output_tokens?: number } };
+    let j: { answers?: A; usage?: { input_tokens: number; output_tokens?: number; cost?: number } };
     try {
       j = (await this.client.systemOne({
         state: state as never,
@@ -89,7 +108,7 @@ export class JevClient {
         const body = typeof e.body === "string" ? e.body : JSON.stringify(e.body ?? "");
         const s = e.status;
         throw new JevError(
-          `TypeSafe HTTP ${s}: ${body.slice(0, 200)}`,
+          `${this.name} HTTP ${s}: ${body.slice(0, 200)}`,
           s,
           s === 408 || s === 429 || s >= 500,
           retryAfter(e.headers?.get?.("retry-after") ?? null),
@@ -97,17 +116,21 @@ export class JevClient {
       }
       // APIConnectionError covers timeouts too; anything else is the SDK rejecting the request before sending it
       throw new JevError(
-        `TypeSafe: ${e instanceof Error ? e.message : String(e)}`,
+        `${this.name}: ${e instanceof Error ? e.message : String(e)}`,
         undefined,
         e instanceof APIConnectionError,
       );
     }
     if (!j?.answers || !j.usage)
-      throw new JevError(`TypeSafe: malformed response ${JSON.stringify(j).slice(0, 300)}`, undefined, true);
+      throw new JevError(
+        `${this.name}: malformed response ${JSON.stringify(j).slice(0, 300)}`,
+        undefined,
+        true,
+      );
     const usage: JevUsage = {
       input_tokens: j.usage.input_tokens,
       output_tokens: j.usage.output_tokens,
-      cost: (j.usage.input_tokens * this.usdPerMtok) / 1e6,
+      cost: typeof j.usage.cost === "number" ? j.usage.cost : (j.usage.input_tokens * this.usdPerMtok) / 1e6,
     };
     return { answers: j.answers, usage };
   }

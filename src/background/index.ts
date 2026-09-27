@@ -45,6 +45,7 @@ import { decideReview, judgeReview, type Candidate, type ReviewResult } from "..
 import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
 import type { BoardItem, BoardRef, ItemDetail, JevChoice, JevNoul } from "../core/types";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
+import { jevSettings } from "../shared/messages";
 import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
 
 /** Broken Prow commands in the thread and their fixes (core/prowcmds.ts); a failure here never fails the judge. */
@@ -206,9 +207,8 @@ async function clients() {
   const s = await loadSettings();
   if (!s.githubToken) throw new Error("GitHub token not set: open the extension options");
   const gh = new GitHubClient(s.githubToken, cache);
-  const jev = s.typesafeApiKey
-    ? new JevClient({ apiKey: s.typesafeApiKey, model: s.typesafeModel }, cache)
-    : null;
+  const j = jevSettings(s);
+  const jev = j.apiKey ? new JevClient(j, cache) : null;
   return { gh, jev, settings: s };
 }
 
@@ -219,7 +219,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
       const s = await loadSettings();
       return {
         settings: s,
-        configured: { github: Boolean(s.githubToken), typesafe: Boolean(s.typesafeApiKey) },
+        configured: { github: Boolean(s.githubToken), jev: Boolean(jevSettings(s).apiKey) },
       } as Out;
     }
     case "settings.set":
@@ -231,18 +231,18 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
         .viewer()
         .then((u) => ({ ok: true, detail: `authenticated as ${u.login}` }))
         .catch((e: Error) => ({ ok: false, detail: e.message }));
-      let typesafe: { ok: boolean; detail: string };
+      let jevCheck: { ok: boolean; detail: string };
       try {
-        const jev = new JevClient({ apiKey: s.typesafeApiKey, model: s.typesafeModel }, cache);
+        const jev = new JevClient(jevSettings(s), cache);
         const r = await jev.ask<{ ping: { noul: number } }>(
           { text: "ping" },
           { ping: { type: "noul", instructions: { question: "Is the `text` exactly 'ping'?" } } },
         );
-        typesafe = { ok: true, detail: `ok (${r.usage.input_tokens} input tokens)` };
+        jevCheck = { ok: true, detail: `ok (${r.usage.input_tokens} input tokens)` };
       } catch (e) {
-        typesafe = { ok: false, detail: e instanceof Error ? e.message : String(e) };
+        jevCheck = { ok: false, detail: e instanceof Error ? e.message : String(e) };
       }
-      return { github, typesafe } as Out;
+      return { github, jev: jevCheck } as Out;
     }
     case "options.open":
       await chrome.runtime.openOptionsPage();
@@ -263,7 +263,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "item.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const detail = await gh.itemDetail(req.item.repository, req.item.type, req.item.number, req.refresh);
       const r = await judge(req.item, detail, jev, req.refresh);
       r.prow_fixes = await fixes(detail, jev, req.refresh);
@@ -271,7 +271,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "todo.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, prs] = await Promise.all([
         gh.itemDetail(repo, "Issue", num, req.refresh),
@@ -283,7 +283,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "progress.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const detail = await gh.itemDetail(repo, "Issue", num, req.refresh);
       const f = {
@@ -296,7 +296,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "review.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
         gh.itemDetail(repo, "PullRequest", num, req.refresh),
@@ -354,7 +354,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "approve.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
         gh.itemDetail(repo, "PullRequest", num, req.refresh),
@@ -421,7 +421,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "author.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
         gh.itemDetail(repo, "PullRequest", num, req.refresh),
@@ -455,7 +455,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "bugs.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const detail = await gh.itemDetail(req.item.repository, "Issue", req.item.number, req.refresh);
       const r = await judgeBug(req.item, detail, jev, req.refresh);
       r.prow_fixes = await fixes(detail, jev, req.refresh);
@@ -463,7 +463,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "info.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, tl] = await Promise.all([
         gh.itemDetail(repo, "Issue", num, req.refresh),
@@ -475,7 +475,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "dra.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       return (await judgeDra(
         req.column,
@@ -490,7 +490,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "backlog.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, prs] = await Promise.all([
         gh.itemDetail(repo, "Issue", num, req.refresh),
@@ -506,17 +506,17 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "backlog.duplicates": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await bugDuplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "todo.duplicates": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await duplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "tg.judge": {
       const { gh, jev, settings } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await judgeTg(
         {
           table: (ref, refresh) => new TestGridClient(tgCache).table(ref, refresh),
@@ -537,7 +537,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     }
     case "ci.judge": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const tg = new TestGridClient(tgCache);
       const deps: CiDeps = {
         pull: (repo, n, r) => gh.pullChecks(repo, n, r),
@@ -560,7 +560,7 @@ async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]
     case "issue.ci":
     case "issue.dups": {
       const { gh, jev } = await clients();
-      if (!jev) throw new Error("TypeSafe API key not set: open the extension options");
+      if (!jev) throw new Error("Jev key not set: open the extension options");
       const detail = await gh.itemDetail(req.repo, "Issue", req.number, req.refresh);
       if (!inScope(detail.labels.map((l) => l.name))) return null as Out;
       if (req.type === "issue.dups")

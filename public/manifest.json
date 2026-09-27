@@ -8,6 +8,7 @@
   "host_permissions": [
     "https://api.github.com/*",
     "https://api.typesafe.ai/*",
+    "https://openrouter.ai/*",
     "https://testgrid.k8s.io/*",
     "https://storage.googleapis.com/*"
   ],

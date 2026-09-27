@@ -24,7 +24,7 @@ class TestGridReview {
   private applied = new Map<number, Applied>();
   private skipped = new Set<number>();
   private applying = false;
-  private configured = { github: false, typesafe: false };
+  private configured = { github: false, jev: false };
   private testMode = true;
   private hover = new HoverCard(
     (id) => this.render(id),
@@ -122,7 +122,7 @@ class TestGridReview {
   }
 
   private async run(): Promise<void> {
-    if (!this.configured.github || !this.configured.typesafe) {
+    if (!this.configured.github || !this.configured.jev) {
       void send({ type: "options.open" });
       return;
     }

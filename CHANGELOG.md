@@ -79,3 +79,5 @@ test boards and `harche/sig-node-board-test`).
   lists where writes go in each mode. The page also describes every board and TestGrid, and which token reads the
   real boards and which writes the test boards.
 - TestGrid mirror issues name the real issue in backticks, so a public test repo would not show on its timeline.
+- Jev through OpenRouter as well as TypeSafe: the settings page picks the provider and holds a key and model for
+  each. OpenRouter serves the same model on its System One endpoint and reports each call's cost.

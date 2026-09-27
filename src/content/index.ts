@@ -34,7 +34,7 @@ const PARALLEL = 8;
 class Page {
   readonly hover: HoverCard;
   readonly assistants: BoardAssistant<unknown>[] = [];
-  configured = { github: false, typesafe: false };
+  configured = { github: false, jev: false };
   private pillText: HTMLElement;
   private idleBtns = new Map<string, HTMLElement>();
   private scanTimer: number | null = null;
@@ -234,7 +234,7 @@ class BoardAssistant<R> {
   /** The column button: judge every item in the column, not only the cards the board has rendered. Every click is
    *  fresh: the column and each item are re-read from GitHub and Jev is asked again, skipping every cache. */
   private async run(): Promise<void> {
-    if (!this.configured.github || !this.configured.typesafe) {
+    if (!this.configured.github || !this.configured.jev) {
       void send({ type: "options.open" });
       return;
     }
@@ -436,7 +436,7 @@ class BoardAssistant<R> {
     if (t.textContent !== text) t.textContent = text;
     b.dataset.tip = title;
     // Without keys a click still opens the options page.
-    b.setAttribute("aria-disabled", String(empty && this.configured.github && this.configured.typesafe));
+    b.setAttribute("aria-disabled", String(empty && this.configured.github && this.configured.jev));
     this.paintReview();
   }
 
@@ -698,7 +698,7 @@ class BoardAssistant<R> {
     b.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!this.configured.github || !this.configured.typesafe) {
+      if (!this.configured.github || !this.configured.jev) {
         void send({ type: "options.open" });
         return;
       }
@@ -807,7 +807,7 @@ class BoardAssistant<R> {
   }
 
   updatePill(): void {
-    if (!this.configured.github || !this.configured.typesafe) {
+    if (!this.configured.github || !this.configured.jev) {
       this.page.setPill("Add your tokens to start");
       return;
     }

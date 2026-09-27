@@ -70,7 +70,7 @@ class ItemAssistant {
       const live = () => gen === this.generation;
       try {
         const s = await send({ type: "settings.get" });
-        if (!live() || !s.configured.github || !s.configured.typesafe) return;
+        if (!live() || !s.configured.github || !s.configured.jev) return;
         this.ci = ref.pull
           ? new PrCi(ref.repo, ref.number, live)
           : new IssueCheck(ref.repo, ref.number, live);

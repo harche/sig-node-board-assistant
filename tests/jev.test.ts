@@ -22,6 +22,28 @@ describe("JevClient", () => {
     expect(r.usage.cost).toBeCloseTo((100 * 0.042) / 1e6);
   });
 
+  it("calls OpenRouter's System One endpoint unescaped, with its model, and takes its reported cost", async () => {
+    let url = "";
+    let body = "";
+    const fetchFn = (async (u: unknown, init?: RequestInit) => {
+      url = String(u);
+      body = String(init?.body);
+      return new Response(
+        JSON.stringify({
+          answers: { q: { type: "noul", noul: 0.5 } },
+          usage: { input_tokens: 100, output_tokens: 5, cost: 0.00001 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const jev = new JevClient({ apiKey: "k", provider: "openrouter" }, new Cache(new MemoryStore()), fetchFn);
+    const r = await jev.ask({ path: "/etc/hosts" }, { q: { type: "noul", instructions: { question: "?" } } });
+    expect(url).toBe("https://openrouter.ai/api/v1/systemone");
+    expect(body).toContain('"/etc/hosts"');
+    expect(body).toContain("~typesafe/jev-latest");
+    expect(r.usage.cost).toBe(0.00001);
+  });
+
   it("askCached hits the cache on the second call and reports zero cost", async () => {
     let calls = 0;
     const fetchFn = (async () => {

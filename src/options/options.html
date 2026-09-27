@@ -109,7 +109,8 @@
         font-weight: 500;
         margin-bottom: 4px;
       }
-      input {
+      input,
+      select {
         width: 100%;
         padding: 7px 10px;
         border: 1px solid var(--line);
@@ -118,7 +119,8 @@
         color: var(--fg);
         font: inherit;
       }
-      input:focus-visible {
+      input:focus-visible,
+      select:focus-visible {
         outline: 2px solid var(--accent);
         outline-offset: 1px;
         border-color: transparent;
@@ -345,23 +347,47 @@
         </div>
 
         <div class="group">
-          <h2>TypeSafe <small>Jev decision model</small></h2>
+          <h2>Jev <small>decision model</small></h2>
           <div>
             <div>
-              <label for="typesafeApiKey">API key</label>
+              <label for="jevProvider">Provider</label>
+              <select id="jevProvider">
+                <option value="typesafe">TypeSafe</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+              <p class="hint">
+                The same Jev model either way: TypeSafe's own API, or OpenRouter's, billed to an OpenRouter
+                key. Answers are cached by question, so switching keeps them.
+              </p>
+            </div>
+            <div data-provider="typesafe">
+              <label for="typesafeApiKey">TypeSafe API key</label>
               <input id="typesafeApiKey" type="password" autocomplete="off" spellcheck="false" />
               <p class="hint">
                 From <a href="https://typesafe.ai" target="_blank" rel="noopener">typesafe.ai</a>. Judging one
                 card costs about $0.0002 and the answer is cached, so revisiting the board is free.
               </p>
-              <div class="check" id="typesafeCheck"></div>
             </div>
+            <div data-provider="openrouter">
+              <label for="openrouterApiKey">OpenRouter API key</label>
+              <input id="openrouterApiKey" type="password" autocomplete="off" spellcheck="false" />
+              <p class="hint">
+                From
+                <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">openrouter.ai</a
+                >, billed per input token at OpenRouter's price for Jev.
+              </p>
+            </div>
+            <div class="check" id="jevCheck"></div>
             <details class="advanced">
               <summary>Model</summary>
               <div>
-                <div>
-                  <label for="typesafeModel">Model</label>
+                <div data-provider="typesafe">
+                  <label for="typesafeModel">TypeSafe model</label>
                   <input id="typesafeModel" type="text" spellcheck="false" />
+                </div>
+                <div data-provider="openrouter">
+                  <label for="openrouterModel">OpenRouter model</label>
+                  <input id="openrouterModel" type="text" spellcheck="false" />
                 </div>
               </div>
             </details>
