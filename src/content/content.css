@@ -480,6 +480,9 @@
 
 /* ---------- hover card (board): GitHub's hovercard look, an overlay beside the card with Primer's overlay tokens.
    Holds the decision band (shared with the evidence section), Jev's scores and one item's action buttons. */
+.snba-hovercard:focus {
+  outline: none;
+}
 .snba-hovercard {
   position: fixed;
   z-index: 2147483000;

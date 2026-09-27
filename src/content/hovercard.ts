@@ -104,6 +104,7 @@ function actions(c: HoverContent): HTMLElement {
     const name = choice === "accept" ? "Accept" : "Archive";
     const { root } = nativeButton(c.scope, null, name, choice === recommended ? "primary" : "default");
     root.classList.add("snba-hc-btn");
+    root.dataset.focusKey = choice;
     if (busy) root.setAttribute("aria-disabled", "true");
     root.addEventListener("click", (e) => {
       e.preventDefault();
@@ -117,6 +118,7 @@ function actions(c: HoverContent): HTMLElement {
   // Skip, as in the CLI: no write. The verdict is dropped and the card goes back to its own Tackle.
   const skip = nativeButton(c.scope, null, "Skip", "invisible").root;
   skip.classList.add("snba-hc-btn");
+  skip.dataset.focusKey = "skip";
   if (busy) skip.setAttribute("aria-disabled", "true");
   skip.addEventListener("click", (e) => {
     e.preventDefault();
@@ -162,19 +164,26 @@ export class HoverCard {
   private returning = false;
   /** A <select> list is open: it is drawn outside the card, so picking from it reads as the pointer leaving. */
   private picking = false;
+  /** The pointer is over the card. */
+  private hovered = false;
 
   constructor(
     private render: (restId: number) => HTMLElement | null,
     private keyOf: (restId: number) => string,
   ) {
-    this.el = h("div.snba-hovercard", { role: "dialog", "aria-label": "Jev's verdict" });
+    // tabindex -1: focus can rest on the card itself when a re-render removes the control that had it.
+    this.el = h("div.snba-hovercard", { role: "dialog", "aria-label": "Jev's verdict", tabindex: "-1" });
     this.el.hidden = true;
     this.el.addEventListener("mouseenter", () => {
+      this.hovered = true;
       // Back over the card, so any list opened from it has closed.
       this.picking = false;
       this.cancelClose();
     });
-    this.el.addEventListener("mouseleave", () => this.scheduleClose());
+    this.el.addEventListener("mouseleave", () => {
+      this.hovered = false;
+      this.scheduleClose();
+    });
     this.el.addEventListener("focusout", (e) => {
       this.picking = false;
       if (!this.el.contains(e.relatedTarget as Node | null)) this.scheduleClose();
@@ -205,7 +214,8 @@ export class HoverCard {
       if (e.key !== "Tab") return;
       const f = this.focusables();
       const edge = e.shiftKey ? f[0] : f[f.length - 1];
-      if (document.activeElement !== edge) return;
+      // Focus resting on the card itself (a re-render removed its control) is an edge both ways.
+      if (document.activeElement !== edge && document.activeElement !== this.el) return;
       e.preventDefault();
       this.closeAndReturn();
     });
@@ -276,6 +286,7 @@ export class HoverCard {
   close(): void {
     this.cancelClose();
     this.picking = false;
+    this.hovered = false;
     this.el.hidden = true;
     this.el.replaceChildren();
     this.restId = null;
@@ -286,19 +297,21 @@ export class HoverCard {
   private show(restId: number, anchor: HTMLElement): void {
     const content = this.render(restId);
     if (!content || !anchor.isConnected) return this.close();
-    const focused = this.el.contains(document.activeElement)
-      ? (document.activeElement as HTMLElement).dataset.focusKey
-      : undefined;
+    const inside = this.el.contains(document.activeElement);
+    const focused = inside ? (document.activeElement as HTMLElement).dataset.focusKey : undefined;
     this.restId = restId;
     this.anchor = anchor;
     this.key = this.keyOf(restId);
     this.el.replaceChildren(content);
     this.el.hidden = false;
     this.place(anchor);
-    if (focused) {
-      // Removing the old control fired focusout, which scheduled a close; focus is back inside, so keep the card.
-      this.el.querySelector<HTMLElement>(`[data-focus-key="${focused}"]`)?.focus();
-      this.cancelClose();
+    if (inside) {
+      // Removing the old control fired focusout, which scheduled a close. Focus goes back to the same control, else
+      // to the card, and the card stays: a click's result (applying, failed and why) shows in it.
+      const same = focused ? this.el.querySelector<HTMLElement>(`[data-focus-key="${focused}"]`) : null;
+      (same ?? this.el).focus();
+      // Only the close focusout scheduled: one the pointer leaving scheduled still goes ahead.
+      if (same || this.hovered) this.cancelClose();
     }
   }
 

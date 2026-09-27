@@ -459,6 +459,8 @@ class BoardAssistant<R> {
     if (this.applying) return true;
     if (this.empty() || !this.started || this.load.state !== "loaded" || !this.items.size || this.running())
       return false;
+    // Nothing judged (every item failed, e.g. Jev out of credits): nothing to accept, Tackle again alone.
+    if (![...this.items.keys()].some((id) => this.judged.slots.get(id)?.state === "done")) return false;
     // Once Accept has run, Tackle comes back to re-read what is left.
     return !this.accepted;
   }
@@ -470,6 +472,8 @@ class BoardAssistant<R> {
     // Tackle stays next to Accept while some items failed to judge, so the column can be judged again without Cancel.
     const failedJudging = [...this.items.keys()].some((id) => this.judged.slots.get(id)?.state === "error");
     run.hidden = review && (this.applying || !failedJudging);
+    // Next to Accept and Cancel, Tackle again is its icon only (its tooltip says it), so the column title keeps room.
+    run.querySelector(".snba-run-text")?.classList.toggle("snba-sr-only", review);
     accept.hidden = cancel.hidden = !review;
     if (!review) return;
     const plan = this.plan();
@@ -751,10 +755,13 @@ class BoardAssistant<R> {
       // No native tooltip once judged: the hover card takes its place.
       [verdict, text, title] = [b.tint, b.text, ""];
     }
+    // The card keeps the verdict's tint whatever becomes of the write; only the badge says the write failed.
+    const judgedTint = verdict;
     const applied = this.applied.get(restId);
     if (applied?.state === "pending") text = "applying";
     else if (applied?.state === "done") text = "applied";
-    else if (applied?.state === "error") [verdict, text] = ["error", "failed"];
+    // Why it failed (a read-only board, a refused step) is also on the hover card; the badge says it on its own.
+    else if (applied?.state === "error") [verdict, text, title] = ["error", "failed", applied.message];
     // Only touch the DOM when something changed: every write here is a mutation other observers see.
     if (b.dataset.verdict !== verdict) b.dataset.verdict = verdict;
     const t = b.querySelector<HTMLElement>(".snba-text")!;
@@ -762,7 +769,7 @@ class BoardAssistant<R> {
     if (b.title !== title) b.title = title;
     // Tint the whole card with the verdict's muted colour (content.css); only settled verdicts tint.
     const card = b.closest<HTMLElement>("[data-board-card-id]");
-    const tint = slot?.state === "done" ? verdict : undefined;
+    const tint = slot?.state === "done" ? judgedTint : undefined;
     if (card && card.dataset.snbaVerdict !== tint) {
       if (tint) card.dataset.snbaVerdict = tint;
       else delete card.dataset.snbaVerdict;
