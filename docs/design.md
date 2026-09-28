@@ -9,7 +9,7 @@ architecture, the split between code and Jev, and the trials behind each policy.
  board page             issue / PR page          TestGrid dashboard       settings page
  └ content script       └ content script         └ content script         └ extension page
    Tackle, badges,        board section,           Tackle, badges,          keys, provider,
-   hover card, pane       Failing CI, CI           hover card               test mode
+   hover card, pane       Failing CI, CI           hover card               where writes go
    section                history, duplicates
         │                      │                        │                        │
         └──────── typed messages: reads, and one checked write request ──────────┘
@@ -54,10 +54,9 @@ extension:
 - The worker answers a content script's `settings.get` with the keys blanked; it only needs to know whether they are
   set.
 - `settings.set`, `settings.test` and `cache.clear` are refused unless the sender is an extension page
-  (`sender.url` under the extension's own origin), so only the settings page can change the keys or turn test mode
-  off.
+  (`sender.url` under the extension's own origin), so only the settings page can change the keys.
 - The settings page keeps Save disabled until the stored settings are in the form: saving the form's blanks would
-  otherwise erase the keys, and test mode is checked in the HTML so an early save can never turn it off.
+  otherwise erase the keys.
 - The keys go to `api.github.com` and the chosen Jev provider only, never into a URL.
 
 ## Jev providers
@@ -351,7 +350,7 @@ PRs.
   other PRs, which passed after an unrelated push. The cost is a Jev call per changed file (median 7).
 
 - `/retest` reruns every failed job, so it is suggested only when none of them is the PR's.
-- Not yet: posting the command (it would go through test mode's mirror), GitHub Actions checks, and the periodic
+- Not yet: posting the command, GitHub Actions checks, and the periodic
   jobs' record of the same test.
 
 ## CI history and duplicates on the issue page
@@ -412,14 +411,14 @@ card shows the action with its exact comment and move, and nothing is written un
 card) or Accept (the column's suggestions). Writes go through one message, `item.apply`, and the worker refuses it
 unless:
 
-- test mode is off, or the board is marked `writable` in `src/core/boards.ts` (the private test copies);
+- the board is one of the known boards in `src/core/boards.ts`;
 - every move names that one project item;
 - every comment is on that item's issue and is a shape the extension drafts (`src/core/comments.ts`), with no other
   Prow command and no @-mention beyond the one person a nudge or unassign is for.
 
-TestGrid's writes (new issues, comments) go to the test repository in test mode, where a comment for a
-kubernetes/kubernetes issue lands on its `[mirror]` issue. The header's Accept applies every suggestion in its
-column, comments included: clicking it means the reviewer has read the cards and agrees.
+TestGrid's writes (new issues, comments) go only to kubernetes/kubernetes and kubernetes/test-infra. The header's
+Accept applies every suggestion in its column, comments included: clicking it means the reviewer has read the cards
+and agrees.
 
 ## Parity with the reference
 

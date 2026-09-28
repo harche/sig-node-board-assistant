@@ -1,9 +1,31 @@
 # Notes for Claude
 
+## Test mode
+
+Test mode exists only in a **test build**. When the user says "test mode", "test build" or "test against the test
+boards", they mean this:
+
+- **Build it:** `npm run build:test` (or `npm run watch:test`), then load `dist/` unpacked in Chrome. A plain
+  `npm run build`, `npm run watch` or `npm run zip` is a normal build: no test mode, no test boards, no test repo.
+  Releases are always normal builds.
+- **How it works:** `scripts/build.mjs --test` (or `SNBA_TEST=1`) sets the global `__TEST_BUILD__`
+  (`src/shared/build.d.ts`) to `true`. It gates `TEST_BOARDS` in `src/core/boards.ts`, `TG_TEST_REPO` in
+  `src/core/tgreview.ts`, the Test mode switch on the settings page, and `Settings.testMode`. In a normal build esbuild
+  drops all of it (check with `grep harche dist/*.js`: no hits), and `loadSettings` forces `testMode` off, so a value
+  saved by a test build never steers a normal build's writes. Vitest runs as a test build (`vitest.config.ts`).
+- **The switch:** in a test build, test mode starts on (settings page, `Settings.testMode`). On, Apply and Accept write
+  only to the test copies below, and TestGrid writes only to `harche/sig-node-board-test`. Off, they write to the real
+  boards and kubernetes/kubernetes. Keep it on in every browser profile used for testing, and never turn it off unless
+  the user asks.
+- **Why it's gated:** the test boards and repo are private to `harche`. Nobody else can use them, so normal builds
+  leave them out. They stay in git, so they can't drift from the code.
+- **User-facing docs don't mention test mode** (README, docs/, CHANGELOG). Only this file and CONTRIBUTING.md do.
+
 ## Testing against a board
 
 Every real SIG Node board has a private test copy under `harche`. **Test a board's workflows only on its test
-copy, never on the real board.** Real boards may be read to compare, never written to.
+copy, in a test build with test mode on, never on the real board.** Real boards may be read to compare, never written
+to.
 
 | Real board (read only)                       | Test copy (test and write here)                                                  | Registered as |
 | -------------------------------------------- | -------------------------------------------------------------------------------- | ------------- |
@@ -17,10 +39,8 @@ The DRA filter is 95's own (`label:"wg/device-management"`), so, as on the real 
 and `sig/node` lands on both `harche/6` and `harche/7`: drop one of those labels to keep a test item on one board.
 There is no Prow in the test repo, so set labels directly rather than with `/sig`, `/kind` or `/triage` commands.
 
-**Test mode** (settings page, `Settings.testMode`, on by default) is what keeps writes on the test copies: off, Apply
-and Accept write to the real boards and kubernetes/kubernetes. Keep it on in every browser profile used for testing,
-and never turn it off unless the user asks. A test board is registered in `src/core/boards.ts` with `writable: true`. Only writable boards take
-Apply/Accept writes, so any new real board needs its own test copy before its workflows are tested.
+A test board is registered in `TEST_BOARDS` (`src/core/boards.ts`) with `writable: true`. In test mode only writable
+boards take Apply/Accept writes, so any new real board needs its own test copy before its workflows are tested.
 
 ### CI/Test test board (`harche/5`, copy of kubernetes/151)
 

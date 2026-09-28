@@ -39,7 +39,9 @@ export class ChromeLocalStore implements KeyValueStore {
 
 export async function loadSettings(): Promise<Settings> {
   const r = await chrome.storage.local.get(SETTINGS_KEY);
-  return { ...DEFAULT_SETTINGS, ...((r[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}) };
+  const s = { ...DEFAULT_SETTINGS, ...((r[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}) };
+  // A normal build has no test boards or test repo, so test mode saved by a test build must not steer its writes.
+  return __TEST_BUILD__ ? s : { ...s, testMode: false };
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {

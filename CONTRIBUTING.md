@@ -26,10 +26,11 @@ CI runs the same. Keep commits focused, and let the first line of a commit messa
 - **Writes go through one door.** `item.apply` is the only write request. The worker runs it only where test mode
   allows, only for a Status move of that item, and only for comments in the shapes the extension drafts
   (`src/core/comments.ts`). A new kind of write extends that allow-list and its tests. It does not add a second path.
-- **Test writes on a test copy, never on a real board.** Each real board has a private copy registered in
-  `src/core/boards.ts` with `writable: true`, and test mode (on by default) keeps writes there. To test a workflow's
-  writes, make your own copy of the board (the project's "Make a copy"), point its auto-add rule at a repository of
-  your own, and register it the same way. Keep test mode on.
+- **Test writes on a test copy, never on a real board.** Only a test build (`npm run build:test` or
+  `npm run watch:test`) has test mode, the private test copies of the boards (`src/core/boards.ts`, `writable: true`)
+  and the test repo (`TG_TEST_REPO`); a normal build leaves them out. In a test build test mode starts on and keeps
+  writes on the test copies. To test a workflow's writes, make your own copy of the board (the project's "Make a
+  copy"), point its auto-add rule at a repository of your own, and register it in `TEST_BOARDS` the same way.
 - **Read-only features may be tried on real items.** The PR page's Failing CI and the issue page's checks only read,
   so try them on real kubernetes/kubernetes pull requests and issues.
 - **Code computes, Jev decides, policy is code.** Facts that are cheap to get right (labels, dates, review state)
@@ -43,8 +44,8 @@ CI runs the same. Keep commits focused, and let the first line of a commit messa
 
 ## Adding a board or a workflow
 
-1. Add the board to `KNOWN_BOARDS` in `src/core/boards.ts`, with the column each workflow decorates, and a test copy
-   with `writable: true`.
+1. Add the board to `REAL_BOARDS` in `src/core/boards.ts`, with the column each workflow decorates, and a test copy
+   with `writable: true` to `TEST_BOARDS`.
 2. Put the workflow's prompts in `src/core/prompts/`, and its facts and policy in `src/core/`.
 3. Register the column's workflow in `src/content/workflows.ts`, and add its message type to
    `src/shared/messages.ts` with a case in the background worker.

@@ -107,7 +107,7 @@ load that folder the same way.
 
 ### Configure
 
-<img align="right" width="360" src="docs/images/settings.png" alt="The settings page: a GitHub token, the Jev provider and key, and the test mode switch">
+<img align="right" width="360" src="docs/images/settings.png" alt="The settings page: a GitHub token, the Jev provider and key, and where writes go">
 
 The settings page needs two credentials:
 
@@ -145,9 +145,8 @@ The settings page needs two credentials:
 - **Nothing is written until you click.** Apply writes one card's action, and Accept writes the actions in one
   column. Both show the exact comment and move first. The PR and issue checks never write: they only show a command
   for you to post.
-- **Test mode is on by default.** With it on, writes go only to private test copies of the boards and to a test
-  repository. The real boards and kubernetes/kubernetes are only read. The settings page lists where writes go in
-  each mode.
+- **The settings page lists where writes go:** the boards Apply and Accept may write to, and the repos TestGrid's
+  issues and comments go to.
 - **An allow-list guards every write.** The background worker accepts only a Status move of the one item, and only
   the comment shapes the extension drafts. It refuses anything else, whatever the page asks for.
   [docs/workflows.md](docs/workflows.md#what-apply-and-accept-may-write) lists them.
@@ -158,7 +157,7 @@ The settings page needs two credentials:
   That storage is closed to the scripts the extension runs on GitHub and TestGrid pages: only the extension's
   background worker and its settings page can read it.
 - **Never handed to a web page.** Every network call goes through the background worker. The scripts on web pages
-  get settings with the keys blanked, and only the settings page can change settings or test mode.
+  get settings with the keys blanked, and only the settings page can change settings.
 - **Sent only where they are used:** `api.github.com`, and the Jev provider you picked (`api.typesafe.ai` or
   `openrouter.ai`). TestGrid is read without credentials.
 

@@ -308,9 +308,6 @@ test and its error. SIG Node's open flake and failing-test issues are searched t
 relation, and a second question must confirm it before it is shown: would fixing it stop these failures, or does it
 cover this one? This part is display only.
 
-While the review is tried out, writes go to `harche/sig-node-board-test` only. New issues are opened there, and a
-comment meant for a kubernetes/kubernetes issue goes on its `[mirror]` issue there.
-
 ## Failing CI on a pull request
 
 On any pull request with a failed Prow job, a **Failing CI** section in the sidebar counts the failures and offers
@@ -380,6 +377,4 @@ The background worker checks every write against an allow-list, whatever the pag
   - Prow-command fixes.
 
 Only the nudges and the unassign may @-mention anyone, one person each. TestGrid's new issues and comments go through
-the same worker and the same test-mode check.
-
-With test mode on (the default), the worker also refuses any write that is not to a test board or the test repo.
+the same worker, and go only to kubernetes/kubernetes and kubernetes/test-infra.

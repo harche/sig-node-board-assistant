@@ -25,8 +25,9 @@ export interface Settings {
   typesafeModel: string;
   openrouterApiKey: string;
   openrouterModel: string;
-  /** On (the default): writes go only to the test boards and the test repo (boards.ts `writable`, TG_TEST_REPO).
-   *  Off: Apply and Accept also write to the real boards and TestGrid's issues. */
+  /** On: writes go only to the test boards and the test repo (boards.ts `writable`, TG_TEST_REPO).
+   *  Off: Apply and Accept also write to the real boards and TestGrid's issues. Only a test build has test mode
+   *  (build.d.ts): it starts on there, and is always off in a normal build. */
   testMode: boolean;
 }
 
@@ -37,7 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   typesafeModel: "jev-latest",
   openrouterApiKey: "",
   openrouterModel: "~typesafe/jev-latest",
-  testMode: true,
+  testMode: __TEST_BUILD__,
 };
 
 export type Request =

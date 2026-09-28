@@ -450,8 +450,8 @@ const tabUrl = (f: JobFacts) => `${TESTGRID_URL}/${f.dashboard}#${encodeURICompo
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ") + " UTC";
 
 /** Where TestGrid writes go in test mode: new issues are opened here, and a comment meant for another repo's issue
- *  goes on a "[mirror] <repo>#<n>" issue here. Nothing is written anywhere else. */
-export const TG_TEST_REPO = "harche/sig-node-board-test";
+ *  goes on a "[mirror] <repo>#<n>" issue here. Nothing is written anywhere else. Empty outside test builds. */
+export const TG_TEST_REPO = __TEST_BUILD__ ? "harche/sig-node-board-test" : "";
 /** With test mode off, the only repos TestGrid writes go to: where its issues are filed and tracked. */
 export const TG_LIVE_REPOS = ["kubernetes/kubernetes", "kubernetes/test-infra"];
 /** A title search that fits GitHub's 256-character query limit, with the ` sort:` searchIssues adds: the title's

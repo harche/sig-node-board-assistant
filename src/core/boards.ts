@@ -7,11 +7,12 @@ export interface KnownBoard extends BoardRef {
   about: string;
   /** Columns the extension decorates on this board, by workflow. */
   workflows: Record<string, string>;
-  /** A test copy: Apply and Accept write to it even in test mode. Real boards take writes only with test mode off. */
+  /** A test copy (test builds only): Apply and Accept write to it even in test mode. Real boards take writes only with
+   *  test mode off. */
   writable?: boolean;
 }
 
-export const KNOWN_BOARDS: KnownBoard[] = [
+const REAL_BOARDS: KnownBoard[] = [
   {
     owner: "kubernetes",
     number: 151,
@@ -46,50 +47,58 @@ export const KNOWN_BOARDS: KnownBoard[] = [
       drareview: "👀 In review",
     },
   },
-  {
-    // Private copy of kubernetes/151 (same Status columns, views and workflows) over fake items in
-    // harche/sig-node-board-test, for testing writes without touching the real board.
-    owner: "harche",
-    number: 5,
-    title: "SIG Node CI/Test Board (test)",
-    about: "Test copy of kubernetes/151",
-    workflows: {
-      triage: "Triage",
-      todo: "Issues - To do",
-      progress: "Issues - In progress",
-      review: "PRs - Needs Reviewer",
-      approve: "PRs - Needs Approver",
-      author: "PRs Waiting on Author",
-    },
-    writable: true,
-  },
-  {
-    // Private copy of kubernetes/185 (same Status columns, view and workflows) over fake items in
-    // harche/sig-node-board-test.
-    owner: "harche",
-    number: 6,
-    title: "SIG Node Bugs (test)",
-    about: "Test copy of kubernetes/185",
-    workflows: { bugs: "Triage", info: "Needs Information", backlog: "Triaged", high: "High Priority" },
-    writable: true,
-  },
-  {
-    // Private copy of kubernetes/95 (same Status columns, views and workflows) over fake items in
-    // harche/sig-node-board-test.
-    owner: "harche",
-    number: 7,
-    title: "Dynamic Resource Allocation (test)",
-    about: "Test copy of kubernetes/95",
-    workflows: {
-      dranew: "🆕 New",
-      drabacklog: "📋 Backlog",
-      draready: "🔖 Ready",
-      draprogress: "🏗 In progress",
-      drareview: "👀 In review",
-    },
-    writable: true,
-  },
 ];
+
+/** Private test copies of the real boards, over fake items in harche/sig-node-board-test. In test builds only. */
+const TEST_BOARDS: KnownBoard[] = __TEST_BUILD__
+  ? [
+      {
+        // Private copy of kubernetes/151 (same Status columns, views and workflows) over fake items in
+        // harche/sig-node-board-test, for testing writes without touching the real board.
+        owner: "harche",
+        number: 5,
+        title: "SIG Node CI/Test Board (test)",
+        about: "Test copy of kubernetes/151",
+        workflows: {
+          triage: "Triage",
+          todo: "Issues - To do",
+          progress: "Issues - In progress",
+          review: "PRs - Needs Reviewer",
+          approve: "PRs - Needs Approver",
+          author: "PRs Waiting on Author",
+        },
+        writable: true,
+      },
+      {
+        // Private copy of kubernetes/185 (same Status columns, view and workflows) over fake items in
+        // harche/sig-node-board-test.
+        owner: "harche",
+        number: 6,
+        title: "SIG Node Bugs (test)",
+        about: "Test copy of kubernetes/185",
+        workflows: { bugs: "Triage", info: "Needs Information", backlog: "Triaged", high: "High Priority" },
+        writable: true,
+      },
+      {
+        // Private copy of kubernetes/95 (same Status columns, views and workflows) over fake items in
+        // harche/sig-node-board-test.
+        owner: "harche",
+        number: 7,
+        title: "Dynamic Resource Allocation (test)",
+        about: "Test copy of kubernetes/95",
+        workflows: {
+          dranew: "🆕 New",
+          drabacklog: "📋 Backlog",
+          draready: "🔖 Ready",
+          draprogress: "🏗 In progress",
+          drareview: "👀 In review",
+        },
+        writable: true,
+      },
+    ]
+  : [];
+
+export const KNOWN_BOARDS: KnownBoard[] = [...REAL_BOARDS, ...TEST_BOARDS];
 
 /** Whether Apply and Accept may write to this board. */
 export function writesTo(b: KnownBoard | undefined, testMode: boolean): boolean {

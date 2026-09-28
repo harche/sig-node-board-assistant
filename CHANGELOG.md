@@ -3,7 +3,7 @@
 ## 0.1.0 (unreleased)
 
 First release. It reads and suggests on kubernetes/151, 185 and 95, on TestGrid, and on kubernetes/kubernetes pull
-requests and issues. In test mode (the default) it writes only to the test boards and `harche/sig-node-board-test`.
+requests and issues.
 
 ### SIG Node CI/Test board (kubernetes/151)
 
@@ -59,8 +59,6 @@ requests and issues. In test mode (the default) it writes only to the test board
   - whether an issue tracks it;
   - a comment or a new issue drafted from the kubernetes/kubernetes templates.
 - The card also names issues that may cause the failure or are its umbrella, confirmed by a second question.
-- In test mode, comments for a kubernetes/kubernetes issue go on a `[mirror]` issue in the test repository. The
-  mirror names the real issue in backticks, so the real issue's timeline never shows it.
 
 ### Pull request and issue pages
 
@@ -85,14 +83,14 @@ requests and issues. In test mode (the default) it writes only to the test board
 
 - **Two Jev providers:** TypeSafe and OpenRouter, each with its own key and model. OpenRouter reports each call's
   cost.
-- **Test mode**, on by default. The settings page lists where writes go in each mode. Off, Apply and Accept write to
-  the real boards, and TestGrid's comments and issues go to kubernetes/kubernetes and kubernetes/test-infra.
+- **Where writes go**, listed on the settings page: Apply and Accept write to the known boards, and TestGrid's
+  comments and issues go to kubernetes/kubernetes and kubernetes/test-infra.
 - **An allow-list guards every write:** Status moves of the one item, and only the comment shapes the extension
   drafts.
 - **Keys are kept from web pages:**
   - the extension's storage is closed to the scripts it runs on GitHub and TestGrid;
   - those scripts get settings with the keys blanked;
-  - only the settings page can change settings or test mode;
+  - only the settings page can change settings;
   - Save waits until the stored settings are loaded.
 
 ### Under the hood

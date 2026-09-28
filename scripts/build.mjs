@@ -1,9 +1,12 @@
 // Bundles the extension entry points with esbuild and copies the static files into dist/.
 // `node scripts/build.mjs --watch` rebuilds on change (reload the unpacked extension in chrome://extensions).
+// `--test` (or SNBA_TEST=1) makes a test build: test mode, the private test boards and the test repo are compiled in
+// (src/shared/build.d.ts). Without it they are left out of the bundle.
 import * as esbuild from "esbuild";
 import { cp, mkdir, rm } from "node:fs/promises";
 
 const watch = process.argv.includes("--watch");
+const test = process.argv.includes("--test") || process.env.SNBA_TEST === "1";
 const outdir = "dist";
 
 // Content scripts are classic scripts (no `export` allowed), so they and the options page are bundled as
@@ -15,7 +18,10 @@ const common = {
   sourcemap: watch ? "inline" : false,
   minify: !watch,
   logLevel: "info",
-  define: { "process.env.NODE_ENV": JSON.stringify(watch ? "development" : "production") },
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(watch ? "development" : "production"),
+    __TEST_BUILD__: JSON.stringify(test),
+  },
 };
 const builds = [
   { ...common, entryPoints: { background: "src/background/index.ts" }, format: "esm" },
@@ -37,6 +43,7 @@ await cp("public", outdir, { recursive: true });
 await cp("src/content/content.css", `${outdir}/content.css`);
 await cp("src/options/options.html", `${outdir}/options.html`);
 
+if (test) console.info("test build: test mode and the test boards are included");
 if (watch) {
   for (const b of builds) await (await esbuild.context(b)).watch();
   console.info("watching for changes…");

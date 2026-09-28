@@ -25,7 +25,7 @@ class TestGridReview {
   private skipped = new Set<number>();
   private applying = false;
   private configured = { github: false, jev: false };
-  private testMode = true;
+  private testMode = __TEST_BUILD__;
   private hover = new HoverCard(
     (id) => this.render(id),
     (id) => this.key(id),

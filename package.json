@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:test": "node scripts/build.mjs --test",
     "watch": "node scripts/build.mjs --watch",
+    "watch:test": "node scripts/build.mjs --watch --test",
     "zip": "node scripts/build.mjs && node scripts/zip.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

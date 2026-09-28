@@ -44,7 +44,7 @@ async function save(): Promise<void> {
   const patch: Partial<Settings> = {};
   for (const f of FIELDS) patch[f] = $<HTMLInputElement>(f).value.trim();
   patch.jevProvider = provider.value === "openrouter" ? "openrouter" : "typesafe";
-  patch.testMode = testMode.checked;
+  if (__TEST_BUILD__) patch.testMode = testMode.checked;
   await send({ type: "settings.set", settings: patch });
 }
 
@@ -106,6 +106,7 @@ function showWrites(testMode: boolean): void {
   const tests = KNOWN_BOARDS.filter((x) => x.writable);
   const real = KNOWN_BOARDS.filter((x) => !x.writable);
   const hint = $<HTMLParagraphElement>("testModeHint");
+  hint.hidden = !__TEST_BUILD__;
   hint.textContent = testMode
     ? "On: the real boards and kubernetes/kubernetes are only read."
     : "Off: Apply and Accept write to the real boards and to kubernetes/kubernetes, as your token's owner.";
@@ -123,6 +124,12 @@ function showWrites(testMode: boolean): void {
 }
 
 const testMode = $<HTMLInputElement>("testMode");
+// Only a test build has test mode (shared/build.d.ts); a normal build lists where writes go, without the switch.
+if (__TEST_BUILD__) {
+  $<HTMLHeadingElement>("writesTitle").firstChild!.textContent = "Test mode ";
+  $<HTMLLabelElement>("testModeToggle").hidden = false;
+  $<HTMLLIElement>("testModePromise").hidden = false;
+}
 const provider = $<HTMLSelectElement>("jevProvider");
 
 /** Only the chosen provider's key and model are shown. */

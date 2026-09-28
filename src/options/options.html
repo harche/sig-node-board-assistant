@@ -125,6 +125,9 @@
         outline-offset: 1px;
         border-color: transparent;
       }
+      [hidden] {
+        display: none !important;
+      }
       .hint {
         color: var(--muted);
         font-size: 12.5px;
@@ -323,7 +326,7 @@
 
       <form id="form">
         <div class="group">
-          <h2>GitHub <small>reads the boards, writes where test mode allows</small></h2>
+          <h2>GitHub <small>reads the boards, writes when you click</small></h2>
           <div>
             <div>
               <label for="githubToken">Personal access token</label>
@@ -395,12 +398,12 @@
         </div>
 
         <div class="group">
-          <h2>Test mode <small>where writes go</small></h2>
+          <h2 id="writesTitle">Writes <small>where they go</small></h2>
           <div>
             <div>
-              <label class="toggle"
-                ><input id="testMode" type="checkbox" role="switch" checked /> Write only to the test boards
-                and repo</label
+              <label class="toggle" id="testModeToggle" hidden
+                ><input id="testMode" type="checkbox" role="switch" checked /> Test mode: write only to the
+                test boards and repo</label
               >
               <p class="hint" id="testModeHint"></p>
               <ul class="writes" id="writes"></ul>
@@ -461,7 +464,7 @@
               Status moves, TestGrid comments and issues</span
             >
           </li>
-          <li class="cannot">
+          <li class="cannot" id="testModePromise" hidden>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
               <path
                 d="M2.343 13.657A8 8 0 1 1 13.658 2.343 8 8 0 0 1 2.343 13.657ZM6.03 4.97a.75.75 0 0 0-1.06 1.06L6.94 8 4.97 9.97a.75.75 0 1 0 1.06 1.06L8 9.06l1.97 1.97a.75.75 0 1 0 1.06-1.06L9.06 8l1.97-1.97a.75.75 0 1 0-1.06-1.06L8 6.94Z"
