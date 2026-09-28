@@ -1,17 +1,7 @@
 # Contributing
 
-Thanks for helping keep the SIG Node boards tidy.
-
-## Ground rules
-
-- **Writes go through one door.** `item.apply` is the only write request, and the worker runs it only on
-  boards marked `writable` in `src/core/boards.ts` (today the private test board) and only for moves of that
-  item and comments the extension drafts. A new kind of write extends that allow-list and its tests; it does
-  not add a second path.
-- **Prompts and policy live here.** `tests/parity.test.ts` checks them against `tests/fixtures/parity.json`, a
-  frozen snapshot of the original CLI's outputs. An intended behaviour change updates the affected fixture
-  entries in the same commit and says why.
-- **No secrets in the repo.** Tokens live in the browser's extension storage only.
+Thanks for helping keep the SIG Node boards tidy. Issues and pull requests are welcome: bug reports, a verdict you
+think is wrong (with a link to the item), and new workflows.
 
 ## Setup
 
@@ -20,7 +10,8 @@ npm install
 npm run watch
 ```
 
-Load `dist/` as an unpacked extension in `chrome://extensions` and reload it after each rebuild.
+Load `dist/` as an unpacked extension in `chrome://extensions`, and reload it there after each rebuild. The
+extension's settings page takes a GitHub token and a Jev key (see the [README](README.md#configure)).
 
 ## Before opening a pull request
 
@@ -28,11 +19,34 @@ Load `dist/` as an unpacked extension in `chrome://extensions` and reload it aft
 npm run lint && npm run typecheck && npm test && npm run build
 ```
 
-CI runs the same. Keep commits focused; the first line of a commit message says what changed and why.
+CI runs the same. Keep commits focused, and let the first line of a commit message say what changed and why.
+
+## Ground rules
+
+- **Writes go through one door.** `item.apply` is the only write request. The worker runs it only where test mode
+  allows, only for a Status move of that item, and only for comments in the shapes the extension drafts
+  (`src/core/comments.ts`). A new kind of write extends that allow-list and its tests. It does not add a second path.
+- **Test writes on a test copy, never on a real board.** Each real board has a private copy registered in
+  `src/core/boards.ts` with `writable: true`, and test mode (on by default) keeps writes there. To test a workflow's
+  writes, make your own copy of the board (the project's "Make a copy"), point its auto-add rule at a repository of
+  your own, and register it the same way. Keep test mode on.
+- **Read-only features may be tried on real items.** The PR page's Failing CI and the issue page's checks only read,
+  so try them on real kubernetes/kubernetes pull requests and issues.
+- **Code computes, Jev decides, policy is code.** Facts that are cheap to get right (labels, dates, review state)
+  are computed. Jev answers calibrated questions about what needs reading. A policy function turns the answers into
+  an action with fixed thresholds. Tune a threshold on real history, and record the trial in
+  [docs/design.md](docs/design.md).
+- **Prompts and policy are pinned.** `tests/parity.test.ts` checks them against `tests/fixtures/parity.json`, a
+  frozen snapshot of the original CLI's outputs. An intended behaviour change updates the affected fixture entries
+  in the same commit and says why.
+- **No secrets in the repo.** Tokens and keys live in the browser's extension storage only.
 
 ## Adding a board or a workflow
 
-1. Add the board to `KNOWN_BOARDS` in `src/core/boards.ts` with the column each workflow decorates.
-2. Put the workflow's prompts in `src/core/prompts/` and its policy next to `policy.ts`.
-3. Add a message type for it in `src/shared/messages.ts` and a case in the background worker.
-4. Add unit tests for the workflow's signals and policy next to the existing ones.
+1. Add the board to `KNOWN_BOARDS` in `src/core/boards.ts`, with the column each workflow decorates, and a test copy
+   with `writable: true`.
+2. Put the workflow's prompts in `src/core/prompts/`, and its facts and policy in `src/core/`.
+3. Register the column's workflow in `src/content/workflows.ts`, and add its message type to
+   `src/shared/messages.ts` with a case in the background worker.
+4. Add unit tests for the workflow's facts and policy next to the existing ones.
+5. Describe it in [docs/workflows.md](docs/workflows.md), and its trial in [docs/design.md](docs/design.md).

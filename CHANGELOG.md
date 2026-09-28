@@ -2,82 +2,104 @@
 
 ## 0.1.0 (unreleased)
 
-First release. Reads and suggests on kubernetes/151, 185 and 95 and on TestGrid; writes only in test mode (the
-test boards and `harche/sig-node-board-test`).
+First release. It reads and suggests on kubernetes/151, 185 and 95, on TestGrid, and on kubernetes/kubernetes pull
+requests and issues. In test mode (the default) it writes only to the test boards and `harche/sig-node-board-test`.
 
-- Issues - To do: per-card suggestion to keep, move to In progress, close as fixed, ask the thread, close as
-  duplicate or archive, from the thread, linked PRs and TestGrid run history, with a fresh-fix guard and a
-  grouped duplicate pass. The reviewer can change the action (and a missing priority) on the hover card.
-- Issues - In progress: per assignee, active / wait / nudge / unassign / ask the thread, from plain facts and
-  Jev's reading of the thread and linked PRs; cards without an assignee go back to To do.
-- PRs - Needs Reviewer: plain rules, then Jev on whose move it is, who reviews, who declined, whether a hold is
-  met; re-pings after 14 quiet days; new reviewers found from review history and picked by Jev, asked with `/cc`.
-- PRs - Needs Approver: back to Needs Reviewer without lgtm, Waiting on Author when approved but failing; asked
-  approvers get 14 days; otherwise `/cc` approvers for the OWNERS files Prow still lists, ranked by recent approvals.
-- PRs Waiting on Author: Done, Archive (Triage's scope verdict), Needs Approver on lgtm, Needs Reviewer when the
-  author answered; nudge an author quiet 30+ days, wait on a check-in, then leave it to the lifecycle bot.
-- SIG Node Bugs (kubernetes/185) Triage: accept at a priority into Triaged or High Priority, ask for information,
-  close support requests, relabel features, hand over to another SIG, add `/wg device-management` to DRA reports;
-  cards with a triage label already set are only moved. Test copy at harche/6.
-- SIG Node Bugs Needs Information: accept a card whose request was answered, remind a reporter quiet 20+ days once and
-  then leave the issue to the lifecycle bot, move cards whose labels already decided.
-- SIG Node Bugs Triaged and High Priority: close fixed bugs and duplicates, nudge and unassign quiet self-assigned
-  assignees, add a missing priority and move a card to its priority's column, flag High Priority cards with nobody
-  assigned. The lifecycle bot's work (stale, rotten, closing quiet issues) is left to it in every column.
-- Dynamic Resource Allocation (kubernetes/95) New: PRs to In review, In progress (drafts) or Done by their state,
-  closed issues to Done, open issues to In progress, Ready or Backlog by Jev's pick, following the board's record of
-  485 moves; only a Status move. Test copy at harche/7.
-- Dynamic Resource Allocation Backlog: closed items to Done, PRs by their state, KEPs opted into the release in
-  development (milestone and `lead-opted-in`) to In progress; other issues stay unless you pick a move.
-- Dynamic Resource Allocation Ready: closed items to Done, PRs by their state, KEPs in the release to In progress,
-  and issues Jev reads as under way suggested for In progress as your call.
-- Dynamic Resource Allocation In progress: closed items to Done, PRs ready for review to In review, KEPs no longer in
-  the release to Backlog; everything else stays. No Jev question: state decides.
-- Dynamic Resource Allocation In review: merged or closed PRs to Done, drafts and issues to In progress; open PRs
-  stay. No Jev question.
-- Failing CI on a pull request's page: for each failed Prow job, whether the PR broke it, a flake or infra, from the
-  run's junit and log, the job's runs on this PR, the same tests' record on other PRs (TestGrid's presubmit tabs) and
-  Jev's file-by-file reading of the PR's diff (naming the changed file likely to cause a PR-caused failure), with any flake issue that tracks it and the `/retest` or `/test` command to copy. Read-only.
-- CI history and duplicates on a SIG Node or DRA issue's page: whether the failure it reports still happens (run
-  history, the newest failure and whether it is still the issue's, Jev's resolved read, the fresh-fix guard; a closed
-  issue failing again), and duplicates and concretely related issues, current and past: six searches (keyword,
-  semantic, hybrid, exact error strings, the thread's links), each candidate read by Jev with both threads, a
-  duplicate shown only when one could be closed in favour of the other. Read-only.
-- TestGrid review on testgrid.k8s.io: per failing or flaky periodic job, what fails (from junit and build-log signal
-  lines), whether an issue tracks it, and a comment or a new issue drafted from the k/k templates; writes go to the
-  test repo while it is tried out. The card also names issues that may cause the failure or are its umbrella,
-  found by the failure's own words and confirmed by a second question.
-- Hover cards and panes show every answer Jev gave as bars in one aligned grid (a probability per row, a row per
-  option for a choice or a priority); the cards share their parts (`src/content/hcparts.ts`).
-- Asks include comments Jev reads as asking someone to review or approve.
-- Broken Prow commands in any column: flagged by code, read by Jev, fixed on Apply / Accept.
-- The header's Accept applies every suggestion, comments included, in every column.
-- Board columns are workflows (`src/content/workflows.ts`): Triage and Issues - To do share the column
-  button, badges, tints, hover card, Accept, Cancel and Skip.
-- Apply / Accept on boards marked writable (the test board), checked against an allow-list in the worker.
-- Triage: Jev picks the priority, editable on the hover card; removals get no priority and no Accept.
+### SIG Node CI/Test board (kubernetes/151)
 
-- Badge on every card in the Triage column of kubernetes/151: keep, remove, borderline.
-- Evidence section inside GitHub's own sidebar: the project pane for issues, the PR page for pull requests.
-  Verdict band, Jev's answers, the code-computed signals and the accept / archive alternatives with their
-  `gh` commands.
-- `npm run judge` runs the same core from the terminal against the live board, for development.
-- Settings page for the GitHub token and TypeSafe key, with connection tests and a cache reset.
-- Parity test suite against a frozen snapshot of the Python CLI's outputs (signals, state, prompts, policy,
-  commands). No Python needed to build, test or run.
-- GitHub calls go through Octokit.js (pagination via Link headers, REST API version `2026-03-10`); Jev calls go
-  through the TypeSafe SDK (`@typesafe-ai/sdk`). Neither caps how many calls are in flight: a rate limit is waited
-  out with backoff (Retry-After or GitHub's reset when given, else 2s doubling to 60s with jitter; up to 8 tries),
-  and the service worker is kept alive meanwhile. Other failures retry briefly: GitHub a 5xx it answered to a read,
-  Jev a 5xx, timeout or connection failure; never a GitHub network failure.
-- Policy: a confident "another SIG owns it" answer turns a KEEP into BORDERLINE (the CLI had dropped this).
-- State: every human `/sig` or `/area` routing comment is sent to Jev as `human_routing`, not only those in
-  the last-10 comment window.
-- Settings page: a Test mode toggle, on by default. On, writes go only to the test boards and
-  `harche/sig-node-board-test`; off, Apply and Accept also write to the real boards, and TestGrid comments and
-  issues go to kubernetes/kubernetes and kubernetes/test-infra, labelled through Prow (`/sig node`, `/kind flake`) and never filed twice for the same title. The worker checks it on every write, and the page
-  lists where writes go in each mode. The page also describes every board and TestGrid, and which token reads the
-  real boards and which writes the test boards.
-- TestGrid mirror issues name the real issue in backticks, so a public test repo would not show on its timeline.
-- Jev through OpenRouter as well as TypeSafe: the settings page picks the provider and holds a key and model for
-  each. OpenRouter serves the same model on its System One endpoint and reports each call's cost.
+- **Triage:** keep, remove or borderline, from Jev's scope, kind-of-work, owner and urgency answers. Jev picks the
+  priority, which is editable on the hover card. A confident "another SIG owns it" turns a keep into borderline.
+- **Issues - To do:** keep, move to In progress, close as fixed, ask the thread, close as duplicate, or archive. It
+  reads the thread, the linked PRs and the TestGrid run history. A fresh-fix guard holds a close, and duplicates are
+  handled in grouped passes.
+- **Issues - In progress:** for each assignee, active, wait, nudge, unassign or ask the thread. Cards with no assignee
+  go back to To do.
+- **PRs - Needs Reviewer:** plain rules, then Jev on whose move it is, who reviews, who declined, and whether a hold is
+  met. It re-pings after 14 quiet days, and picks new reviewers from review history and Jev, asked with `/cc`.
+- **PRs - Needs Approver:** back to Needs Reviewer without `lgtm`, and to Waiting on Author when approved but
+  failing. Approvers already asked get 14 days. Otherwise it `/cc`s approvers for the OWNERS files Prow still lists,
+  ranked by recent approvals.
+- **PRs Waiting on Author:** Done, Archive, Needs Approver on `lgtm`, or Needs Reviewer when the author answered. An
+  author quiet for 30+ days is nudged once.
+
+### SIG Node Bugs board (kubernetes/185)
+
+- **Triage:**
+  - accept at a priority into Triaged or High Priority;
+  - ask for information;
+  - close support requests;
+  - relabel features;
+  - hand over to another SIG;
+  - add `/wg device-management` to DRA reports.
+- **Needs Information:** accept a card whose request was answered. Remind a reporter quiet for 20+ days once, then
+  leave the issue to the lifecycle bot.
+- **Triaged and High Priority:**
+  - close fixed bugs and duplicates;
+  - nudge and unassign quiet self-assigned assignees;
+  - add a missing priority and move the card to that priority's column;
+  - flag High Priority cards with nobody assigned.
+
+### Dynamic Resource Allocation board (kubernetes/95)
+
+- **New, Backlog, Ready, In progress and In review:** closed items go to Done and PRs follow their state. KEPs follow
+  the release (milestone and `lead-opted-in`). Open issues get Jev's pick where the board's record supports one. The
+  only change is a Status move, following the board's record of 485 moves.
+
+### Every column
+
+- Broken Prow commands are flagged by code, read by Jev, and fixed on Apply or Accept.
+- The lifecycle bot's work (stale, rotten, closing quiet items) is left to it.
+- The header's Accept applies every suggestion in the column, comments included.
+- Hover cards and panes show every answer Jev gave as bars in one aligned grid.
+
+### TestGrid
+
+- A review on testgrid.k8s.io, for each failing or flaky periodic job:
+  - what fails, from junit and the build log's signal lines;
+  - whether an issue tracks it;
+  - a comment or a new issue drafted from the kubernetes/kubernetes templates.
+- The card also names issues that may cause the failure or are its umbrella, confirmed by a second question.
+- In test mode, comments for a kubernetes/kubernetes issue go on a `[mirror]` issue in the test repository. The
+  mirror names the real issue in backticks, so the real issue's timeline never shows it.
+
+### Pull request and issue pages
+
+- **Failing CI on a pull request:** for each failed Prow job, whether the PR broke it, or it is a flake or infra. It
+  reads:
+  - the run's junit and log;
+  - the job's runs on this PR;
+  - the same tests' record on other PRs;
+  - Jev's file-by-file reading of the diff.
+
+  A PR-caused failure links the likeliest changed file. The section shows the `/retest` or `/test` command to copy.
+  Read-only.
+
+- **CI history and duplicates on an issue:** whether the failure it reports still happens, with the fresh-fix guard
+  and a closed issue failing again. It also finds duplicates and concretely related issues, current and past, from
+  six searches, each candidate read by Jev with both threads. Read-only.
+- The board's verdict appears as a section in the issue or PR sidebar.
+- On these pages nothing asks Jev until you click Judge, Check failures or Check. The same button then reads Judge
+  again / Check again.
+
+### Settings, keys and writes
+
+- **Two Jev providers:** TypeSafe and OpenRouter, each with its own key and model. OpenRouter reports each call's
+  cost.
+- **Test mode**, on by default. The settings page lists where writes go in each mode. Off, Apply and Accept write to
+  the real boards, and TestGrid's comments and issues go to kubernetes/kubernetes and kubernetes/test-infra.
+- **An allow-list guards every write:** Status moves of the one item, and only the comment shapes the extension
+  drafts.
+- **Keys are kept from web pages:**
+  - the extension's storage is closed to the scripts it runs on GitHub and TestGrid;
+  - those scripts get settings with the keys blanked;
+  - only the settings page can change settings or test mode;
+  - Save waits until the stored settings are loaded.
+
+### Under the hood
+
+- GitHub calls go through Octokit.js (REST API version `2026-03-10`), and Jev calls through the TypeSafe SDK.
+- A rate limit is waited out with backoff, and the service worker is kept alive meanwhile. Other failures retry
+  briefly.
+- A parity test suite checks the logic against a frozen snapshot of the original Python CLI's outputs. No Python is
+  needed to build, test or run.
+- `npm run judge` runs the same core from the terminal against a live board, read-only.

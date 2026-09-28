@@ -1,36 +1,70 @@
 # Design
 
+What the extension does in each place is in [workflows.md](workflows.md). This document is about why: the
+architecture, the split between code and Jev, and the trials behind each policy.
+
 ## The shape
 
 ```
-GitHub Projects board page                 issue / PR page
- └─ content script (board)                  └─ content script (item)
-     Tackle, badge, tint, hover card            is this item in a judged column?
-     per card of a workflow column              evidence section in the page sidebar
-     evidence section in GitHub's item pane
-      │  typed messages (reads; one checked write request, item.apply)
- └─ background worker       tokens, cache, GitHub REST, Jev, TestGrid; the write allow-list
-      └─ src/core           pure functions: signals, state, prompts, policy, testgrid, triage, todo
+ board page             issue / PR page          TestGrid dashboard       settings page
+ └ content script       └ content script         └ content script         └ extension page
+   Tackle, badges,        board section,           Tackle, badges,          keys, provider,
+   hover card, pane       Failing CI, CI           hover card               test mode
+   section                history, duplicates
+        │                      │                        │                        │
+        └──────── typed messages: reads, and one checked write request ──────────┘
+                                         │
+ background worker   keys, cache, every network call (GitHub, Jev, TestGrid, GCS), the write allow-list
+        │
+ src/core            pure functions: signals, state, prompts, policies; no browser APIs
 ```
 
-There is little UI of our own: the column's Tackle / Accept / Cancel buttons, a badge per card, a hover card
-and a status pill, all drawn with GitHub's own button classes and Primer colours. The evidence is one more section in the
-sidebar GitHub already shows: the project pane for issues, the PR page for pull requests (GitHub has no PR
-pane; a PR card opens a new tab). `src/content/adapters.ts` builds that section from the host page's own
-markup: in the React pane it clones GitHub's "Fields" section header and field row and swaps the text, on the
-classic PR page it uses `discussion-sidebar-item` and `discussion-sidebar-heading`. Colours and fonts are
-Primer CSS variables, so the block follows the page's theme without a stylesheet of its own.
+There is little UI of our own: the column's Tackle / Accept / Cancel buttons, a badge per card, a hover card and a
+status pill, all drawn with GitHub's own button classes and Primer colours. The evidence is one more section in the
+sidebar GitHub already shows: the project pane for issues, the PR page for pull requests (GitHub has no PR pane; a PR
+card opens a new tab). `src/content/adapters.ts` builds that section from the host page's own markup: in the React
+pane it clones GitHub's "Fields" section header and field row and swaps the text, on the classic PR page it uses
+`discussion-sidebar-item` and `discussion-sidebar-heading`. Colours and fonts are Primer CSS variables, so the block
+follows the page's theme without a stylesheet of its own. On TestGrid the same parts take TestGrid's look: its
+buttons, panel colours and status colours.
 
-The content script owns nothing but DOM. It knows the board from the URL, finds cards by
-`data-board-card-id` (the project item's REST id) inside `data-board-column="<column>"` for each column that
-has a workflow (`src/content/workflows.ts`: Triage, Issues - To do), and asks the background worker for the
-column's items and each item's verdict. GitHub's board is a React app with hashed
-class names; those two data attributes are the only DOM contract, kept in `src/content/dom.ts`.
+The board's content script owns nothing but DOM. It knows the board from the URL, finds cards by
+`data-board-card-id` (the project item's REST id) inside `data-board-column="<column>"` for each column that has a
+workflow (`src/content/workflows.ts`), and asks the background worker for the column's items and each item's verdict.
+GitHub's board is a React app with hashed class names; those two data attributes are the only DOM contract, kept in
+`src/content/dom.ts`.
 
-The background worker holds the tokens and makes every network call. The content script never sees a
-token. `chrome.storage.local` is the cache (10 minutes for a column, 30 for an item, forever for a Jev
-answer, the same TTLs as the CLI). TestGrid tables stay in the worker's memory for 30 minutes instead: they are
-tens of KB each, and overflowing storage's 10 MB quota would clear the whole cache.
+On issue and PR pages nothing asks Jev until the reader clicks. Each section first offers its check with a button in
+GitHub's own style (Judge, Check failures, Check), which reads Judge again / Check again once it has run and then
+bypasses the cache. Reading the page is free (a PR's checks, an issue's labels); Jev is not, and most visits do not
+need it.
+
+The background worker holds the keys and makes every network call. `chrome.storage.local` is the cache (10 minutes
+for a column, 30 for an item, forever for a Jev answer, the same TTLs as the CLI). TestGrid tables stay in the
+worker's memory for 30 minutes instead: they are tens of KB each, and overflowing storage's 10 MB quota would clear
+the whole cache.
+
+## Keys and settings
+
+Content scripts run inside github.com and testgrid.k8s.io, so they are treated as the least trusted part of the
+extension:
+
+- `chrome.storage.local` is set to `TRUSTED_CONTEXTS`: content scripts cannot read storage at all, so a bug in one
+  cannot leak the token or the Jev key.
+- The worker answers a content script's `settings.get` with the keys blanked; it only needs to know whether they are
+  set.
+- `settings.set`, `settings.test` and `cache.clear` are refused unless the sender is an extension page
+  (`sender.url` under the extension's own origin), so only the settings page can change the keys or turn test mode
+  off.
+- The settings page keeps Save disabled until the stored settings are in the form: saving the form's blanks would
+  otherwise erase the keys, and test mode is checked in the HTML so an early save can never turn it off.
+- The keys go to `api.github.com` and the chosen Jev provider only, never into a URL.
+
+## Jev providers
+
+Jev is reached through the TypeSafe SDK's `systemOne` call, against either TypeSafe's API or OpenRouter's System One
+endpoint (`https://openrouter.ai/api`, model `~typesafe/jev-latest`), which takes the same request and reports each
+call's cost. The Jev answer cache is keyed by state and questions, not by provider, so switching keeps it.
 
 ## Jev decides, code computes
 
@@ -373,16 +407,19 @@ chooses among the nearby real commands or "not a command". On 60 open 151 thread
 
 ## Writes
 
-The CLI proposes, the human approves, then the CLI executes from an allow-list. The extension does the same:
-the hover card shows the action with its exact comment and move, and nothing is written until the reviewer
-clicks Apply (one card) or Accept (the column's suggestions). Writes go through one message, `item.apply`, and
-the worker refuses it unless the board is marked `writable` (today only the private test copy of 151), every
-move names that one project item, and every comment is on that item's issue and is one the extension drafts:
-Triage's `/triage accepted` + `/priority`, To do's label fix, close-as-fixed, close-as-duplicate and
-check-in comments, In progress's nudge, `/unassign @x` and check-in comments, or Needs Reviewer's `/cc` (up to three people, one
-reason line each) and re-pings, or a Prow-command fix (routing, labels, `/assign`, `/cc` only) (`src/core/comments.ts`), and no
-other Prow command. The header's Accept applies every suggestion in its column, comments included: clicking it
-means the reviewer has read the cards and agrees.
+The CLI proposes, the human approves, then the CLI executes from an allow-list. The extension does the same: the hover
+card shows the action with its exact comment and move, and nothing is written until the reviewer clicks Apply (one
+card) or Accept (the column's suggestions). Writes go through one message, `item.apply`, and the worker refuses it
+unless:
+
+- test mode is off, or the board is marked `writable` in `src/core/boards.ts` (the private test copies);
+- every move names that one project item;
+- every comment is on that item's issue and is a shape the extension drafts (`src/core/comments.ts`), with no other
+  Prow command and no @-mention beyond the one person a nudge or unassign is for.
+
+TestGrid's writes (new issues, comments) go to the test repository in test mode, where a comment for a
+kubernetes/kubernetes issue lands on its `[mirror]` issue. The header's Accept applies every suggestion in its
+column, comments included: clicking it means the reviewer has read the cards and agrees.
 
 ## Parity with the reference
 

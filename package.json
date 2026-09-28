@@ -2,7 +2,7 @@
   "name": "sig-node-board-assistant",
   "version": "0.1.0",
   "private": true,
-  "description": "Chrome extension: Jev-judged triage hints on the SIG Node GitHub project boards. Read-only.",
+  "description": "Chrome extension: Jev-judged suggestions for the SIG Node GitHub project boards, TestGrid dashboards, and pull request and issue pages.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
