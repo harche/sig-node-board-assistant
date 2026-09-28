@@ -199,6 +199,11 @@ async function bugDuplicates(
 
 const store = new ChromeLocalStore();
 const cache = new Cache(store);
+// The keys and the cache are for the worker and the settings page only: content scripts, which run inside web
+// pages, cannot read chrome.storage.local (they ask the worker, which never hands them the keys).
+chrome.storage.local
+  .setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
+  .catch((e: unknown) => console.error("could not keep chrome.storage.local from content scripts:", e));
 /** TestGrid tables are tens of KB each and only good for 30 minutes: kept in the worker's memory, never in
  *  chrome.storage.local, whose 10 MB quota (overflow clears the whole cache, Jev answers too) they would eat. */
 const tgCache = new Cache(new MemoryStore());
@@ -212,13 +217,19 @@ async function clients() {
   return { gh, jev, settings: s };
 }
 
-async function handle<R extends Request>(req: R): Promise<ResponseMap[R["type"]]> {
+/** Messages only the extension's own pages (the settings page) may send: they read the keys or change settings
+ *  (test mode among them). Content scripts run inside github.com and testgrid.k8s.io pages. */
+const TRUSTED_ONLY = new Set<Request["type"]>(["settings.set", "settings.test", "cache.clear"]);
+
+async function handle<R extends Request>(req: R, trusted: boolean): Promise<ResponseMap[R["type"]]> {
   type Out = ResponseMap[R["type"]];
+  if (!trusted && TRUSTED_ONLY.has(req.type)) throw new Error(`${req.type} is only for the settings page`);
   switch (req.type) {
     case "settings.get": {
       const s = await loadSettings();
       return {
-        settings: s,
+        // A content script learns whether keys are set (configured), never the keys.
+        settings: trusted ? s : { ...s, githubToken: "", typesafeApiKey: "", openrouterApiKey: "" },
         configured: { github: Boolean(s.githubToken), jev: Boolean(jevSettings(s).apiKey) },
       } as Out;
     }
@@ -689,14 +700,14 @@ function track<T>(p: Promise<T>): Promise<T> {
   });
 }
 
-chrome.runtime.onMessage.addListener(
-  (req: Request, _sender, sendResponse: (e: Envelope<unknown>) => void) => {
-    track(handle(req))
-      .then((value) => sendResponse({ ok: true, value }))
-      .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
-    return true; // async response
-  },
-);
+chrome.runtime.onMessage.addListener((req: Request, sender, sendResponse: (e: Envelope<unknown>) => void) => {
+  // The extension's own pages are served from its origin; content scripts report the web page's URL.
+  const trusted = sender.id === chrome.runtime.id && (sender.url ?? "").startsWith(chrome.runtime.getURL(""));
+  track(handle(req, trusted))
+    .then((value) => sendResponse({ ok: true, value }))
+    .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+  return true; // async response
+});
 
 chrome.action.onClicked.addListener(() => {
   void chrome.runtime.openOptionsPage();

@@ -30,9 +30,17 @@ async function load(): Promise<void> {
   showProvider();
   testMode.checked = settings.testMode;
   showWrites(settings.testMode);
+  // Saving before the stored settings are in the form would write the form's blanks over them (the keys, and test
+  // mode, which is on in the HTML so an early save can never turn it off).
+  loaded = true;
+  $<HTMLButtonElement>("save").disabled = false;
+  $<HTMLButtonElement>("test").disabled = false;
 }
 
+let loaded = false;
+
 async function save(): Promise<void> {
+  if (!loaded) throw new Error("Settings are still loading.");
   const patch: Partial<Settings> = {};
   for (const f of FIELDS) patch[f] = $<HTMLInputElement>(f).value.trim();
   patch.jevProvider = provider.value === "openrouter" ? "openrouter" : "typesafe";
@@ -49,6 +57,7 @@ $<HTMLFormElement>("form").addEventListener("submit", (e) => {
 
 $<HTMLButtonElement>("test").addEventListener("click", async () => {
   const btn = $<HTMLButtonElement>("test");
+  if (!loaded) return;
   btn.disabled = true;
   say("Testing…");
   check("githubCheck", null, "");
@@ -124,4 +133,10 @@ function showProvider(): void {
 provider.addEventListener("change", showProvider);
 testMode.addEventListener("change", () => showWrites(testMode.checked));
 
-void load();
+// Save stays disabled until the settings are in the form; if they cannot be read, say so rather than leave it dead.
+void load().catch((e: unknown) =>
+  say(
+    `Couldn't read the saved settings (${e instanceof Error ? e.message : String(e)}): reload this page.`,
+    "bad",
+  ),
+);

@@ -399,8 +399,8 @@
           <div>
             <div>
               <label class="toggle"
-                ><input id="testMode" type="checkbox" role="switch" /> Write only to the test boards and
-                repo</label
+                ><input id="testMode" type="checkbox" role="switch" checked /> Write only to the test boards
+                and repo</label
               >
               <p class="hint" id="testModeHint"></p>
               <ul class="writes" id="writes"></ul>
@@ -409,8 +409,8 @@
         </div>
 
         <div class="actions">
-          <button type="submit" class="primary" id="save">Save</button>
-          <button type="button" id="test">Save and test</button>
+          <button type="submit" class="primary" id="save" disabled>Save</button>
+          <button type="button" id="test" disabled>Save and test</button>
           <span class="status" id="status"></span>
           <button type="button" class="quiet" id="clear" title="Forget cached board data and Jev answers">
             Clear cache

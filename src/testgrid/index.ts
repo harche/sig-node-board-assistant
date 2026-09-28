@@ -42,11 +42,13 @@ class TestGridReview {
     const s = await send({ type: "settings.get" });
     this.configured = s.configured;
     this.testMode = s.settings.testMode;
-    // The toggle can change while this page is open; the worker checks it on every write, the card's wording follows.
-    chrome.storage.onChanged.addListener((ch) => {
-      const next = (ch.settings?.newValue as { testMode?: boolean } | undefined)?.testMode;
-      if (next !== undefined) this.testMode = next;
+    // The toggle can change while this page is open (on the settings page, in another tab or a window beside this
+    // one): read again on coming back to the tab or the window, and before each run and write. The worker checks it
+    // on every write; this keeps the card's wording right.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void this.readSettings();
     });
+    window.addEventListener("focus", () => void this.readSettings());
     this.runBtn.addEventListener("click", () => void this.run());
     this.acceptBtn.addEventListener("click", () => void this.accept());
     this.acceptBtn.hidden = true;
@@ -121,7 +123,15 @@ class TestGridReview {
     return this.tabs.find((t) => this.ids.get(t.tab) === id);
   }
 
+  private async readSettings(): Promise<void> {
+    const s = await send({ type: "settings.get" }).catch(() => null);
+    if (!s) return;
+    this.configured = s.configured;
+    this.testMode = s.settings.testMode;
+  }
+
   private async run(): Promise<void> {
+    await this.readSettings();
     if (!this.configured.github || !this.configured.jev) {
       void send({ type: "options.open" });
       return;
@@ -175,6 +185,7 @@ class TestGridReview {
     const plan = this.plan();
     if (this.applying || !plan.length) return;
     this.applying = true;
+    await this.readSettings();
     this.paintBar();
     for (const p of plan) await this.apply(p.id);
     this.applying = false;
@@ -186,6 +197,7 @@ class TestGridReview {
     if (s?.state !== "done" || this.applied.get(id)?.state === "pending") return;
     const steps = chosenTgSteps(s.result, this.overrides.get(id) ?? {});
     if (!steps.length) return;
+    if (!this.applying) await this.readSettings();
     this.applied.set(id, { state: "pending" });
     this.paint(id);
     this.hover.refresh(id);
