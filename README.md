@@ -161,6 +161,8 @@ The settings page needs two credentials:
 - **Sent only where they are used:** `api.github.com`, and the Jev provider you picked (`api.typesafe.ai` or
   `openrouter.ai`). TestGrid is read without credentials.
 
+The [privacy policy](docs/privacy.md) lists everything the extension stores and sends.
+
 ## Documentation
 
 | Document                               | What it covers                                                |
@@ -169,6 +171,7 @@ The settings page needs two credentials:
 | [docs/design.md](docs/design.md)       | the architecture, the policies and the trials behind them     |
 | [CONTRIBUTING.md](CONTRIBUTING.md)     | setup, checks, and how to add a board or a workflow           |
 | [CHANGELOG.md](CHANGELOG.md)           | what changed in each release                                  |
+| [docs/privacy.md](docs/privacy.md)     | what the extension stores and sends, and where                |
 
 ## Development
 
