@@ -48,6 +48,8 @@ export class IssueCheck {
   private dups: Part<RelatedResult | null> = { state: "idle" };
   private version = 0;
   private rendered = "";
+  /** How many sections the last render placed: GitHub can redraw its sidebar and drop one of them. */
+  private placed = 0;
   private runs = 0;
   /** Whether the issue is SIG Node's or DRA's: only then is the check offered. */
   private scope = false;
@@ -110,7 +112,8 @@ export class IssueCheck {
     const side = findSidebar(document);
     const key = `${this.repo}#${this.number}:${this.version}`;
     const have = [...document.querySelectorAll<HTMLElement>(".snba-issuecheck")];
-    if (this.rendered === key && have.length && have.every((e) => side?.el.contains(e))) return;
+    if (this.rendered === key && have.length === this.placed && have.every((e) => side?.el.contains(e)))
+      return;
     have.forEach((e) => e.remove());
     if (!side) return;
     this.rendered = key;
@@ -123,6 +126,7 @@ export class IssueCheck {
       const start = this.startSection(side.adapter);
       if (start) out.push(start);
     }
+    this.placed = out.length;
     if (!out.length) return;
     // After the board's evidence section when there is one, else where it would go.
     let after = side.el.querySelector(".snba-evidence");
@@ -135,6 +139,12 @@ export class IssueCheck {
   }
 
   private ciSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
+    // Duplicates can come back first (from the cache): say the CI history is still coming.
+    if (this.busy && this.ci.state === "idle" && this.dups.state !== "idle") {
+      const { root, body } = adapter.section("CI history");
+      body.append(h("p.snba-muted", {}, "Reading the run history…"));
+      return root;
+    }
     if (this.ci.state === "idle" || (this.ci.state === "done" && !this.ci.result)) return null;
     if (this.ci.state === "error") {
       const { root, body } = adapter.section("CI history");
