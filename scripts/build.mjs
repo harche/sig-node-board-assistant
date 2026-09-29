@@ -3,7 +3,7 @@
 // `--test` (or SNBA_TEST=1) makes a test build: test mode, the private test boards and the test repo are compiled in
 // (src/shared/build.d.ts). Without it they are left out of the bundle.
 import * as esbuild from "esbuild";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 const watch = process.argv.includes("--watch");
 const test = process.argv.includes("--test") || process.env.SNBA_TEST === "1";
@@ -42,6 +42,19 @@ await mkdir(outdir, { recursive: true });
 await cp("public", outdir, { recursive: true });
 await cp("src/content/content.css", `${outdir}/content.css`);
 await cp("src/options/options.html", `${outdir}/options.html`);
+
+// A test build also runs on the private test boards and test repo (CLAUDE.md), which normal builds leave out.
+if (test) {
+  const path = `${outdir}/manifest.json`;
+  const manifest = JSON.parse(await readFile(path, "utf8"));
+  const [board, item] = manifest.content_scripts;
+  board.matches.push("https://github.com/users/harche/projects/*");
+  item.matches.push(
+    "https://github.com/harche/sig-node-board-test/pull/*",
+    "https://github.com/harche/sig-node-board-test/issues/*",
+  );
+  await writeFile(path, JSON.stringify(manifest, null, 2) + "\n");
+}
 
 if (test) console.info("test build: test mode and the test boards are included");
 if (watch) {

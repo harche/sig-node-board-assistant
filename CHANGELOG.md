@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 (unreleased)
+
+- **Runs only where it works:** the board script loads only on kubernetes org boards, and the issue and pull request
+  script only on kubernetes and kubernetes-sigs repositories, instead of on every GitHub board, issue and pull request.
+
 ## 0.1.0 (unreleased)
 
 First release. It reads and suggests on kubernetes/151, 185 and 95, on TestGrid, and on kubernetes/kubernetes pull

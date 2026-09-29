@@ -331,7 +331,7 @@
             <div>
               <label for="githubToken">Personal access token</label>
               <input id="githubToken" type="password" autocomplete="off" spellcheck="false" />
-              <p class="hint">
+              <p class="hint" id="githubTokenHint">
                 Create one at
                 <a
                   href="https://github.com/settings/personal-access-tokens/new"
@@ -339,10 +339,8 @@
                   rel="noopener"
                   >github.com/settings/personal-access-tokens</a
                 >. A fine-grained token has one resource owner: <b>kubernetes</b> (organization permission
-                <b>Projects: read</b>, public repositories) reads the real boards;
-                <b>harche</b> (<b>Projects</b>, and <b>Issues</b> and <b>Pull requests</b> on
-                sig-node-board-test, read and write) reads and writes the test boards. A classic token with
-                the <b>repo</b> and <b>project</b> scopes works on both.
+                <b>Projects: read</b>, public repositories) reads the boards. A classic token with the
+                <b>repo</b> and <b>project</b> scopes works too.
               </p>
               <div class="check" id="githubCheck"></div>
             </div>

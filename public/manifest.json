@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SIG Node Board Assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Jev-judged suggestions for the SIG Node GitHub project boards and TestGrid dashboards, with the evidence behind each.",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],
@@ -18,13 +18,18 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://github.com/orgs/*/projects/*", "https://github.com/users/*/projects/*"],
+      "matches": ["https://github.com/orgs/kubernetes/projects/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://github.com/*/*/pull/*", "https://github.com/*/*/issues/*"],
+      "matches": [
+        "https://github.com/kubernetes/*/pull/*",
+        "https://github.com/kubernetes/*/issues/*",
+        "https://github.com/kubernetes-sigs/*/pull/*",
+        "https://github.com/kubernetes-sigs/*/issues/*"
+      ],
       "js": ["item.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

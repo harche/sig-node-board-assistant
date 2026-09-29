@@ -129,6 +129,10 @@ if (__TEST_BUILD__) {
   $<HTMLHeadingElement>("writesTitle").firstChild!.textContent = "Test mode ";
   $<HTMLLabelElement>("testModeToggle").hidden = false;
   $<HTMLLIElement>("testModePromise").hidden = false;
+  $<HTMLParagraphElement>("githubTokenHint").append(
+    " The test boards need a fine-grained token with resource owner harche (Projects, and Issues and Pull requests " +
+      "on sig-node-board-test, read and write), or the classic token.",
+  );
 }
 const provider = $<HTMLSelectElement>("jevProvider");
 

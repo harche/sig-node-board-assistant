@@ -10,9 +10,11 @@ boards", they mean this:
   Releases are always normal builds.
 - **How it works:** `scripts/build.mjs --test` (or `SNBA_TEST=1`) sets the global `__TEST_BUILD__`
   (`src/shared/build.d.ts`) to `true`. It gates `TEST_BOARDS` in `src/core/boards.ts`, `TG_TEST_REPO` in
-  `src/core/tgreview.ts`, the Test mode switch on the settings page, and `Settings.testMode`. In a normal build esbuild
-  drops all of it (check with `grep harche dist/*.js`: no hits), and `loadSettings` forces `testMode` off, so a value
-  saved by a test build never steers a normal build's writes. Vitest runs as a test build (`vitest.config.ts`).
+  `src/core/tgreview.ts`, the Test mode switch and the test-token hint on the settings page, and `Settings.testMode`.
+  `scripts/build.mjs --test` also adds the test boards and test repo to the manifest's content-script matches. In a
+  normal build esbuild drops all of it (check with `grep -r harche dist`: no hits; `npm run zip` refuses a build that
+  has any), and `loadSettings` forces `testMode` off, so a value saved by a test build never steers a normal build's
+  writes. Vitest runs as a test build (`vitest.config.ts`).
 - **The switch:** in a test build, test mode starts on (settings page, `Settings.testMode`). On, Apply and Accept write
   only to the test copies below, and TestGrid writes only to `harche/sig-node-board-test`. Off, they write to the real
   boards and kubernetes/kubernetes. Keep it on in every browser profile used for testing, and never turn it off unless

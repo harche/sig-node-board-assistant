@@ -9,7 +9,7 @@ if (manifest.version !== version) {
   throw new Error(`manifest version ${manifest.version} does not match package.json ${version}`);
 }
 const leaked = readdirSync("dist").filter(
-  (f) => f.endsWith(".js") && readFileSync(`dist/${f}`, "utf8").includes("harche"),
+  (f) => /\.(js|json|html)$/.test(f) && readFileSync(`dist/${f}`, "utf8").includes("harche"),
 );
 if (leaked.length > 0) throw new Error(`dist/ is a test build (${leaked.join(", ")}): run a normal build`);
 const out = `sig-node-board-assistant-${version}.zip`;
