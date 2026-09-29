@@ -35,7 +35,7 @@ SAFE BY DEFAULT
 Nothing is written until you click, and you see the exact comment or move first. The PR and issue checks never write: they only show a command for you to post.
 
 WHAT YOU NEED
-A GitHub personal access token, and a key for Jev from TypeSafe (typesafe.ai) or OpenRouter (openrouter.ai). Judging a card costs about $0.0002.
+A GitHub personal access token, and a key for Jev from TypeSafe (typesafe.ai) or OpenRouter (openrouter.ai). Judging a card costs about $0.0002. Setup guide: https://github.com/harche/sig-node-board-assistant#configure
 
 PRIVACY
 There is no backend. Your token and key stay in your browser's local extension storage. The extension talks only to GitHub, your chosen Jev provider, and TestGrid's public data.
@@ -56,7 +56,8 @@ Open source (Apache-2.0): https://github.com/harche/sig-node-board-assistant
     extension sends it the item's text and gets back the probabilities behind each suggestion.
   - `testgrid.k8s.io`, `storage.googleapis.com`: read the public Kubernetes CI results (TestGrid summaries, junit
     files and build logs) that the TestGrid review and CI history are built from.
-  - Content scripts on `github.com` project boards, issue and pull request pages, and `testgrid.k8s.io`: add the
+  - Content scripts on kubernetes org project boards, issue and pull request pages in `kubernetes` and
+    `kubernetes-sigs` repositories, and `testgrid.k8s.io`: add the
     suggestions, the Tackle and Check failures buttons and the sidebar sections to those pages. On an issue or PR page,
     nothing is sent to Jev until the user clicks Check.
 - **Remote code:** No. All code is in the package.
