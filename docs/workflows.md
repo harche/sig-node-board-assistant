@@ -286,8 +286,13 @@ On a SIG Node dashboard's summary page, **Tackle** judges every FAILING and FLAK
   - from each of the newest three failed runs, the failed junit test cases;
   - the build log's signal lines: Ginkgo's failure markers and summary, timeouts and kills, or the job's last lines
     when no test ran.
-- **Jev judges** what kind of failure it is (a test failure, a suite or job timeout, or infra) and whether each
-  candidate issue tracks it.
+- **Jev judges** what kind of failure it is (a test failure, a suite or job timeout, or infra), whether each
+  candidate issue tracks it (reading its body and recent comments), and, for a likely tracking issue, whether its
+  body or any comment already reports this job failing.
+- **Several open issues track it:** one that already reports the job is kept, so the job is not reported twice;
+  otherwise the one with the most recent activity is picked.
+- **Apply** reads the issue's comments again before commenting, and skips the comment if an earlier Apply already
+  posted it for that job (matched by the whole job name).
 - **Candidates** come from one batched GraphQL search per job:
   - the job, tab and test names in kubernetes/kubernetes;
   - the job in kubernetes/test-infra;
@@ -297,7 +302,7 @@ On a SIG Node dashboard's summary page, **Tackle** judges every FAILING and FLAK
 | ----------- | --------------------------------------------------------- | -------------------------------------------- |
 | `#N`        | tracked (P ≥ 0.65) by an issue that already names the job | nothing                                      |
 | comment     | tracked by an issue that does not name the job yet        | comment adding the job                       |
-| comment?    | a closed match, or 0.35–0.65                              | your call                                    |
+| comment?    | a closed match, or 0.35–0.65 without the job named        | your call                                    |
 | file issue  | untracked and FAILING                                     | new issue from the k/k failing-test template |
 | file issue? | untracked and FLAKY, failing 5+ runs or 20%+ of them      | your call                                    |
 | watch       | untracked and FLAKY, below that                           | nothing                                      |

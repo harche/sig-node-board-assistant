@@ -85,6 +85,18 @@ bypasses the cache.
 
 <br clear="right">
 
+### Feedback
+
+Every card has a **Feedback** link: on the board's hover cards and item pane, on the issue and PR page sections, and
+on TestGrid. Write what it got wrong and, if you like, pick what the outcome should have been. Submit opens an issue on
+[harche/sig-node-board-assistant](https://github.com/harche/sig-node-board-assistant/issues) with what the card
+showed and everything behind it: the card's result, the exact text and questions sent to Jev and its answers, and the
+extension's version and commit. The dialog shows what will be attached before you send it. When that is too big for an
+issue (a TestGrid job can take a megabyte), it goes to a secret gist on your account, which the issue links; that needs
+the `gist` scope on a classic token. If your token cannot open issues there (a fine-grained token for the kubernetes
+org cannot), Submit offers GitHub's prefilled new-issue page instead, linking the gist or with the attachments copied
+for you to paste.
+
 ## Install
 
 The extension is not on the Chrome Web Store yet. Build it from source (Node 20 or later):
@@ -111,7 +123,8 @@ load that folder the same way.
 
 The settings page needs two credentials:
 
-- **A GitHub personal access token.** A classic token with the `repo` and `project` scopes works everywhere. A
+- **A GitHub personal access token.** A classic token with the `repo` and `project` scopes works everywhere (add
+  `gist` so large feedback can go to a gist). A
   fine-grained token needs **Projects: read** on the `kubernetes` organization, which is enough to read the real
   boards.
 - **A key for Jev**, the decision model. Pick either provider:
@@ -144,7 +157,7 @@ The settings page needs two credentials:
 
 - **Nothing is written until you click.** Apply writes one card's action, and Accept writes the actions in one
   column. Both show the exact comment and move first. The PR and issue checks never write: they only show a command
-  for you to post.
+  for you to post. Feedback opens an issue on this extension's repo only when you click Submit.
 - **The settings page lists where writes go:** the boards Apply and Accept may write to, and the repos TestGrid's
   issues and comments go to.
 - **An allow-list guards every write.** The background worker accepts only a Status move of the one item, and only

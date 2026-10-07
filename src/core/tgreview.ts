@@ -14,6 +14,8 @@ import type { TgTable } from "./testgrid";
 
 export const TRACKED_AT = 0.65;
 export const MAYBE_AT = 0.35;
+/** Jev's P(the thread already reports this job) at which a comment adding it would repeat it. */
+export const NAMED_AT = 0.5;
 /** A FLAKY job worth an issue: this many failed runs, or this share of runs (the CLI's "frequent"). */
 export const FREQUENT_RUNS = 5;
 export const FREQUENT_SHARE = 0.2;
@@ -219,6 +221,8 @@ export interface Candidate {
   closed_at: string | null;
   url: string;
   body: string;
+  /** Last activity (GitHub's updatedAt); null when the search did not say. */
+  updated_at: string | null;
   /** How it was found: job name, tab name, test name, label pool. */
   via: string;
 }
@@ -275,9 +279,11 @@ export interface Track {
   url: string;
   via: string;
   p: number;
-  /** The issue already names this job: its whole body or a comment (ours included, and in test mode its mirror's)
-   *  mentions the job or the tab. */
+  /** The issue already reports this job: for a likely tracking issue, Jev reading its whole thread (ours included,
+   *  and in test mode its mirror's); for the rest, the job or tab name in its body. */
   names_job: boolean;
+  /** Last activity; absent in older results. */
+  updated_at?: string | null;
 }
 
 export interface TgResult {
@@ -370,7 +376,12 @@ export function verdict(r: TgResult): { verdict: TgVerdict; issue: Track | null 
   const top = r.tracks[0] ?? null;
   if (!top || top.p < MAYBE_AT) return { verdict: "untracked", issue: null };
   if (top.p < TRACKED_AT) return { verdict: "maybe", issue: top };
-  const open = r.tracks.find((t) => t.state === "open" && t.p >= TRACKED_AT);
+  // Several open issues track it. One that already reports the job wins (highest score first): commenting on another
+  // would report it twice. Otherwise the one with the most recent activity, the one people follow.
+  const tracking = r.tracks.filter((t) => t.state === "open" && t.p >= TRACKED_AT);
+  const open =
+    tracking.find((t) => t.names_job) ??
+    [...tracking].sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))[0];
   if (open) return { verdict: "tracked", issue: open };
   return { verdict: "regression", issue: top };
 }
@@ -417,6 +428,12 @@ export function decideTg(r: TgResult): { action: TgAction; why: string; auto: bo
         auto: false,
       };
     case "maybe":
+      if (v.issue!.names_job)
+        return {
+          action: "keep",
+          why: `maybe tracked by ${ref(v.issue!)} (${pct(v.issue!.p)}), which already names ${f.job}`,
+          auto: false,
+        };
       return {
         action: "comment",
         why: `maybe tracked by ${ref(v.issue!)} (${pct(v.issue!.p)}): read it before commenting`,
@@ -476,7 +493,9 @@ export const mirrorTitle = (repo: string, number: number) => `[mirror] ${repo}#$
 export const TG_MARK = "<!-- sig-node-board-assistant: testgrid -->";
 
 export type TgStep =
-  | { kind: "comment"; repo: string; number: number; body: string }
+  /** `names`: the job and its tab. Apply skips the comment when one of this extension's own comments there already
+   *  names one of them (an earlier Apply); whether anyone else reported the job is Jev's call when judging. */
+  | { kind: "comment"; repo: string; number: number; body: string; names: string[] }
   | { kind: "issue"; repo: string; title: string; body: string; labels: string[] };
 
 function evidenceLines(r: TgResult): string[] {
@@ -577,7 +596,8 @@ export function tgSteps(r: TgResult, action: TgAction, target?: Track | null): T
   if (action === "keep") return [];
   if (action === "comment") {
     const t = target ?? verdict(r).issue ?? r.tracks[0];
-    return t ? [{ kind: "comment", repo: t.repo, number: t.number, body: commentBody(r) }] : [];
+    const names = [...new Set([r.facts.job, r.facts.tab].filter(Boolean))];
+    return t ? [{ kind: "comment", repo: t.repo, number: t.number, body: commentBody(r), names }] : [];
   }
   return [
     {
@@ -592,6 +612,13 @@ export function tgSteps(r: TgResult, action: TgAction, target?: Track | null): T
 
 export function isTgDraft(body: string): boolean {
   return body.startsWith(`${TG_MARK}\n`);
+}
+
+/** `text` names `name` as a whole job or tab name: `ci-kubernetes-node-e2e` is not named by
+ *  `ci-kubernetes-node-e2e-containerd`. */
+export function namesWhole(text: string, name: string): boolean {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w.-])${esc}(?![\\w-]|\\.\\w)`).test(text);
 }
 
 // ---------------------------------------------------------------------------------------------------- Jev answers

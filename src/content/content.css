@@ -722,3 +722,101 @@ html.snba-tg .snba-hovercard a {
   font-size: 11px;
   word-break: break-word;
 }
+
+/* ---------- feedback (feedback.ts): a link in each card's foot and the modal dialog it opens. Drawn by us on every
+   page, TestGrid included, with Primer's variables where the page has them. */
+.snba-feedback-row {
+  margin: 8px 0 0;
+  text-align: right;
+}
+.snba-feedback {
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: var(--borderRadius-large, 12px);
+  background: var(--overlay-bgColor, var(--bgColor-default, #fff));
+  color: var(--fgColor-default, #1f2328);
+  box-shadow: var(--shadow-floating-large, 0 12px 28px 0 #25292e33);
+  font: 14px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+.snba-feedback::backdrop {
+  background: #1f232866;
+}
+.snba-feedback-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+.snba-feedback-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.snba-feedback-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  padding: 6px 8px;
+  resize: vertical;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: var(--borderRadius-medium, 6px);
+  background: var(--bgColor-default, #fff);
+  color: inherit;
+  font: inherit;
+}
+.snba-feedback-text:focus {
+  outline: 2px solid var(--focus-outlineColor, #0969da);
+  outline-offset: -1px;
+}
+.snba-feedback-expected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.snba-feedback p {
+  margin: 0;
+  font-size: 12px;
+}
+.snba-feedback-preview {
+  max-height: 240px;
+  overflow: auto;
+}
+.snba-feedback-status:empty {
+  display: none;
+}
+.snba-feedback-status .snba-fb-btn {
+  margin-top: 6px;
+}
+.snba-feedback-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.snba-fb-btn {
+  padding: 3px 12px;
+  border: 1px solid var(--button-default-borderColor-rest, #d1d9e0);
+  border-radius: var(--borderRadius-medium, 6px);
+  background: var(--button-default-bgColor-rest, #f6f8fa);
+  color: var(--button-default-fgColor-rest, #25292e);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+.snba-fb-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.snba-fb-primary {
+  border-color: var(--button-primary-borderColor-rest, #1f883d);
+  background: var(--button-primary-bgColor-rest, #1f883d);
+  color: var(--button-primary-fgColor-rest, #fff);
+}
+.snba-fb-btn[hidden] {
+  display: none;
+}

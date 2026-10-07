@@ -10,6 +10,8 @@ and the Jev provider you pick.
   settings page.
 - **Your settings**, and a **cache** of fetched GitHub data and Jev answers, so a revisited page loads without asking
   again.
+- **What was sent to Jev for each card** you judged in this browser session, so feedback can include it. It is kept
+  in session storage (`chrome.storage.session`) and is gone when the browser closes.
 
 All of it is kept in the browser's local extension storage (`chrome.storage.local`), on your computer only. It is never
 synced and never sent to the author. The scripts the extension runs on web pages cannot read it: only the extension's
@@ -17,11 +19,12 @@ background worker and its settings page can. Removing the extension deletes it.
 
 ## What it sends, and where
 
-| Destination                                        | What is sent                                                                                                                              | Why                                                                                       |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `api.github.com`                                   | your GitHub token, and requests for the issues, pull requests, boards and CI results you view                                             | to read them, and, only when you click Apply or Accept, to post the comment or move shown |
-| `api.typesafe.ai` or `openrouter.ai` (your choice) | your Jev key, and text from the GitHub issues, pull requests and CI results being judged: titles, threads, labels, file names, test names | to get the probabilities behind each suggestion                                           |
-| `testgrid.k8s.io`, `storage.googleapis.com`        | requests for public test results, with no credentials                                                                                     | to read CI history                                                                        |
+| Destination                                        | What is sent                                                                                                                                                                                                           | Why                                                                                                                                                                                                                                    |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.github.com`                                   | your GitHub token, and requests for the issues, pull requests, boards and CI results you view                                                                                                                          | to read them, and, only when you click Apply or Accept, to post the comment or move shown                                                                                                                                              |
+| `api.typesafe.ai` or `openrouter.ai` (your choice) | your Jev key, and text from the GitHub issues, pull requests and CI results being judged: titles, threads, labels, file names, test names                                                                              | to get the probabilities behind each suggestion                                                                                                                                                                                        |
+| `testgrid.k8s.io`, `storage.googleapis.com`        | requests for public test results, with no credentials                                                                                                                                                                  | to read CI history                                                                                                                                                                                                                     |
+| `api.github.com`, only when you submit feedback    | your words, what the card showed, the card's result, the text and questions sent to Jev for it and the answers, the extension's version and commit, your Jev provider and model name (never a key), and the page's URL | to open a public issue on harche/sig-node-board-assistant under your GitHub account; when the attachments are too big for an issue, they go to a secret gist on your account (anyone with its link can read it), which the issue links |
 
 Nothing else is sent anywhere. The extension has no analytics, no tracking and no ads, and it does not read pages
 other than GitHub project boards, GitHub issue and pull request pages, and TestGrid.
@@ -34,6 +37,7 @@ The Jev provider handles what it receives under its own privacy policy:
 - It does not sell or transfer your data to anyone, or use it for anything other than the suggestions it shows you.
 - It does not use your data for advertising, credit or lending decisions.
 - It never writes to GitHub on its own. Every comment or move is shown to you first and is written only when you click.
+  Feedback is shown to you before it is sent, and is sent only when you click Submit.
 
 ## Contact
 

@@ -15,6 +15,7 @@ import {
 } from "../core/prci";
 import { send } from "../shared/messages";
 import { runButton } from "./button";
+import { feedbackLink } from "../content/feedback";
 
 type Slot = { state: "pending" } | { state: "error"; message: string } | { state: "done"; job: CiJob };
 
@@ -205,6 +206,18 @@ export class PrCi {
         name,
       ),
       h("p.snba-why", {}, ...this.why(d.why, d.verdict === "this_pr" ? suspectFile(j) : null)),
+      feedbackLink(() => ({
+        surface: `PR page · Failing CI · ${shortJob(f.job)}`,
+        item: {
+          repo: this.repo,
+          number: this.number,
+          url: `https://github.com/${this.repo}/pull/${this.number}`,
+        },
+        shown: `${CI_LABEL[d.verdict]}: ${d.why}`,
+        result: j,
+        context: { Job: f.job, "Job run": f.url },
+        options: Object.values(CI_LABEL),
+      })),
     );
   }
 

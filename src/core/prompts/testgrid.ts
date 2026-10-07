@@ -71,6 +71,26 @@ export function tracksQuestion(): { tracks: typeof tracks } {
   return { tracks };
 }
 
+/** Whether a tracking issue's thread already reports this job, so a comment adding it would repeat it. */
+const namesJob = {
+  type: "noul",
+  instructions: {
+    question:
+      "Does `issue` already report that the CI job `job` (TestGrid tab `tab`) fails, in its body or in any comment?",
+    focus:
+      "Look for this job among the jobs the issue says are failing, or a comment reporting it failing too, under its job or tab name, even shortened. A job with a similar name that is another job (another branch, release, runtime, OS or feature set) is not this one. A mention of this job only as passing, fixed or unaffected does not count.",
+    note: "`issue.thread` is the issue's body followed by its comments, oldest first; run links are stripped.",
+  },
+  criteria: {
+    true: { what: "The issue or a comment on it reports this job failing." },
+    false: { what: "It never reports this job failing, or only a different job with a similar name." },
+  },
+};
+
+export function namesJobQuestion(): { names_job: typeof namesJob } {
+  return { names_job: namesJob };
+}
+
 /** How an issue the failure's own words found relates to it: beyond the tracking issue, a bug that causes it or an
  *  umbrella it belongs to. Tried on the 28 issues with runs: the root causes and umbrellas it named all came from
  *  searching the failure's text, which today's tracking search never reaches (docs/design.md). */

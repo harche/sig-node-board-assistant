@@ -33,6 +33,14 @@ export interface JevResponse<A> {
   usage: JevUsage;
 }
 
+/** One Jev call as made: what was sent and what came back. Kept for feedback (core/feedback.ts). */
+export interface JevCall {
+  state: unknown;
+  questions: Record<string, unknown>;
+  answers: unknown;
+  cached: boolean;
+}
+
 export const JEV_DEFAULTS = { baseUrl: "https://api.typesafe.ai", model: "jev-latest", usdPerMtok: 0.042 };
 
 /** Per attempt. The old hand-rolled client had none; kubelet-sized states take a few seconds. */
@@ -59,6 +67,8 @@ export class JevClient {
   private usdPerMtok: number;
   private backoffMs: number;
   readonly ledger = { calls: 0, cached: 0, input_tokens: 0, cost: 0 };
+  /** When set, every askCached call that answers is appended here, cached or not. */
+  trace?: JevCall[];
 
   constructor(
     config: JevConfig,
@@ -152,6 +162,7 @@ export class JevClient {
     if (hit) {
       this.ledger.cached++;
       this.ledger.input_tokens += hit.usage.input_tokens;
+      this.trace?.push({ state, questions, answers: hit.answers, cached: true });
       return { answers: hit.answers, usage: { ...hit.usage, cached: true, cost: 0 } };
     }
     for (let attempt = 1; ; attempt++) {
@@ -160,6 +171,7 @@ export class JevClient {
         await this.cache.set(key, out);
         this.ledger.input_tokens += out.usage.input_tokens;
         this.ledger.cost += out.usage.cost;
+        this.trace?.push({ state, questions, answers: out.answers, cached: false });
         return out;
       } catch (e) {
         if (!(e instanceof JevError) || !e.retryable) throw e;

@@ -12,8 +12,8 @@ boards", they mean this:
   (`src/shared/build.d.ts`) to `true`. It gates `TEST_BOARDS` in `src/core/boards.ts`, `TG_TEST_REPO` in
   `src/core/tgreview.ts`, the Test mode switch and the test-token hint on the settings page, and `Settings.testMode`.
   `scripts/build.mjs --test` also adds the test boards and test repo to the manifest's content-script matches. In a
-  normal build esbuild drops all of it (check with `grep -r harche dist`: no hits; `npm run zip` refuses a build that
-  has any), and `loadSettings` forces `testMode` off, so a value saved by a test build never steers a normal build's
+  normal build esbuild drops all of it (check with `grep -rE 'sig-node-board-test|users/harche' dist`: no hits; `npm run zip`
+  refuses a build that has any). `harche/sig-node-board-assistant`, where feedback goes, is in every build, and `loadSettings` forces `testMode` off, so a value saved by a test build never steers a normal build's
   writes. Vitest runs as a test build (`vitest.config.ts`).
 - **The switch:** in a test build, test mode starts on (settings page, `Settings.testMode`). On, Apply and Accept write
   only to the test copies below, and TestGrid writes only to `harche/sig-node-board-test`. Off, they write to the real
@@ -109,6 +109,14 @@ TestGrid (testgrid.k8s.io), GCS and GitHub search are only read; test on the rea
 `harche/sig-node-board-test` (`TG_TEST_REPO` in `src/core/tgreview.ts`): new issues there, and comments for a
 kubernetes/kubernetes issue on a `[mirror] kubernetes/kubernetes#N` issue there (#55 mirrors #142268; #56 is a filed
 flaking-test issue). Never point writes at kubernetes/kubernetes without the user asking.
+
+### Feedback
+
+Feedback (`src/core/feedback.ts`, `src/content/feedback.ts`) always opens an issue on
+`harche/sig-node-board-assistant` (`FEEDBACK_REPO`), test mode or not: it is about the extension. Feedback filed while
+testing is fine there; close it afterwards. To test the fallback (a token that cannot open the issue), use a
+fine-grained token for the kubernetes org. Attachments too big for the issue go to a secret gist on the token's
+account (`gistFiles`); delete test gists with `gh gist delete`.
 
 ### Failing CI on the PR page, CI history and duplicates on the issue page
 

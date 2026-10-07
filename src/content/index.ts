@@ -21,6 +21,7 @@ import {
   SEL,
 } from "./dom";
 import type { PaneState } from "./workflows";
+import { boardFeedback } from "./feedback";
 import { HoverCard, type Applied } from "./hovercard";
 import { Judged } from "./judged";
 import { h, octicon } from "./ui";
@@ -644,6 +645,20 @@ class BoardAssistant<R> {
           `Prow ignored ${fixes.map((f) => `"${f.wrote}" (${f.who})`).join(", ")}; Apply and Accept also post ${fixes.map((f) => `"${f.fix}"`).join(", ")}, unless the item is closed or archived.`,
         ),
       );
+    const a = this.applied.get(restId);
+    el.append(
+      boardFeedback({
+        board: this.board,
+        column: this.column,
+        item,
+        result: slot.result,
+        fields: this.judged.fields,
+        overrides: this.overrides.get(restId),
+        applied: a ? (a.state === "error" ? `failed: ${a.message}` : a.state) : undefined,
+        where: "Board card",
+        card: () => el,
+      }),
+    );
     return el;
   }
 
@@ -800,6 +815,19 @@ class BoardAssistant<R> {
     if (existing?.dataset.snbaKey === key && existing.isConnected && side.el.contains(existing)) return true;
     existing?.remove();
     const section = this.wf.pane(side.adapter, item, st, (it) => this.judgeOne(it, true));
+    if (st.state === "done")
+      section.append(
+        boardFeedback({
+          board: this.board,
+          column: this.column,
+          item,
+          result: st.result,
+          fields: this.judged.fields,
+          overrides: this.overrides.get(restId),
+          where: "Item pane",
+          card: () => section,
+        }),
+      );
     section.dataset.snbaKey = key;
     placeSection(side.el, section);
     if (!slot && !this.skipped.has(restId)) void this.judgeOne(item);

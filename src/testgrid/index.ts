@@ -4,7 +4,8 @@
  *  background worker, which in test mode sends them to the test repo (tgreview.ts, TG_TEST_REPO). */
 import { HoverCard, type Applied } from "../content/hovercard";
 import { h } from "../content/ui";
-import { decideTg, TG_TINT, verdict, type TgResult } from "../core/tgreview";
+import { decideTg, TG_LABEL, TG_TINT, tgActions, verdict, type TgResult } from "../core/tgreview";
+import { feedbackLink, shownText } from "../content/feedback";
 import { send } from "../shared/messages";
 import { chosenTg, chosenTgSteps, renderTgHoverCard, type TgOverrides } from "./card";
 
@@ -275,7 +276,7 @@ class TestGridReview {
   private render(id: number): HTMLElement | null {
     const s = this.slots.get(id);
     if (s?.state !== "done" || this.skipped.has(id)) return null;
-    return renderTgHoverCard({
+    const el = renderTgHoverCard({
       result: s.result,
       overrides: this.overrides.get(id) ?? {},
       setOverride: (k, v) => {
@@ -300,6 +301,25 @@ class TestGridReview {
         this.paintBar();
       },
     });
+    const tab = this.tabOf(id);
+    const o = this.overrides.get(id) ?? {};
+    const a = this.applied.get(id);
+    el.append(
+      feedbackLink(() => ({
+        surface: `TestGrid · ${this.dashboard} · ${tab?.tab ?? ""}`,
+        shown: shownText(el),
+        result: s.result,
+        context: {
+          Dashboard: this.dashboard,
+          Tab: tab?.tab ?? "",
+          Status: tab?.status ?? "",
+          ...(Object.keys(o).length ? { "Reader's picks": JSON.stringify(o) } : {}),
+          ...(a ? { Applied: a.state === "error" ? `failed: ${a.message}` : a.state } : {}),
+        },
+        options: tgActions(s.result).map((x) => TG_LABEL[x]),
+      })),
+    );
+    return el;
   }
 }
 

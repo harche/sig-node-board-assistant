@@ -3,3 +3,6 @@
  *  a literal (scripts/build.mjs), so a normal build leaves them out of the bundle; the tests run as a test build
  *  (vitest.config.ts). */
 declare const __TEST_BUILD__: boolean;
+
+/** The git commit the bundle was built from (short SHA, "-dirty" when the tree had changes), for feedback issues. */
+declare const __BUILD_COMMIT__: string;

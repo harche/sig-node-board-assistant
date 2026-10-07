@@ -10,6 +10,7 @@ import { decideIssueCi, ISSUE_CI_LABEL, ISSUE_CI_TINT, type IssueCiResult } from
 import { shortTest } from "../core/prci";
 import { openDuplicate, type RelatedMatch, type RelatedResult } from "../core/related";
 import { send } from "../shared/messages";
+import { feedbackLink } from "../content/feedback";
 import { runButton } from "./button";
 
 const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
@@ -183,6 +184,14 @@ export class IssueCheck {
         ),
       ),
       this.foot(r.usage.cost),
+      feedbackLink(() => ({
+        surface: "Issue page · CI history",
+        item: this.item(),
+        shown: `${ISSUE_CI_LABEL[d.verdict]}: ${d.why}${d.suggest ? ` Suggested: ${d.suggest}` : ""}`,
+        result: r,
+        context: {},
+        options: Object.values(ISSUE_CI_LABEL),
+      })),
     );
     return root;
   }
@@ -235,8 +244,28 @@ export class IssueCheck {
         ),
         this.again(),
       ),
+      feedbackLink(() => ({
+        surface: "Issue page · Duplicates and related",
+        item: this.item(),
+        shown: [
+          ...r.duplicates.map((m) => `duplicate: ${m.repository}#${m.number} (P ${m.p.toFixed(2)})`),
+          ...r.related.map(
+            (m) => `related: ${m.repository}#${m.number} (${relationLabel(m)}, P ${m.p.toFixed(2)})`,
+          ),
+        ].join("; "),
+        result: r,
+        context: {},
+      })),
     );
     return root;
+  }
+
+  private item() {
+    return {
+      repo: this.repo,
+      number: this.number,
+      url: `https://github.com/${this.repo}/issues/${this.number}`,
+    };
   }
 
   /** The section that offers the check, says it is running, or that it found nothing to show. */

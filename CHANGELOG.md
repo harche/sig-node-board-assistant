@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.2 (unreleased)
+
+- **Feedback on every card.** Each card (every board column's hover card and item pane, the issue and PR page
+  sections, TestGrid) has a Feedback link. It opens an issue on the extension's repo with the reader's words, what
+  the outcome should have been, what the card showed, its result, every Jev call behind it (state, questions and
+  answers) and the build's version and commit. Attachments too big for the issue go to a secret gist on the
+  reader's account, linked from the issue (a token without the `gist` scope puts them in comments instead). A token
+  that cannot open issues there gets GitHub's prefilled new-issue page, linking the gist or with the attachments on
+  the clipboard.
+- **TestGrid: no repeat comments.** Jev reads each candidate issue's recent comments as well as its body, and decides
+  from the whole thread whether the tracking issue already reports the job. Apply reads the thread again before
+  commenting and skips the comment if an earlier Apply already posted it for that job. GitHub reads are no longer answered from the
+  browser's cache, which could hide a comment posted a moment before.
+- **TestGrid: the most active tracking issue.** When several open issues track a failure, one that already reports
+  the job is kept; otherwise the one with the most recent activity is picked.
+- **TestGrid: presubmit tabs read their runs.** A presubmit tab's runs were looked for in the wrong GCS folder, so
+  Jev judged them without any failure evidence. They are now read from the pull request's folder the tab points to,
+  on TestGrid and in the issue page's CI history.
+- **SIG Node Bugs: no wrong handoff.** Jev's "which SIG owns the code" question can now answer SIG Node. Before, it
+  had to name another SIG, and a bug only SIG Node owns was offered a handoff to that SIG.
+
 ## 0.1.1 (unreleased)
 
 - **Runs only where it works:** the board script loads only on kubernetes org boards, and the issue and pull request

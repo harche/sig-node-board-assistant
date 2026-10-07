@@ -173,7 +173,9 @@ export function decideBug(r: BugResult): { action: BugAction; why: string; auto:
         why: `P(another SIG owns it)=${f2(other)}, but ${r.routed_by.join(", ")} routed it here with /sig node`,
         auto: false,
       };
-    return { action: "other_sig", why: `P(SIG ${r.sig} owns it, not SIG Node)=${f2(other)}`, auto: false };
+    // Asked which SIG, Jev answered SIG Node: nobody to hand it to, so it is judged as SIG Node's.
+    if (r.sig !== null)
+      return { action: "other_sig", why: `P(SIG ${r.sig} owns it, not SIG Node)=${f2(other)}`, auto: false };
   }
   const info = a.enough_information.noul;
   if (info < INFO_ASK_AT)
@@ -431,7 +433,7 @@ export async function judgeBug(
     r.readings = [
       ...choiceReading("Kind of report", answers.report),
       ...choiceReading("Owner", answers.owner),
-      ...choiceReading("If not SIG Node, which SIG", sig.sig),
+      ...choiceReading("Which SIG owns the code", sig.sig),
       ...noulReading(
         "Enough information",
         answers.enough_information,

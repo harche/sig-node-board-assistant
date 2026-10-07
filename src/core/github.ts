@@ -47,7 +47,9 @@ export class GitHubClient {
   constructor(
     token: string,
     private cache: Cache,
-    fetchFn: typeof fetch = (...a) => fetch(...a),
+    // "no-cache": GitHub's reads say max-age=60, so the browser would otherwise answer a read from its HTTP cache,
+    // and a thread read just before a comment was posted would come back without it. Revalidating costs a 304.
+    fetchFn: typeof fetch = (input, init) => fetch(input, { ...init, cache: "no-cache" }),
     sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
   ) {
     this.octokit = new Client({
@@ -320,7 +322,7 @@ export class GitHubClient {
       const { q, type } = norm(x);
       return type === "ISSUE" ? q : `${type}|${q}`;
     };
-    const key = (x: SearchQuery) => `gsearch2:${n}:${id(x)}`;
+    const key = (x: SearchQuery) => `gsearch3:${n}:${id(x)}`;
     const out = new Map<string, RawSearchIssue[]>();
     if (!refresh)
       for (const x of queries) {
@@ -330,7 +332,7 @@ export class GitHubClient {
     const todo = [...new Map(queries.filter((x) => !out.has(id(x))).map((x) => [id(x), norm(x)])).values()];
     if (todo.length) {
       const fields =
-        "nodes { ... on Issue { number title state closedAt createdAt url body author { login } assignees(first: 5) { nodes { login } } } }";
+        "nodes { ... on Issue { number title state closedAt createdAt updatedAt url body author { login } assignees(first: 5) { nodes { login } } } }";
       const query = `query(${todo.map((_, i) => `$q${i}: String!`).join(", ")}) { ${todo
         .map((x, i) => `s${i}: search(query: $q${i}, type: ${x.type}, first: ${n}) { ${fields} }`)
         .join(" ")} }`;
@@ -340,6 +342,7 @@ export class GitHubClient {
         state: string;
         closedAt: string | null;
         createdAt: string;
+        updatedAt: string;
         url: string;
         body: string;
         author: { login: string } | null;
@@ -366,6 +369,7 @@ export class GitHubClient {
             html_url: y.url,
             body: (y.body ?? "").slice(0, 3000),
             created_at: y.createdAt,
+            updated_at: y.updatedAt,
             author: y.author?.login ?? "ghost",
             assignees: (y.assignees?.nodes ?? []).map((a) => a.login),
           }));
@@ -469,6 +473,21 @@ export class GitHubClient {
       },
       refresh,
     );
+  }
+
+  /** Creates a secret gist on the token's account (feedback's attachments); returns its URL. Needs the `gist` scope. */
+  async createGist(description: string, files: Record<string, string>): Promise<string> {
+    const path = "/gists";
+    try {
+      const r = await this.octokit.request(`POST ${path}`, {
+        description,
+        public: false,
+        files: Object.fromEntries(Object.entries(files).map(([name, content]) => [name, { content }])),
+      });
+      return (r.data as { html_url: string }).html_url;
+    } catch (e) {
+      throw toGitHubError(e, path);
+    }
   }
 
   /** Opens an issue; returns its number. */
@@ -741,6 +760,7 @@ export interface RawSearchIssue {
   html_url: string;
   body?: string | null;
   created_at?: string;
+  updated_at?: string;
   author?: string;
   assignees?: string[];
 }

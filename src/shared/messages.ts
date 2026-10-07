@@ -1,5 +1,6 @@
 /** Typed request/response protocol between the content script / options page and the background worker.
- *  Every request is a read except `item.apply`, which the worker only runs on boards marked writable. */
+ *  Every request is a read except `item.apply`, which the worker only runs on boards marked writable, `tg.apply`,
+ *  and `feedback.submit`, which opens an issue on the extension's own repo. */
 import type { Placement } from "../core/lookup";
 import type { ProgressResult } from "../core/inprogress";
 import type { ApproveResult } from "../core/approver";
@@ -15,6 +16,7 @@ import type { RelatedResult } from "../core/related";
 import type { TgRef } from "../core/testgrid";
 import type { ReviewResult } from "../core/reviewer";
 import type { DuplicateOf, TodoResult } from "../core/todo";
+import type { FeedbackReport } from "../core/feedback";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 
 export interface Settings {
@@ -69,7 +71,27 @@ export type Request =
   | { type: "ci.judge"; repo: string; number: number; check: FailedCheck; refresh?: boolean }
   | { type: "issue.scope"; repo: string; number: number }
   | { type: "issue.ci"; repo: string; number: number; refresh?: boolean }
-  | { type: "issue.dups"; repo: string; number: number; refresh?: boolean };
+  | { type: "issue.dups"; repo: string; number: number; refresh?: boolean }
+  | { type: "feedback.preview"; report: FeedbackReport }
+  | { type: "feedback.submit"; report: FeedbackReport };
+
+/** The judge requests: each result carries a `trace_id` naming the Jev calls behind it (feedback). */
+export const TRACED = new Set<Request["type"]>([
+  "item.judge",
+  "todo.judge",
+  "progress.judge",
+  "review.judge",
+  "approve.judge",
+  "author.judge",
+  "bugs.judge",
+  "info.judge",
+  "backlog.judge",
+  "dra.judge",
+  "tg.judge",
+  "ci.judge",
+  "issue.ci",
+  "issue.dups",
+]);
 
 export interface ResponseMap {
   "settings.get": { settings: Settings; configured: { github: boolean; jev: boolean } };
@@ -106,6 +128,21 @@ export interface ResponseMap {
   "issue.ci": IssueCiResult | null;
   /** null when the issue is out of scope. */
   "issue.dups": RelatedResult | null;
+  /** Where the issue would go, its title and head, and the size of what is attached. `gist`: the attachments are too
+   *  big for the issue and go to a secret gist on the reader's account. */
+  "feedback.preview": {
+    repo: string;
+    title: string;
+    head: string;
+    calls: number;
+    attachedKb: number;
+    gist: boolean;
+  };
+  /** The issue opened (and the gist it links, if any), or, when the token may not open it, a prefilled new-issue page
+   *  and the attachments to paste (none when it links a gist). */
+  "feedback.submit":
+    | { opened: string; gist?: string }
+    | { opened: null; error: string; prefill: { url: string; paste: string }; gist?: string };
 }
 
 export type Response<R extends Request> = ResponseMap[R["type"]];

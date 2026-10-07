@@ -66,6 +66,12 @@ describe("decideBug", () => {
     ["a feature", base({ answers: answers({ feature: 0.7 }) }), "feature", false],
     ["another SIG", base({ answers: answers({ other: 0.8 }) }), "other_sig", false],
     [
+      "another SIG, but which one Jev reads as SIG Node",
+      base({ answers: answers({ other: 0.8 }), sig: null }),
+      "accept",
+      true,
+    ],
+    [
       "another SIG, but a human routed it with /sig node",
       base({ answers: answers({ other: 0.8 }), routed_by: ["tri"] }),
       "accept",
@@ -231,7 +237,7 @@ describe("readings", () => {
       expect.arrayContaining([
         "Kind of report",
         "Owner",
-        "If not SIG Node, which SIG",
+        "Which SIG owns the code",
         "Enough information",
         "About DRA",
         "Priority",

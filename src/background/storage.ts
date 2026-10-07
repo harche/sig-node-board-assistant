@@ -1,6 +1,7 @@
 /** chrome.storage.local as a key-value store for the cache, and the settings record. Tokens live in
  *  storage.local (never storage.sync), so they stay on this machine. */
 import type { KeyValueStore } from "../core/cache";
+import type { Trace } from "../core/feedback";
 import { DEFAULT_SETTINGS, type Settings } from "../shared/messages";
 
 const CACHE_PREFIX = "cache:";
@@ -48,4 +49,48 @@ export async function saveSettings(patch: Partial<Settings>): Promise<Settings> 
   const next = { ...(await loadSettings()), ...patch };
   await chrome.storage.local.set({ [SETTINGS_KEY]: next });
   return next;
+}
+
+const TRACE_PREFIX = "trace:";
+const TRACE_INDEX = "trace-index";
+/** Traces kept: a column or two of cards. Each holds the states sent to Jev, tens of KB for a long thread. */
+const TRACE_KEEP = 200;
+
+/** The Jev calls behind each judged card, for feedback (core/feedback.ts), in chrome.storage.session: it outlives
+ *  the service worker but not the browser session, and content scripts cannot read it. Oldest go first. */
+export class TraceStore {
+  private chain: Promise<unknown> = Promise.resolve();
+
+  async get(id: string): Promise<Trace | null> {
+    const r = await chrome.storage.session.get(TRACE_PREFIX + id);
+    return (r[TRACE_PREFIX + id] as Trace | undefined) ?? null;
+  }
+
+  /** Writes are queued: each one rewrites the index. */
+  put(id: string, t: Trace): Promise<void> {
+    const run = this.chain.then(() => this.write(id, t));
+    this.chain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async write(id: string, t: Trace): Promise<void> {
+    const r = await chrome.storage.session.get(TRACE_INDEX);
+    let index = [...((r[TRACE_INDEX] as string[] | undefined) ?? []), id];
+    for (let attempt = 0; ; attempt++) {
+      const drop = index.length > TRACE_KEEP ? index.slice(0, index.length - TRACE_KEEP) : [];
+      index = index.slice(drop.length);
+      if (drop.length) await chrome.storage.session.remove(drop.map((k) => TRACE_PREFIX + k));
+      try {
+        await chrome.storage.session.set({ [TRACE_PREFIX + id]: t, [TRACE_INDEX]: index });
+        return;
+      } catch (e) {
+        // Over the session quota: drop the older half and try again; a trace too big on its own is not kept.
+        if (attempt >= 2 || index.length <= 1) throw e;
+        // At least one: with two kept, the older goes.
+        const half = index.slice(0, Math.max(1, Math.floor((index.length - 1) / 2)));
+        await chrome.storage.session.remove(half.map((k) => TRACE_PREFIX + k));
+        index = index.slice(half.length);
+      }
+    }
+  }
 }

@@ -7,6 +7,7 @@ import {
   coversQuestion,
   failureKindQuestion,
   fixesQuestion,
+  namesJobQuestion,
   relationQuestion,
   tracksQuestion,
 } from "./prompts/testgrid";
@@ -19,6 +20,7 @@ import {
   jobFacts,
   junitFailures,
   MAYBE_AT,
+  NAMED_AT,
   poolMatches,
   PROW,
   RELATED_AT,
@@ -85,6 +87,21 @@ export async function runEvidence(
     const hit = await d.cache.get<RunEvidence>(key, 24 * HOUR);
     if (hit) return hit;
   }
+  // A presubmit tab's query is `<bucket>/pr-logs/directory/<job>`, which holds only `<build>.txt`, naming where the
+  // run is (`gs://<bucket>/pr-logs/pull/<pr>/<job>/<build>`).
+  if (gcs.includes("/pr-logs/directory/")) {
+    const at = /^gs:\/\/(\S+)\/(\d+)$/.exec((await text(f, `${GCS}/${gcs}/${build}.txt`))?.trim() ?? "");
+    if (!at || at[2] !== build)
+      return {
+        build,
+        started,
+        url: `${PROW}/${gcs}/${build}`,
+        result: null,
+        junit_failures: [],
+        log_signals: null,
+      };
+    gcs = at[1]!;
+  }
   const base = `${GCS}/${gcs}/${build}`;
   const [bucket, ...rest] = gcs.split("/");
   const prefix = `${rest.join("/")}/${build}/artifacts/`;
@@ -119,6 +136,7 @@ const brief = (x: RawSearchIssue, repo: string, via: string): Candidate => ({
   closed_at: x.closed_at ?? null,
   url: x.html_url,
   body: x.body ?? "",
+  updated_at: x.updated_at ?? null,
   via,
 });
 
@@ -268,6 +286,19 @@ export async function judgeTg(
     .map((e) => ({ junit_failures: e.junit_failures, log_signals: e.log_signals ?? [] }));
   const st = { job: facts.job, runs };
   const cands = await candidates(d, facts, now, refresh);
+  // Jev reads each candidate's recent comments with its body: that is where jobs get added and where a thread says
+  // the failure changed. Without threads (or if the read fails), the body alone.
+  const threads = new Map<string, ThreadIssue | null>();
+  if (d.threads) {
+    const byRepo = new Map<string, number[]>();
+    for (const c of cands) byRepo.set(c.repo, [...(byRepo.get(c.repo) ?? []), c.number]);
+    await Promise.all(
+      [...byRepo].map(async ([repo, ns]) => {
+        const m = await d.threads!(repo, ns, refresh).catch(() => new Map<number, ThreadIssue | null>());
+        for (const [n, t] of m) threads.set(`${repo}#${n}`, t);
+      }),
+    );
+  }
   const [kind, answers] = await Promise.all([
     runs.length ? ask<TgAnswers>(st, failureKindQuestion()) : Promise.resolve(null),
     Promise.all(
@@ -280,6 +311,11 @@ export async function judgeTg(
               title: c.title,
               state: c.state,
               body: stripRuns(c.body).slice(0, 2500),
+              comments: (threads.get(`${c.repo}#${c.number}`)?.comments ?? []).map((x) => ({
+                author: x.author,
+                created_at: x.created_at,
+                body: stripRuns(x.body).slice(0, 1000),
+              })),
             },
           },
           tracksQuestion(),
@@ -289,12 +325,24 @@ export async function judgeTg(
   ]);
   const names = [facts.job, facts.tab].filter(Boolean);
   const scored = cands.map((c, i) => ({ c, p: answers[i]?.tracks?.noul ?? 0 }));
-  // Only issues that could be the tracking one are read in full: whether they name the job decides comment or not.
+  // Only issues that could be the tracking one are read in full, and Jev says whether the thread already reports
+  // this job: that decides comment or not. The rest only show on the card, by the name in their body.
   const named = await Promise.all(
     scored.map(async ({ c, p }) => {
-      if (p < MAYBE_AT) return names.some((n) => c.body.includes(n));
-      const all = await d.issueText(c.repo, c.number, refresh).catch(() => c.body);
-      return names.some((n) => all.includes(n));
+      if (p < MAYBE_AT) return { named: names.some((n) => c.body.includes(n)), p: null };
+      const all = stripRuns(await d.issueText(c.repo, c.number, refresh).catch(() => c.body));
+      // The body and the newest comments, where a job added later is.
+      const thread = all.length > 16000 ? `${all.slice(0, 4000)}\n…\n${all.slice(-12000)}` : all;
+      const a = await ask<{ names_job?: { noul: number } }>(
+        {
+          job: facts.job,
+          tab: facts.tab,
+          issue: { number: c.number, title: c.title, state: c.state, thread },
+        },
+        namesJobQuestion(),
+      );
+      const q = a.names_job?.noul ?? 0;
+      return { named: q >= NAMED_AT, p: q };
     }),
   );
   const tracks: Track[] = scored
@@ -306,7 +354,8 @@ export async function judgeTg(
       url: c.url,
       via: c.via,
       p,
-      names_job: named[i]!,
+      names_job: named[i]!.named,
+      updated_at: c.updated_at,
     }))
     .sort((a, b) => b.p - a.p);
   // Only with evidence: the related search is the failure's own words.
@@ -338,6 +387,11 @@ export async function judgeTg(
           noul: t.p,
         }),
       ),
+    ...scored.flatMap(({ c }, i) =>
+      named[i]!.p === null
+        ? []
+        : noulReading(`#${c.number} already names the job`, { type: "noul", noul: named[i]!.p! }),
+    ),
   ];
   readings.push(
     ...related.flatMap((r) =>

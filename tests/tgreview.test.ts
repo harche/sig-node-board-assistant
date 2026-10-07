@@ -3,6 +3,7 @@ import {
   decideTg,
   fragment,
   isTgDraft,
+  namesWhole,
   jobFacts,
   junitFailures,
   prowLabels,
@@ -182,13 +183,33 @@ describe("decideTg", () => {
       true,
     ],
     ["only a closed issue matches", result({}, [track(1, 0.9, { state: "closed" })]), "file", false],
-    ["maybe tracked", result({}, [track(1, 0.5)]), "comment", false],
+    ["maybe tracked", result({}, [track(1, 0.5, { names_job: false })]), "comment", false],
     ["failing, untracked", result({ status: "FAILING" }, [track(1, 0.1)]), "file", true],
     ["flaky often, untracked", result({ failed_runs: 8 }, []), "file", false],
     ["flaky rarely, untracked", result({}, []), "keep", true],
   ] as [string, TgResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
     expect(decideTg(r)).toMatchObject({ action, auto }),
   );
+  it("among open tracking issues none of which names the job, picks the one with the most recent activity", () =>
+    expect(
+      verdict(
+        result({}, [
+          track(1, 0.95, { names_job: false, updated_at: "2026-08-01T00:00:00Z" }),
+          track(2, 0.8, { names_job: false, updated_at: "2026-09-20T00:00:00Z" }),
+          track(3, 0.5, { names_job: false, updated_at: "2026-09-28T00:00:00Z" }),
+        ]),
+      ).issue?.number,
+    ).toBe(2));
+  it("keeps an open tracking issue that already names the job over a more recent one that does not", () => {
+    const r = result({}, [
+      track(1, 0.95, { names_job: true, updated_at: "2026-08-01T00:00:00Z" }),
+      track(2, 0.8, { names_job: false, updated_at: "2026-09-20T00:00:00Z" }),
+    ]);
+    expect(verdict(r).issue?.number).toBe(1);
+    expect(decideTg(r)).toMatchObject({ action: "keep", auto: true });
+  });
+  it("does not suggest a comment on a maybe-tracking issue that already names the job", () =>
+    expect(decideTg(result({}, [track(1, 0.5)]))).toMatchObject({ action: "keep", auto: false }));
   it("prefers an open matching issue over a closed one that scores higher", () =>
     expect(verdict(result({}, [track(1, 0.95, { state: "closed" }), track(2, 0.7)]))).toMatchObject({
       verdict: "tracked",
@@ -200,7 +221,12 @@ describe("tgSteps", () => {
   it("drafts a comment and an issue this extension recognises as its own", () => {
     const r = result({ status: "FAILING" }, [track(7, 0.9, { names_job: false })]);
     const [c] = tgSteps(r, "comment");
-    expect(c).toMatchObject({ kind: "comment", repo: "kubernetes/kubernetes", number: 7 });
+    expect(c).toMatchObject({
+      kind: "comment",
+      repo: "kubernetes/kubernetes",
+      number: 7,
+      names: ["ci-node-e2e"],
+    });
     const [i] = tgSteps(r, "file");
     expect(i).toMatchObject({ kind: "issue", labels: ["kind/failing-test", "sig/node"] });
     expect(i?.kind === "issue" && i.title).toBe("[Failing Test] [It] MirrorPod restarts");
@@ -237,11 +263,15 @@ describe("judgeTg", () => {
     search: async (qs) => qs.map((_, i) => (i === 0 ? [issue] : [])),
     issueText: async () => text,
     jev: {
-      askCached: async (_s: unknown, q: Record<string, unknown>) => ({
+      askCached: async (s: { issue?: { thread?: string } }, q: Record<string, unknown>) => ({
         answers:
           "tracks" in q
             ? { tracks: { type: "noul", noul: 0.9 } }
-            : { failure_kind: { type: "choice", choice: "test_failure", confidence: 1, probabilities: {} } },
+            : "names_job" in q
+              ? { names_job: { type: "noul", noul: s.issue?.thread?.includes("ci-node-e2e") ? 0.95 : 0.05 } }
+              : {
+                  failure_kind: { type: "choice", choice: "test_failure", confidence: 1, probabilities: {} },
+                },
         usage: { input_tokens: 0, cost: 0, cached: true },
       }),
     } as unknown as JevClient,
@@ -255,7 +285,7 @@ describe("judgeTg", () => {
             ? new Response('{"result":"FAILURE"}')
             : new Response("[FAILED] x\nRan 1 of 2 Specs")) as unknown as typeof fetch,
   });
-  it("reads the tracking issue's comments, so a job already added there is not commented again", async () => {
+  it("asks Jev whether the tracking issue's thread already names the job, so it is not commented again", async () => {
     const r = await judgeTg(
       deps("body\nThis also fails on `ci-node-e2e`"),
       { dashboard: "d", tab: "ci-node-e2e" },
@@ -273,6 +303,7 @@ describe("judgeTg", () => {
       NOW,
     );
     expect(decideTg(r2).action).toBe("comment");
+    expect(r.readings?.map((x) => x.label)).toContain("#5 already names the job");
   });
   it("does not keep evidence a failed read left incomplete", async () => {
     const d = deps("", false);
@@ -282,6 +313,28 @@ describe("judgeTg", () => {
     const ok = deps("");
     await runEvidence(ok, "b/logs/j", "1", NOW);
     expect(await ok.cache.get("tgrun:b/logs/j/1", DAY)).toBeDefined();
+  });
+  it("reads a presubmit run where its pr-logs/directory pointer says", async () => {
+    const seen: string[] = [];
+    const d = (pointer: string | null): TgDeps => ({
+      ...deps(""),
+      fetchFn: (async (u: string) => {
+        seen.push(u);
+        if (u.endsWith("/b/pr-logs/directory/j/1.txt"))
+          return pointer === null ? new Response("", { status: 404 }) : new Response(pointer);
+        if (u.includes("/pr-logs/directory/")) return new Response("", { status: 404 });
+        if (u.includes("/storage/v1/")) return new Response('{"items":[]}');
+        if (u.endsWith("finished.json")) return new Response('{"result":"FAILURE"}');
+        return new Response("[FAILED] x\nRan 1 of 2 Specs");
+      }) as unknown as typeof fetch,
+    });
+    const e = await runEvidence(d("gs://b/pr-logs/pull/9/j/1\n"), "b/pr-logs/directory/j", "1", NOW);
+    expect(e).toMatchObject({ result: "FAILURE", url: "https://prow.k8s.io/view/gs/b/pr-logs/pull/9/j/1" });
+    expect(e.log_signals).not.toBeNull();
+    expect(seen).toContain("https://storage.googleapis.com/b/pr-logs/pull/9/j/1/build-log.txt");
+    const none = d(null);
+    expect((await runEvidence(none, "b/pr-logs/directory/j", "1", NOW)).log_signals).toBeNull();
+    expect(await none.cache.get("tgrun:b/pr-logs/directory/j/1", DAY)).toBeUndefined();
   });
 });
 
@@ -333,5 +386,17 @@ describe("related issues", () => {
       type: "ISSUE_SEMANTIC",
     });
     expect(qs[3]).toMatchObject({ type: "ISSUE_HYBRID" });
+  });
+});
+
+describe("namesWhole", () => {
+  it("matches a whole job name, not a prefix of a longer one", () => {
+    expect(namesWhole("also flakes on `ci-kubernetes-node-e2e` (TestGrid)", "ci-kubernetes-node-e2e")).toBe(
+      true,
+    );
+    expect(namesWhole("seen on ci-kubernetes-node-e2e.", "ci-kubernetes-node-e2e")).toBe(true);
+    expect(namesWhole("on ci-kubernetes-node-e2e-containerd", "ci-kubernetes-node-e2e")).toBe(false);
+    expect(namesWhole("pull-ci-kubernetes-node-e2e", "ci-kubernetes-node-e2e")).toBe(false);
+    expect(namesWhole("job a.b+c ran", "a.b+c")).toBe(true);
   });
 });

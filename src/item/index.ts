@@ -14,6 +14,7 @@ import { isOurs } from "../content/dom";
 import { WORKFLOWS, type ColumnWorkflow, type PaneState } from "../content/workflows";
 import { PrCi } from "./ci";
 import { IssueCheck } from "./issue";
+import { boardFeedback } from "../content/feedback";
 
 /** The workflow of the column the item sits in. */
 function workflowFor(p: Placement): ColumnWorkflow<unknown> | null {
@@ -132,6 +133,18 @@ class ItemAssistant {
     if (existing?.dataset.snbaKey === key && side.el.contains(existing)) return;
     existing?.remove();
     const section = wf.pane(side.adapter, item, st, (it) => this.judgeOne(it, true));
+    if (st.state === "done")
+      section.append(
+        boardFeedback({
+          board: placement.board,
+          column: placement.column,
+          item,
+          result: st.result,
+          fields: judged.fields,
+          where: "Item page",
+          card: () => section,
+        }),
+      );
     section.dataset.snbaKey = key;
     placeSection(side.el, section);
   }

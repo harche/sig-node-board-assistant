@@ -99,6 +99,8 @@ export const OTHER_SIGS = [
   "windows",
 ] as const;
 
+/** SIG Node is a choice too: without it every SIG Node bug was handed some other SIG, and the card offered that
+ *  handoff. Only an OTHER_SIGS answer offers it. */
 const sig = {
   type: "choice",
   instructions: {
@@ -106,6 +108,7 @@ const sig = {
     evidence: BUGS_BOARD.evidence,
   },
   criteria: {
+    node: "kubelet and node code: pod and container lifecycle, PLEG, probes, restarts and backoff, CRI and cri-client, the container, CPU, memory, topology and device managers, eviction, node e2e tests",
     "api-machinery": "apiserver, admission, validation, CRDs, client-go, garbage collection",
     apps: "workload controllers: deployments, jobs, cronjobs, daemonsets, statefulsets",
     auth: "authentication, authorization, RBAC, service account tokens, secrets encryption",

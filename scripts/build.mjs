@@ -3,11 +3,22 @@
 // `--test` (or SNBA_TEST=1) makes a test build: test mode, the private test boards and the test repo are compiled in
 // (src/shared/build.d.ts). Without it they are left out of the bundle.
 import * as esbuild from "esbuild";
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 const watch = process.argv.includes("--watch");
 const test = process.argv.includes("--test") || process.env.SNBA_TEST === "1";
 const outdir = "dist";
+// The commit the bundle was built from, for feedback issues (core/feedback.ts): "-dirty" when the tree had changes.
+const git = (...a) => {
+  try {
+    return execFileSync("git", a, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+};
+const commit =
+  (git("rev-parse", "--short", "HEAD") || "unknown") + (git("status", "--porcelain") ? "-dirty" : "");
 
 // Content scripts are classic scripts (no `export` allowed), so they and the options page are bundled as
 // IIFEs; the service worker is declared `type: module` and stays ESM.
@@ -21,6 +32,7 @@ const common = {
   define: {
     "process.env.NODE_ENV": JSON.stringify(watch ? "development" : "production"),
     __TEST_BUILD__: JSON.stringify(test),
+    __BUILD_COMMIT__: JSON.stringify(commit),
   },
 };
 const builds = [

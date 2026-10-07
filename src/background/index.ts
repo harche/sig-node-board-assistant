@@ -2,7 +2,16 @@
  *  (read-only views of GitHub plus Jev's opinion) and, on a writable board, to apply an accepted action. */
 import { Cache, MemoryStore } from "../core/cache";
 import { GitHubClient } from "../core/github";
-import { JevClient } from "../core/jev";
+import { JevClient, type JevCall } from "../core/jev";
+import {
+  feedbackHead,
+  FEEDBACK_REPO,
+  gistFiles,
+  prefilled,
+  renderFeedback,
+  type FeedbackEnv,
+  type FeedbackReport,
+} from "../core/feedback";
 import { knownBoard, writesTo } from "../core/boards";
 import { findOnBoards } from "../core/lookup";
 import { DUPLICATE_QUESTIONS } from "../core/prompts/todo";
@@ -22,6 +31,7 @@ import { judgeRelated } from "../core/related";
 import {
   isTgDraft,
   mirrorTitle,
+  namesWhole,
   prowLabels,
   TG_LIVE_REPOS,
   TG_TEST_REPO,
@@ -45,8 +55,8 @@ import { decideReview, judgeReview, type Candidate, type ReviewResult } from "..
 import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
 import type { BoardItem, BoardRef, ItemDetail, JevChoice, JevNoul } from "../core/types";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
-import { jevSettings } from "../shared/messages";
-import { ChromeLocalStore, loadSettings, saveSettings } from "./storage";
+import { jevSettings, TRACED, type Settings } from "../shared/messages";
+import { ChromeLocalStore, loadSettings, saveSettings, TraceStore } from "./storage";
 
 /** Broken Prow commands in the thread and their fixes (core/prowcmds.ts); a failure here never fails the judge. */
 async function fixes(detail: ItemDetail, jev: JevClient, refresh?: boolean): Promise<ProwFix[]> {
@@ -208,20 +218,64 @@ chrome.storage.local
  *  chrome.storage.local, whose 10 MB quota (overflow clears the whole cache, Jev answers too) they would eat. */
 const tgCache = new Cache(new MemoryStore());
 
-async function clients() {
+const traces = new TraceStore();
+
+/** `trace` collects the request's Jev calls (feedback). */
+async function clients(trace?: JevCall[]) {
   const s = await loadSettings();
   if (!s.githubToken) throw new Error("GitHub token not set: open the extension options");
   const gh = new GitHubClient(s.githubToken, cache);
   const j = jevSettings(s);
   const jev = j.apiKey ? new JevClient(j, cache) : null;
+  if (jev) jev.trace = trace;
   return { gh, jev, settings: s };
+}
+
+function feedbackEnv(s: Settings): FeedbackEnv {
+  const j = jevSettings(s);
+  return {
+    version: chrome.runtime.getManifest().version,
+    commit: __BUILD_COMMIT__,
+    provider: j.provider,
+    model: j.model,
+    testMode: s.testMode,
+    time: new Date().toISOString(),
+  };
+}
+
+/** The trace a card's result names, if the worker still has it. */
+async function traceOf(report: FeedbackReport) {
+  const id = (report.result as { trace_id?: unknown } | null)?.trace_id;
+  return typeof id === "string" ? traces.get(id).catch(() => null) : null;
+}
+
+/** A judge request's result gets a `trace_id`, and its Jev calls are kept under it. */
+async function handle<R extends Request>(req: R, trusted: boolean): Promise<ResponseMap[R["type"]]> {
+  if (!TRACED.has(req.type)) return handleOne(req, trusted);
+  const calls: JevCall[] = [];
+  const value = await handleOne(req, trusted, calls);
+  if (value && typeof value === "object" && calls.length) {
+    const id = crypto.randomUUID();
+    try {
+      await traces.put(id, { at: new Date().toISOString(), request: req, calls });
+      (value as { trace_id?: string }).trace_id = id;
+    } catch (e) {
+      // Feedback then goes without the calls; the card itself is unaffected.
+      console.warn("could not keep the Jev trace:", e);
+    }
+  }
+  return value;
 }
 
 /** Messages only the extension's own pages (the settings page) may send: they read the keys or change settings
  *  (test mode among them). Content scripts run inside github.com and testgrid.k8s.io pages. */
 const TRUSTED_ONLY = new Set<Request["type"]>(["settings.set", "settings.test", "cache.clear"]);
 
-async function handle<R extends Request>(req: R, trusted: boolean): Promise<ResponseMap[R["type"]]> {
+async function handleOne<R extends Request>(
+  req: R,
+  trusted: boolean,
+  trace?: JevCall[],
+): Promise<ResponseMap[R["type"]]> {
   type Out = ResponseMap[R["type"]];
   if (!trusted && TRUSTED_ONLY.has(req.type)) throw new Error(`${req.type} is only for the settings page`);
   switch (req.type) {
@@ -261,19 +315,19 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
     case "cache.clear":
       return { removed: await store.clearAll() } as Out;
     case "board.fields": {
-      const { gh } = await clients();
+      const { gh } = await clients(trace);
       return (await gh.fields(req.board)) as Out;
     }
     case "column.items": {
-      const { gh } = await clients();
+      const { gh } = await clients(trace);
       return (await gh.itemsIn(req.board, req.column, req.refresh)) as Out;
     }
     case "item.lookup": {
-      const { gh } = await clients();
+      const { gh } = await clients(trace);
       return (await findOnBoards(gh, req.repo, req.number)) as Out;
     }
     case "item.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const detail = await gh.itemDetail(req.item.repository, req.item.type, req.item.number, req.refresh);
       const r = await judge(req.item, detail, jev, req.refresh);
@@ -281,7 +335,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return r as Out;
     }
     case "todo.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, prs] = await Promise.all([
@@ -293,7 +347,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return r as Out;
     }
     case "progress.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const detail = await gh.itemDetail(repo, "Issue", num, req.refresh);
@@ -306,7 +360,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return r as Out;
     }
     case "review.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
@@ -364,7 +418,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return out as Out;
     }
     case "approve.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
@@ -431,7 +485,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return out as Out;
     }
     case "author.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
@@ -465,7 +519,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return out as Out;
     }
     case "bugs.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const detail = await gh.itemDetail(req.item.repository, "Issue", req.item.number, req.refresh);
       const r = await judgeBug(req.item, detail, jev, req.refresh);
@@ -473,7 +527,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return r as Out;
     }
     case "info.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, tl] = await Promise.all([
@@ -485,7 +539,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return r as Out;
     }
     case "dra.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       return (await judgeDra(
@@ -500,7 +554,7 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       )) as Out;
     }
     case "backlog.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, prs] = await Promise.all([
@@ -516,17 +570,17 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return r as Out;
     }
     case "backlog.duplicates": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await bugDuplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "todo.duplicates": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await duplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "tg.judge": {
-      const { gh, jev, settings } = await clients();
+      const { gh, jev, settings } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await judgeTg(
         {
@@ -543,11 +597,11 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       )) as Out;
     }
     case "ci.checks": {
-      const { gh } = await clients();
+      const { gh } = await clients(trace);
       return prChecks(await gh.pullChecks(req.repo, req.number, req.refresh)) as Out;
     }
     case "ci.judge": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const tg = new TestGridClient(tgCache);
       const deps: CiDeps = {
@@ -564,13 +618,13 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       return (await judgeCi(deps, req.repo, req.number, req.check, req.refresh)) as Out;
     }
     case "issue.scope": {
-      const { gh } = await clients();
+      const { gh } = await clients(trace);
       const detail = await gh.itemDetail(req.repo, "Issue", req.number);
       return inScope(detail.labels.map((l) => l.name)) as Out;
     }
     case "issue.ci":
     case "issue.dups": {
-      const { gh, jev } = await clients();
+      const { gh, jev } = await clients(trace);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const detail = await gh.itemDetail(req.repo, "Issue", req.number, req.refresh);
       if (!inScope(detail.labels.map((l) => l.name))) return null as Out;
@@ -594,14 +648,39 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       // In test mode, TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a
       // comment meant for another repo's issue goes on that issue's mirror there. With test mode off they go to the
       // real issue, in TG_LIVE_REPOS only. Either way only bodies this extension drafted are written.
-      const { gh, settings } = await clients();
+      const { gh, settings } = await clients(trace);
       const wrote: string[] = [];
       for (const st of req.steps) {
         if (!isTgDraft(st.body)) throw new Error("refusing a body the extension did not draft");
         if (!settings.testMode && !TG_LIVE_REPOS.includes(st.repo))
           throw new Error(`refusing a write to ${st.repo}`);
       }
+      // Where a comment for `repo#number` lands: the issue itself, or its mirror in test mode (null: no mirror yet).
+      const commentTarget = async (repo: string, number: number): Promise<[string, number] | null> => {
+        if (!settings.testMode) return [repo, number];
+        const title = mirrorTitle(repo, number);
+        const all = await gh.paged<{ number: number; title: string }>(`/repos/${TG_TEST_REPO}/issues`, {
+          state: "all",
+        });
+        const m = all.find((x) => x.title === title);
+        return m ? [TG_TEST_REPO, m.number] : null;
+      };
       for (const st of req.steps) {
+        // An earlier Apply (another tab, a retry) may have posted this job's comment since the judge read the thread.
+        // Only this extension's own comments count, by whole job name: whether anyone else already reported the job
+        // was Jev's call when judging, and a plain substring test would also match a longer job's name.
+        if (st.kind === "comment" && st.names.length) {
+          const at = await commentTarget(st.repo, st.number);
+          const ours = at
+            ? (await gh.paged<{ body?: string }>(`/repos/${at[0]}/issues/${at[1]}/comments`)).filter((c) =>
+                isTgDraft(c.body ?? ""),
+              )
+            : [];
+          if (ours.some((c) => st.names.some((n) => namesWhole(c.body ?? "", n)))) {
+            wrote.push(`${st.repo}#${st.number} already has this job's comment: not commented again`);
+            continue;
+          }
+        }
         if (st.kind === "issue") {
           const repo = settings.testMode ? TG_TEST_REPO : st.repo;
           const labels = st.labels.filter((l) => ["kind/failing-test", "kind/flake", "sig/node"].includes(l));
@@ -654,12 +733,78 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
       }
       return { wrote } as Out;
     }
+    case "feedback.preview": {
+      const s = await loadSettings();
+      const trace = await traceOf(req.report);
+      const env = feedbackEnv(s);
+      const all = renderFeedback(req.report, env, trace, Number.POSITIVE_INFINITY);
+      const head = feedbackHead(req.report, env, trace);
+      return {
+        repo: FEEDBACK_REPO,
+        title: all.title,
+        head,
+        calls: trace?.calls.length ?? 0,
+        attachedKb: Math.round((all.body.length - head.length) / 1024),
+        gist: renderFeedback(req.report, env, trace).comments.length > 0,
+      } as Out;
+    }
+    case "feedback.submit": {
+      // The one write outside the boards and TestGrid: an issue on this extension's repo, in test mode too (it is
+      // about the extension), built here from the report, never a body the page wrote.
+      const s = await loadSettings();
+      const repo = FEEDBACK_REPO;
+      const trace = await traceOf(req.report);
+      const env = feedbackEnv(s);
+      let gist: string | undefined;
+      const fallback = (e: unknown) =>
+        ({
+          opened: null,
+          error: e instanceof Error ? e.message : String(e),
+          prefill: prefilled(repo, req.report, env, trace, gist),
+          ...(gist ? { gist } : {}),
+        }) as Out;
+      if (!s.githubToken) return fallback(new Error("GitHub token not set"));
+      const gh = new GitHubClient(s.githubToken, cache);
+      let out = renderFeedback(req.report, env, trace);
+      // Attachments too big for the issue body go to a secret gist on the reader's account, linked from the issue.
+      // Without the gist scope they stay in comments on the issue (or on the clipboard, below).
+      const makeGist = async () => {
+        try {
+          gist = await gh.createGist(out.title, gistFiles(req.report, env, trace));
+        } catch (e) {
+          console.warn("feedback gist failed:", e);
+        }
+      };
+      if (out.comments.length) {
+        await makeGist();
+        if (gist) out = renderFeedback(req.report, env, trace, undefined, gist);
+      }
+      let n: number;
+      try {
+        n = await gh.createIssue(repo, out.title, out.body, ["feedback"]);
+      } catch (e) {
+        // A fine-grained token for the kubernetes org cannot open issues here: the reader files it by hand, linking
+        // the gist when the token may make one, so there is nothing to paste.
+        if (!gist) await makeGist();
+        return fallback(e);
+      }
+      // The rest of the attachments; the issue stands even if one fails.
+      for (const c of out.comments) {
+        try {
+          await gh.comment(repo, n, c);
+        } catch (e) {
+          console.warn("feedback attachment comment failed:", e);
+          break;
+        }
+      }
+      return { opened: `https://github.com/${repo}/issues/${n}`, ...(gist ? { gist } : {}) } as Out;
+    }
     case "item.apply": {
       // The only board write path. Refused unless the board takes writes (a test copy, or any known board with test
       // mode off), and every step
       // must touch only the one item named: a Status move of that project item, or a Prow triage comment on the
       // issue / PR that GitHub says is behind it.
-      const { gh, settings } = await clients();
+      const { gh, settings } = await clients(trace);
       if (!writesTo(knownBoard(req.board), settings.testMode))
         throw new Error(
           `${req.board.owner}/${req.board.number} is read-only${settings.testMode ? " in test mode" : " in this extension"}`,
