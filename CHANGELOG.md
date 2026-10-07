@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4 (unreleased)
+
+- **TestGrid: dark theme.** With TestGrid's dark theme on, the hover card, the job badges and the feedback dialog take
+  TestGrid's dark colours (its panels, text, links and buttons), and a badge's text is no longer light grey on white.
+  Badges on TestGrid highlight on hover, and the feedback dialog's buttons use TestGrid's colours in either theme.
+
 ## 0.1.3 (unreleased)
 
 - **Always fresh.** Every judgment reads GitHub, TestGrid and the CI logs again and asks Jev again: no GitHub data or

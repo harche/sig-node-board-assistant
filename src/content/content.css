@@ -689,7 +689,54 @@ html.snba-tg {
   --borderColor-success-emphasis: #00cc33;
   --borderColor-danger-emphasis: #aa0000;
   --borderColor-attention-emphasis: #660099;
+  --button-default-bgColor-rest: #ebeff9;
+  --button-default-fgColor-rest: #000;
+  --button-default-borderColor-rest: #6b90da;
+  --button-primary-bgColor-rest: #3366cc;
+  --button-primary-fgColor-rest: #fff;
+  --button-primary-borderColor-rest: #3366cc;
+  --bgColor-neutral-muted: #dbe3f5;
+  --snba-tg-badge-bgColor: #fff;
   --text-body-size-small: 12px;
+}
+/* TestGrid's dark theme (its settings toggle puts theme-dark on body): the same parts in TestGrid's dark colours,
+   its summary panel (#334), text (#ddd), links (#ccf), buttons (#445, edged #666) and status fills. */
+html.snba-tg:has(> body.theme-dark) {
+  --bgColor-default: #121212;
+  --overlay-bgColor: #333344;
+  --bgColor-muted: #2a2a38;
+  --bgColor-neutral-muted: #ffffff1f;
+  --bgColor-disabled: #2a2a2a;
+  --bgColor-success-emphasis: #3a8a5a;
+  --bgColor-danger-emphasis: #c03355;
+  --bgColor-attention-emphasis: #9955bb;
+  --borderColor-default: #666666;
+  --borderColor-muted: #444455;
+  --borderColor-accent-emphasis: #ccccff;
+  --borderColor-success-emphasis: #aaddaa;
+  --borderColor-danger-emphasis: #ffaabb;
+  --borderColor-attention-emphasis: #ddaaff;
+  --fgColor-default: #dddddd;
+  --fgColor-muted: #aaaaaa;
+  --fgColor-disabled: #777777;
+  --fgColor-accent: #ccccff;
+  --fgColor-success: #aaddaa;
+  --fgColor-danger: #ffaabb;
+  --fgColor-attention: #ddaaff;
+  --focus-outlineColor: #ccccff;
+  --button-default-bgColor-rest: #444455;
+  --button-default-fgColor-rest: #dddddd;
+  --button-default-borderColor-rest: #666666;
+  --button-primary-bgColor-rest: #4a6ab0;
+  --button-primary-fgColor-rest: #ffffff;
+  --button-primary-borderColor-rest: #6b90da;
+  --shadow-floating-small: 0 2px 8px rgb(0 0 0 / 0.6);
+  --shadow-floating-large: 0 12px 28px rgb(0 0 0 / 0.7);
+  --snba-tg-badge-bgColor: #444455;
+}
+/* Our own scrollbars and form fields only; TestGrid's page keeps its own. */
+html.snba-tg:has(> body.theme-dark) :is(.snba-hovercard, .snba-feedback) {
+  color-scheme: dark;
 }
 html.snba-tg .snba-hovercard,
 html.snba-tg .snba-badge,
@@ -701,7 +748,7 @@ html.snba-tg .snba-hovercard {
   max-height: min(480px, calc(100vh - 32px));
 }
 html.snba-tg .snba-hovercard a {
-  color: #0000cc;
+  color: var(--fgColor-accent);
 }
 .snba-tg-bar {
   display: inline-flex;
@@ -711,12 +758,15 @@ html.snba-tg .snba-hovercard a {
 }
 .snba-tg-status {
   font-size: 10.2px;
-  color: #555;
+  color: var(--fgColor-muted);
 }
 .tab-name .snba-badge {
   margin-left: 8px;
   vertical-align: middle;
-  background: #fff;
+  background: var(--snba-tg-badge-bgColor);
+}
+.tab-name .snba-badge:hover {
+  background: var(--bgColor-neutral-muted);
 }
 .snba-hovercard code {
   font-size: 11px;
