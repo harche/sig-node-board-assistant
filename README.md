@@ -98,7 +98,11 @@ for you to paste.
 
 ## Install
 
-The extension is not on the Chrome Web Store yet. Build it from source (Node 20 or later):
+Install it from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/sig-node-board-assistant/ngimkkgeokllcnfdjeijegalfgkaemdj),
+then click the extension's icon to open its settings.
+
+Or build it from source (Node 20 or later):
 
 ```bash
 git clone https://github.com/harche/sig-node-board-assistant
@@ -113,8 +117,8 @@ Then load it in Chrome:
 2. Click **Load unpacked** and choose the `dist/` folder.
 3. Click the extension's icon to open its settings.
 
-Tagged [releases](https://github.com/harche/sig-node-board-assistant/releases) will also carry a built zip: unzip it and
-load that folder the same way.
+Each [release](https://github.com/harche/sig-node-board-assistant/releases) also carries a built zip: unzip it and load
+that folder the same way.
 
 ### Configure
 
@@ -192,6 +196,7 @@ npm run watch        # rebuild dist/ on every change; then reload the extension 
 npm test             # unit tests, plus parity against a frozen snapshot of the original CLI's outputs
 npm run lint         # eslint and prettier
 npm run typecheck
+npm run zip          # a release build in release/ and its zip, leaving dist/ alone
 npm run judge -- kubernetes/151   # judge a board's Triage column from the terminal, read-only
 ```
 
@@ -210,7 +215,6 @@ policy lives.
 
 ## Roadmap
 
-- Chrome Web Store listing.
 - Posting the PR page's rerun command through the same checked write path.
 - Grouping TestGrid jobs that fail the same way into one issue.
 

@@ -7,13 +7,14 @@ boards", they mean this:
 
 - **Build it:** `npm run build:test` (or `npm run watch:test`), then load `dist/` unpacked in Chrome. A plain
   `npm run build`, `npm run watch` or `npm run zip` is a normal build: no test mode, no test boards, no test repo.
-  Releases are always normal builds.
+  Releases are always normal builds. `npm run zip` builds into `release/`, not `dist/`, so it leaves a loaded test
+  build alone.
 - **How it works:** `scripts/build.mjs --test` (or `SNBA_TEST=1`) sets the global `__TEST_BUILD__`
   (`src/shared/build.d.ts`) to `true`. It gates `TEST_BOARDS` in `src/core/boards.ts`, `TG_TEST_REPO` in
   `src/core/tgreview.ts`, the Test mode switch and the test-token hint on the settings page, and `Settings.testMode`.
   `scripts/build.mjs --test` also adds the test boards and test repo to the manifest's content-script matches. In a
   normal build esbuild drops all of it (check with `grep -rE 'sig-node-board-test|users/harche' dist`: no hits; `npm run zip`
-  refuses a build that has any). `harche/sig-node-board-assistant`, where feedback goes, is in every build, and `loadSettings` forces `testMode` off, so a value saved by a test build never steers a normal build's
+  refuses a `release/` build that has any). `harche/sig-node-board-assistant`, where feedback goes, is in every build, and `loadSettings` forces `testMode` off, so a value saved by a test build never steers a normal build's
   writes. Vitest runs as a test build (`vitest.config.ts`).
 - **The switch:** in a test build, test mode starts on (settings page, `Settings.testMode`). On, Apply and Accept write
   only to the test copies below, and TestGrid writes only to `harche/sig-node-board-test`. Off, they write to the real

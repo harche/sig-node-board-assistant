@@ -1,4 +1,5 @@
 dist
+release
 node_modules
 tests/fixtures/*.json
 package-lock.json

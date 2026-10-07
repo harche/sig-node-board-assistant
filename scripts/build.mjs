@@ -1,14 +1,19 @@
-// Bundles the extension entry points with esbuild and copies the static files into dist/.
+// Bundles the extension entry points with esbuild and copies the static files into dist/ (release/ with --release).
 // `node scripts/build.mjs --watch` rebuilds on change (reload the unpacked extension in chrome://extensions).
 // `--test` (or SNBA_TEST=1) makes a test build: test mode, the private test boards and the test repo are compiled in
 // (src/shared/build.d.ts). Without it they are left out of the bundle.
+// `--release` makes a normal build into release/ instead of dist/, for `npm run zip`, so the dist/ loaded in Chrome
+// (a test build, say) is left alone.
 import * as esbuild from "esbuild";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 const watch = process.argv.includes("--watch");
 const test = process.argv.includes("--test") || process.env.SNBA_TEST === "1";
-const outdir = "dist";
+const release = process.argv.includes("--release");
+if (release && (test || watch))
+  throw new Error("--release is a normal build: drop --test, SNBA_TEST and --watch");
+const outdir = release ? "release" : "dist";
 // The commit the bundle was built from, for feedback issues (core/feedback.ts): "-dirty" when the tree had changes.
 const git = (...a) => {
   try {

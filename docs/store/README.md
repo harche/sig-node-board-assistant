@@ -1,7 +1,7 @@
 # Chrome Web Store listing
 
-The text and images for the store listing, kept here so each release can paste them from one place. Upload the zip from
-`npm run zip`.
+The text and images for the store listing, kept here so each release can paste them from one place. Each release's zip
+is uploaded and submitted for review by the release workflow (`.github/workflows/chrome-web-store.yml`).
 
 ## Store listing
 
