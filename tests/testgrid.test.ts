@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { Cache, MemoryStore } from "../src/core/cache";
 import {
   cells,
   matchRows,
@@ -179,7 +178,7 @@ describe("TestGridClient.resolveJob", () => {
         : { query: "kubernetes-ci-logs/logs/ci-node-crio-eviction", timestamps: [], tests: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     }) as typeof fetch;
-    const tg = new TestGridClient(new Cache(new MemoryStore()), fetchFn);
+    const tg = new TestGridClient(fetchFn);
     expect(await tg.resolveJob("ci-node-crio-eviction")).toEqual({
       dashboard: "sig-node-cri-o",
       tab: "ci-node-crio-eviction",

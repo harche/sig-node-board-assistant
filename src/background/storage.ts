@@ -1,41 +1,17 @@
-/** chrome.storage.local as a key-value store for the cache, and the settings record. Tokens live in
+/** The settings record in chrome.storage.local, and the Jev traces in chrome.storage.session. Tokens live in
  *  storage.local (never storage.sync), so they stay on this machine. */
-import type { KeyValueStore } from "../core/cache";
 import type { Trace } from "../core/feedback";
 import { DEFAULT_SETTINGS, type Settings } from "../shared/messages";
 
-const CACHE_PREFIX = "cache:";
+const OLD_CACHE_PREFIX = "cache:";
 const SETTINGS_KEY = "settings";
 
-export class ChromeLocalStore implements KeyValueStore {
-  async get(key: string) {
-    const r = await chrome.storage.local.get(CACHE_PREFIX + key);
-    return r[CACHE_PREFIX + key];
-  }
-  async set(key: string, value: unknown) {
-    try {
-      await chrome.storage.local.set({ [CACHE_PREFIX + key]: value });
-    } catch (e) {
-      // Quota exceeded: drop the whole cache rather than fail the request; everything in it is re-fetchable.
-      console.warn("cache write failed, clearing cache:", e);
-      await this.clearAll();
-      await chrome.storage.local.set({ [CACHE_PREFIX + key]: value });
-    }
-  }
-  async remove(key: string) {
-    await chrome.storage.local.remove(CACHE_PREFIX + key);
-  }
-  async keys() {
-    const all = await chrome.storage.local.get(null);
-    return Object.keys(all)
-      .filter((k) => k.startsWith(CACHE_PREFIX))
-      .map((k) => k.slice(CACHE_PREFIX.length));
-  }
-  async clearAll() {
-    const keys = await this.keys();
-    await chrome.storage.local.remove(keys.map((k) => CACHE_PREFIX + k));
-    return keys.length;
-  }
+/** Removes what versions before 0.1.2 cached in chrome.storage.local (GitHub reads and Jev answers, up to 10 MB):
+ *  nothing reads it any more. */
+export async function dropOldCache(): Promise<void> {
+  const all = await chrome.storage.local.get(null);
+  const old = Object.keys(all).filter((k) => k.startsWith(OLD_CACHE_PREFIX));
+  if (old.length) await chrome.storage.local.remove(old);
 }
 
 export async function loadSettings(): Promise<Settings> {

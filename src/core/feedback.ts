@@ -121,7 +121,7 @@ function parts(r: FeedbackReport, trace: Trace | null): Part[] {
   };
   trace?.calls.forEach((c, i) => {
     const ids = Object.keys(c.questions).join(", ");
-    const tag = `Jev call ${i + 1}/${n} (${ids}${c.cached ? "; cached answer" : ""})`;
+    const tag = `Jev call ${i + 1}/${n} (${ids})`;
     out.push(once(`${tag}: questions`, JSON.stringify(c.questions, null, 2), `call ${i + 1}`));
     out.push({ label: `${tag}: answers`, json: JSON.stringify(c.answers, null, 2) });
     out.push(once(`${tag}: state sent`, JSON.stringify(c.state, null, 2), `call ${i + 1}`));

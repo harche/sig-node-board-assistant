@@ -80,8 +80,7 @@ On a SIG Node or DRA issue, **Check** answers two questions.
 - Does the issue duplicate, or concretely relate to, another issue, open or closed? About 40 candidates come from
   keyword, semantic and exact-error searches, and Jev reads each one against the issue.
 
-Nothing asks Jev on an issue or PR page until you click. The same button reads **Check again** afterwards and
-bypasses the cache.
+Nothing asks Jev on an issue or PR page until you click. The same button reads **Check again** afterwards.
 
 <br clear="right">
 
@@ -131,7 +130,7 @@ The settings page needs two credentials:
   - [TypeSafe](https://typesafe.ai);
   - [OpenRouter](https://openrouter.ai/settings/keys), which serves the same model.
 
-  Judging a card costs about $0.0002, and answers are cached, so revisiting a board is free.
+  Judging a card costs about $0.0002. Every judgment reads GitHub and asks Jev fresh.
 
 **Save and test** checks both connections.
 
@@ -199,7 +198,7 @@ npm run judge -- kubernetes/151   # judge a board's Triage column from the termi
 | Path              | What it holds                                                                                    |
 | ----------------- | ------------------------------------------------------------------------------------------------ |
 | `src/core/`       | the logic, with no browser APIs: GitHub, Jev and TestGrid clients, signals, prompts and policies |
-| `src/background/` | the service worker: holds the keys and the cache, makes every network call, checks every write   |
+| `src/background/` | the service worker: holds the keys, makes every network call, checks every write                 |
 | `src/content/`    | the board page: column buttons, badges, hover cards, the pane section                            |
 | `src/item/`       | issue and PR pages: the board section, Failing CI, CI history and duplicates                     |
 | `src/testgrid/`   | TestGrid dashboards                                                                              |

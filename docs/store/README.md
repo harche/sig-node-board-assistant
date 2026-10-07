@@ -47,8 +47,8 @@ Open source (Apache-2.0): https://github.com/harche/sig-node-board-assistant
 
 - **Single purpose:** Help Kubernetes SIG Node maintainers triage their GitHub project boards, CI failures and flaky
   tests, by suggesting an action for each item, with its evidence, on the GitHub and TestGrid pages they use.
-- **`storage`:** Keeps the user's GitHub token, Jev key and settings, and a cache of fetched GitHub data and Jev
-  answers so revisited pages load without new requests. Local storage only, never synced.
+- **`storage`:** Keeps the user's GitHub token, Jev key and settings, in local storage only, never synced. Nothing
+  fetched is stored.
 - **Host permissions:**
   - `api.github.com`: reads the issues, pull requests, boards and CI results being triaged, and, only when the user
     clicks Apply or Accept, posts the comment or Status move shown to them.

@@ -583,7 +583,6 @@ export async function judgeReview(
   tl: TimelineEvent[],
   refState: (repo: string, n: number) => Promise<string>,
   jev: JevClient,
-  refresh = false,
   now = Date.now(),
   opts: { authorCheckins?: boolean } = {},
 ): Promise<Omit<ReviewResult, "candidates" | "candidates_note">> {
@@ -594,11 +593,9 @@ export async function judgeReview(
     })),
   );
   const f = reviewFacts(item, d, ps, tl, refs, now);
-  const r = await jev.askCached<ReviewAnswers>(
+  const r = await jev.ask<ReviewAnswers>(
     f.state,
     reviewQuestions(f, opts.authorCheckins ? ps.author : undefined),
-    4,
-    refresh,
   );
   const a = r.answers;
   const lastOf = (who: string) =>

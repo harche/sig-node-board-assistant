@@ -43,7 +43,6 @@ const trace = (stateChars: number): Trace => ({
       state: { description: "x".repeat(stateChars), note: "```inner fence```" },
       questions: { in_scope: { type: "noul" }, bucket: { type: "choice" } },
       answers: { in_scope: { noul: 0.9 } },
-      cached: true,
     },
   ],
 });
@@ -72,8 +71,8 @@ describe("renderFeedback", () => {
     expect(out.body).toContain(report.text);
     expect(out.body).toContain("**Should have been:** `Triaged`");
     expect(out.body).toContain("0.1.2 (abc1234)");
-    expect(out.body).toContain("Jev call 1/1 (in_scope, bucket; cached answer): questions");
-    expect(out.body).toContain("Jev call 1/1 (in_scope, bucket; cached answer): state sent");
+    expect(out.body).toContain("Jev call 1/1 (in_scope, bucket): questions");
+    expect(out.body).toContain("Jev call 1/1 (in_scope, bucket): state sent");
     expect(out.body).toContain('"trace_id": "t1"');
   });
 
@@ -85,7 +84,7 @@ describe("renderFeedback", () => {
 
   it("writes a state or questions sent before only once", () => {
     const t = trace(100);
-    t.calls.push({ ...t.calls[0]!, answers: { in_scope: { noul: 0.2 } }, cached: false });
+    t.calls.push({ ...t.calls[0]!, answers: { in_scope: { noul: 0.2 } } });
     const { body } = renderFeedback(report, env, t);
     expect(body).toContain("Jev call 2/2 (in_scope, bucket): state sent: the same as call 1's.");
     expect(body).toContain("Jev call 2/2 (in_scope, bucket): questions: the same as call 1's.");

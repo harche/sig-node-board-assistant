@@ -6,7 +6,6 @@
  * Reads GITHUB_TOKEN (else `gh auth token`) and TYPESAFE_API_KEY. Prints the same result the drawer shows and
  * the proposed commands. It runs nothing: this is the read-only path, end to end. */
 import { execFileSync } from "node:child_process";
-import { Cache, MemoryStore } from "../src/core/cache";
 import { knownBoard } from "../src/core/boards";
 import { GitHubClient } from "../src/core/github";
 import { JevClient } from "../src/core/jev";
@@ -25,9 +24,8 @@ const jsonOut = process.argv.includes("--json")
 const githubToken =
   process.env.GITHUB_TOKEN || execFileSync("gh", ["auth", "token"], { encoding: "utf8" }).trim();
 const typesafeKey = process.env.TYPESAFE_API_KEY ?? "";
-const cache = new Cache(new MemoryStore());
-const gh = new GitHubClient(githubToken, cache);
-const jev = new JevClient({ apiKey: typesafeKey }, cache);
+const gh = new GitHubClient(githubToken);
+const jev = new JevClient({ apiKey: typesafeKey });
 
 async function itemsFor(
   spec: string,
@@ -94,7 +92,7 @@ for (const item of items) {
       : `  priority  ${r.priority} (${r.priority_why})   lane ${r.lane}`,
   );
   console.log(
-    `  jev       ${r.state_chars.toLocaleString()} chars, ${r.usage.input_tokens} tokens, $${r.usage.cost.toFixed(5)}${r.usage.cached ? " (cached)" : ""}`,
+    `  jev       ${r.state_chars.toLocaleString()} chars, ${r.usage.input_tokens} tokens, $${r.usage.cost.toFixed(5)}`,
   );
   for (const [name, a] of [
     ["accept", accept],

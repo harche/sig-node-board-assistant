@@ -198,7 +198,7 @@ const BADGE_TEXT = {
 } as const;
 
 export const todoWorkflow: ColumnWorkflow<TodoResult> = {
-  judge: (item, refresh) => send({ type: "todo.judge", item, refresh }),
+  judge: (item) => send({ type: "todo.judge", item }),
   async afterJudge(board, items, results) {
     const dups = await send({ type: "todo.duplicates", board, targets: items });
     const out = new Map<number, TodoResult>();
@@ -270,7 +270,7 @@ const PROGRESS_BADGE: Record<ProgressAction, string> = {
 };
 
 export const progressWorkflow: ColumnWorkflow<ProgressResult> = {
-  judge: (item, refresh) => send({ type: "progress.judge", item, refresh }),
+  judge: (item) => send({ type: "progress.judge", item }),
   badge(r, o) {
     const a = chosenProgress(r, o);
     const waiting = a === "keep" && r.assignees.some((x) => x.verdict === "wait");
@@ -341,7 +341,7 @@ function prWorkflow<R extends ReviewResult | ApproveResult | AuthorResult>(
   tips: { run: (column: string) => string; asked: string },
 ): ColumnWorkflow<R> {
   return {
-    judge: (item, refresh) => send({ type, item, refresh }) as Promise<R>,
+    judge: (item) => send({ type, item }) as Promise<R>,
     badge(r, o) {
       const a = chosenPr(spec, r, o);
       // A kept card says what it waits on.
@@ -450,7 +450,7 @@ const BUG_BADGE: Record<BugAction, string> = {
 /** The Triage column of the SIG Node Bugs board (kubernetes/185). A suggestion Jev is not sure of (and every
  *  hand-over or relabel) is the reviewer's call: yellow, with a question mark, until they pick an action. */
 export const bugsWorkflow: ColumnWorkflow<BugResult> = {
-  judge: (item, refresh) => send({ type: "bugs.judge", item, refresh }),
+  judge: (item) => send({ type: "bugs.judge", item }),
   badge(r, o) {
     const a = chosenBug(r, o);
     const unsure = !o.action && !decideBug(r).auto;
@@ -535,7 +535,7 @@ const INFO_BADGE: Record<InfoAction, string> = {
 /** The Needs Information column of the SIG Node Bugs board: answered → accept, quiet → remind once, then the
  *  lifecycle bot. */
 export const infoWorkflow: ColumnWorkflow<InfoResult> = {
-  judge: (item, refresh) => send({ type: "info.judge", item, refresh }),
+  judge: (item) => send({ type: "info.judge", item }),
   badge(r, o) {
     const a = chosenInfo(r, o);
     const unsure = !o.action && !decideInfo(r).auto;
@@ -611,7 +611,7 @@ const BACKLOG_BADGE: Record<BacklogAction, string> = {
 /** The SIG Node Bugs board's accepted backlog, Triaged and High Priority: fixed, duplicate, a quiet assignee, and
  *  the priority's column. */
 export const backlogWorkflow: ColumnWorkflow<BacklogResult> = {
-  judge: (item, refresh) => send({ type: "backlog.judge", item, refresh }),
+  judge: (item) => send({ type: "backlog.judge", item }),
   async afterJudge(board, items, results) {
     const dups = await send({ type: "backlog.duplicates", board, targets: items });
     const out = new Map<number, BacklogResult>();
@@ -717,7 +717,7 @@ const DRA_BADGE: Record<DraAction, string> = {
  *  column's rules (dra.ts). A suggestion Accept does not apply is the reviewer's call until they pick an action. */
 function draWorkflow(column: DraColumn, run: (column: string) => string): ColumnWorkflow<DraResult> {
   return {
-    judge: (item, refresh) => send({ type: "dra.judge", column, item, refresh }),
+    judge: (item) => send({ type: "dra.judge", column, item }),
     badge(r, o) {
       const a = chosenDra(r, o);
       const unsure = !o.action && !decideDra(r).auto;

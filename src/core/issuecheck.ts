@@ -33,7 +33,6 @@ export function inScope(labels: string[]): boolean {
 const addUsage = (u: JevUsage, x: JevUsage) => {
   u.input_tokens += x.input_tokens;
   u.cost += x.cost;
-  u.cached = u.cached && x.cached;
 };
 
 // ---------------------------------------------------------------------------------------------------- CI history
@@ -179,7 +178,7 @@ export function decideIssueCi(
   return { verdict: m ? "quiet" : "open", why: `${record}. P(resolved) ${p.toFixed(2)}.`, suggest: null };
 }
 
-export interface IssueDeps extends Pick<TgDeps, "cache" | "fetchFn"> {
+export interface IssueDeps extends Pick<TgDeps, "fetchFn"> {
   tg: TestGridClient;
   jev: JevClient;
 }
@@ -191,20 +190,19 @@ export async function judgeIssueCi(
   number: number,
   detail: ItemDetail,
   prs: LinkedPr[],
-  refresh = false,
   now = Date.now(),
 ): Promise<IssueCiResult | null> {
   const st = await buildTodoState(repo, detail, prs, d.tg, now);
   if (!st.ci_signal.length) return null;
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
-  const r = await d.jev.askCached<TodoAnswers>(st, todoQuestions(), 4, refresh);
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
+  const r = await d.jev.ask<TodoAnswers>(st, todoQuestions());
   addUsage(usage, r.usage);
 
   // The newest failure of the main job: of its named tests' rows when TestGrid has them, else of the whole job.
   const main = st.ci_signal.find((x) => x.named_in_title) ?? st.ci_signal[0]!;
   const [dashboard, tab] = main.testgrid.split("#") as [string, string];
   let newest: IssueCiResult["newest"] = null;
-  const tbl = await d.tg.table({ dashboard, tab }, refresh).catch(() => null);
+  const tbl = await d.tg.table({ dashboard, tab }).catch(() => null);
   if (tbl) {
     const wanted = testsFrom(detail.title, detail.body);
     const rows = wanted.flatMap((w) => matchRows(tbl, w));
@@ -215,10 +213,10 @@ export async function judgeIssueCi(
         .sort((a, b) => b.started - a.started)[0] ?? null;
     const gcs = (tbl.query ?? "").replace(/\/$/, "");
     if (at && gcs) {
-      const evidence = await runEvidence(d, gcs, at.build, at.started, refresh);
+      const evidence = await runEvidence(d, gcs, at.build, at.started);
       let tracks: number | null = null;
       if (evidence.junit_failures.length || evidence.log_signals?.length) {
-        const a = await d.jev.askCached<TrackAnswer>(
+        const a = await d.jev.ask<TrackAnswer>(
           {
             job: main.job,
             runs: [{ junit_failures: evidence.junit_failures, log_signals: evidence.log_signals ?? [] }],
@@ -230,8 +228,6 @@ export async function judgeIssueCi(
             },
           },
           tracksQuestion(),
-          4,
-          refresh,
         );
         addUsage(usage, a.usage);
         tracks = a.answers.tracks?.noul ?? null;

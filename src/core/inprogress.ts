@@ -491,7 +491,6 @@ export async function judgeProgress(
   d: ItemDetail,
   f: ProgressFetcher,
   jev: JevClient,
-  refresh = false,
   now = Date.now(),
 ): Promise<ProgressResult> {
   const tl = await f.timeline(item.repository, item.number);
@@ -509,11 +508,11 @@ export async function judgeProgress(
       ...base,
       assignees: [],
       p_moving_on: 0,
-      usage: { input_tokens: 0, cost: 0, cached: true },
+      usage: { input_tokens: 0, cost: 0 },
       state_chars: 0,
     };
   const state = await progressState(item.repository, item.number, item.assignees, d, tl, f, now);
-  const r = await jev.askCached<ProgressAnswers>(state, splitQuestions(state), 4, refresh);
+  const r = await jev.ask<ProgressAnswers>(state, splitQuestions(state));
   const verdicts = decideProgress(state, r.answers);
   const facts = state.assignees as Record<string, unknown>[];
   return {

@@ -254,14 +254,12 @@ export async function judgeBacklog(
   prs: LinkedPr[],
   f: ProgressFetcher,
   jev: JevClient,
-  refresh = false,
 ): Promise<BacklogResult> {
   const labels = bugLabels(d.labels.map((l) => l.name));
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const add = (u: JevUsage) => {
     usage.input_tokens += u.input_tokens;
     usage.cost += u.cost;
-    usage.cached = usage.cached && u.cached;
   };
   const st = await buildTodoState(item.repository, d, prs, NO_CI);
   const r: BacklogResult = {
@@ -297,11 +295,9 @@ export async function judgeBacklog(
   if (item.assignees.length)
     r.self_assigned = selfAssigned(item.assignees, await f.timeline(item.repository, item.number));
   const [fixed, progress, prio] = await Promise.all([
-    jev.askCached<{ resolved: JevNoul; resolution: JevChoice }>(st, backlogQuestions(), 4, refresh),
-    item.assignees.length ? judgeProgress(item, d, f, jev, refresh) : null,
-    labels.priority
-      ? null
-      : jev.askCached<{ priority: JevScore }>(bugState(item, d), priorityQuestion(), 4, refresh),
+    jev.ask<{ resolved: JevNoul; resolution: JevChoice }>(st, backlogQuestions()),
+    item.assignees.length ? judgeProgress(item, d, f, jev) : null,
+    labels.priority ? null : jev.ask<{ priority: JevScore }>(bugState(item, d), priorityQuestion()),
   ]);
   add(fixed.usage);
   r.answers = fixed.answers;
@@ -313,7 +309,7 @@ export async function judgeBacklog(
   const merged = st.linked_prs.filter((p) => p.state === "merged");
   if (fixed.answers.resolved.noul >= FIXED_ASK_AT && merged.length) {
     const q = fixPrQuestion(merged);
-    const pick = await jev.askCached<{ fix_pr: JevChoice }>(st, q, 4, refresh);
+    const pick = await jev.ask<{ fix_pr: JevChoice }>(st, q);
     add(pick.usage);
     const m = /^pr_(\d+)$/.exec(pick.answers.fix_pr.choice);
     const pr = m ? merged.find((p) => p.number === Number(m[1])) : undefined;

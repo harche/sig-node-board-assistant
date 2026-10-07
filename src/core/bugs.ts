@@ -376,12 +376,7 @@ function setPriority(r: BugResult, a: { priority: JevScore }): void {
   ];
 }
 
-export async function judgeBug(
-  item: BoardItem,
-  d: ItemDetail,
-  jev: JevClient,
-  refresh = false,
-): Promise<BugResult> {
+export async function judgeBug(item: BoardItem, d: ItemDetail, jev: JevClient): Promise<BugResult> {
   const labels = bugLabels(d.labels.map((l) => l.name));
   const routed_by = [
     ...new Set(
@@ -389,12 +384,11 @@ export async function judgeBug(
     ),
   ].sort();
   const state = bugState(item, d);
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const ask = async <A>(q: Record<string, unknown>): Promise<A> => {
-    const r = await jev.askCached<A>(state, q, 4, refresh);
+    const r = await jev.ask<A>(state, q);
     usage.input_tokens += r.usage.input_tokens;
     usage.cost += r.usage.cost;
-    usage.cached = usage.cached && r.usage.cached;
     return r.answers;
   };
   const r: BugResult = {

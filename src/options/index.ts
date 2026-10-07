@@ -78,11 +78,6 @@ $<HTMLButtonElement>("test").addEventListener("click", async () => {
   }
 });
 
-$<HTMLButtonElement>("clear").addEventListener("click", async () => {
-  const { removed } = await send({ type: "cache.clear" });
-  say(`Cache cleared, ${removed} entries removed.`, "ok");
-});
-
 /** Where writes go, from the code that enforces it: the boards that take writes, and where TestGrid's go. */
 function showWrites(testMode: boolean): void {
   const link = (href: string, text: string) =>

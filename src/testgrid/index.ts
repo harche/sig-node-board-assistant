@@ -102,7 +102,7 @@ class TestGridReview {
           e.preventDefault();
           e.stopPropagation();
           const s = this.slots.get(id);
-          if (!s || s.state === "error") void this.judge(r.tab, r.status, true);
+          if (!s || s.state === "error") void this.judge(r.tab, r.status);
         });
         b.addEventListener("mouseenter", () => this.hover.hoverStart(id, b!));
         b.addEventListener("mouseleave", () => this.hover.hoverEnd());
@@ -145,12 +145,12 @@ class TestGridReview {
     this.hover.close();
     const queue = [...this.tabs];
     const worker = async () => {
-      for (let t = queue.shift(); t; t = queue.shift()) await this.judge(t.tab, t.status, true);
+      for (let t = queue.shift(); t; t = queue.shift()) await this.judge(t.tab, t.status);
     };
     await Promise.all(Array.from({ length: PARALLEL }, worker));
   }
 
-  private async judge(tab: string, status: "FAILING" | "FLAKY", refresh: boolean): Promise<void> {
+  private async judge(tab: string, status: "FAILING" | "FLAKY"): Promise<void> {
     const id = this.idOf(tab);
     this.skipped.delete(id);
     this.slots.set(id, { state: "pending" });
@@ -161,7 +161,6 @@ class TestGridReview {
         type: "tg.judge",
         ref: { dashboard: this.dashboard, tab },
         status,
-        refresh,
       });
       this.slots.set(id, { state: "done", result });
     } catch (e) {

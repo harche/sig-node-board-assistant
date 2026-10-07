@@ -1,7 +1,8 @@
 /** TestGrid's JSON endpoints (no UI), ported from the reference implementation's lib/testgrid.py: per-dashboard
  *  summaries and per-tab tables. Used to tell whether the test an issue tracks still fails, so Jev reads run
  *  history computed by code rather than a commenter's "seems green now". TestGrid keeps about two weeks of runs. */
-import { type Cache, MINUTE } from "./cache";
+
+import { Reads } from "./reads";
 
 export const TESTGRID = "https://testgrid.k8s.io";
 
@@ -266,11 +267,15 @@ function tabGuesses(job: string): string[] {
   return g;
 }
 
+/** Reads TestGrid. Nothing is kept: the background makes a client per message (or per click's batch), and each read
+ *  is fetched once for that client's life (reads.ts). */
 export class TestGridClient {
-  constructor(
-    private cache: Cache,
-    private fetchFn: typeof fetch = (...a) => fetch(...a),
-  ) {}
+  private reads = new Reads();
+  constructor(private fetchFn: typeof fetch = (...a) => fetch(...a)) {}
+
+  private once<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    return this.reads.once(key, fn);
+  }
 
   private async json<T>(path: string): Promise<T> {
     const r = await this.fetchFn(`${TESTGRID}/${path}`);
@@ -280,24 +285,20 @@ export class TestGridClient {
 
   /** The dashboard's tab names. */
   tabs(dashboard: string): Promise<string[]> {
-    return this.cache.cached(`tg:tabs:${dashboard}`, 30 * MINUTE, async () =>
+    return this.once(`tabs:${dashboard}`, async () =>
       Object.keys(await this.json<TgSummary>(`${encodeURIComponent(dashboard)}/summary`)),
     );
   }
 
   /** A presubmit tab's table with only the tests that failed in some run (a whole blocking tab is ~7 MB, this
    *  ~2 MB): all a "does it fail on other PRs" check needs. */
-  failedTable(ref: TgRef, refresh = false): Promise<TgTable> {
-    return this.cache.cached(
-      `tg:failed:${ref.dashboard}#${ref.tab}`,
-      30 * MINUTE,
-      async () =>
-        compact(
-          await this.json<TgTable>(
-            `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}&exclude-non-failed-tests=`,
-          ),
+  failedTable(ref: TgRef): Promise<TgTable> {
+    return this.once(`failed:${ref.dashboard}#${ref.tab}`, async () =>
+      compact(
+        await this.json<TgTable>(
+          `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}&exclude-non-failed-tests=`,
         ),
-      refresh,
+      ),
     );
   }
 
@@ -316,17 +317,13 @@ export class TestGridClient {
     return null;
   }
 
-  table(ref: TgRef, refresh = false): Promise<TgTable> {
-    return this.cache.cached(
-      `tg:table2:${ref.dashboard}#${ref.tab}`,
-      30 * MINUTE,
-      async () =>
-        compact(
-          await this.json<TgTable>(
-            `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}`,
-          ),
+  table(ref: TgRef): Promise<TgTable> {
+    return this.once(`table:${ref.dashboard}#${ref.tab}`, async () =>
+      compact(
+        await this.json<TgTable>(
+          `${encodeURIComponent(ref.dashboard)}/table?tab=${encodeURIComponent(ref.tab)}`,
         ),
-      refresh,
+      ),
     );
   }
 

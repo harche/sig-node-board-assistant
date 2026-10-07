@@ -140,7 +140,6 @@ export interface JevUsage {
   input_tokens: number;
   output_tokens?: number;
   cost: number;
-  cached?: boolean;
 }
 
 export type Verdict = "KEEP" | "REMOVE" | "BORDERLINE";

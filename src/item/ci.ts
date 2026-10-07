@@ -13,14 +13,11 @@ import {
   type FailedCheck,
   type PrChecks,
 } from "../core/prci";
-import { send } from "../shared/messages";
+import { send, sendEach } from "../shared/messages";
 import { runButton } from "./button";
 import { feedbackLink } from "../content/feedback";
 
 type Slot = { state: "pending" } | { state: "error"; message: string } | { state: "done"; job: CiJob };
-
-/** Jobs judged at once: each reads a few MB of TestGrid and GCS. */
-const PARALLEL = 3;
 
 const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 const shortJob = (job: string) => job.replace(/^pull-kubernetes-/, "");
@@ -57,9 +54,9 @@ export class PrCi {
     }
   }
 
-  /** Re-reads the checks and judges each failed job: the button's first click reads through the cache, later ones
-   *  bypass it. A failed re-read keeps the section and reports its failure in it. */
-  async run(refresh = false): Promise<void> {
+  /** Reads the checks and judges each failed job, fresh every click. A failed re-read keeps the section and reports
+   *  its failure in it. */
+  async run(): Promise<void> {
     this.started = true;
     const gen = ++this.runs;
     const mine = () => gen === this.runs && this.live();
@@ -68,7 +65,7 @@ export class PrCi {
     this.bump();
     let checks: PrChecks;
     try {
-      checks = await send({ type: "ci.checks", repo: this.repo, number: this.number, refresh });
+      checks = await send({ type: "ci.checks", repo: this.repo, number: this.number });
     } catch (e) {
       if (mine() && this.checks) {
         this.error = e instanceof Error ? e.message : String(e);
@@ -78,26 +75,21 @@ export class PrCi {
     }
     if (!mine()) return;
     this.checks = checks;
-    const queue = [...checks.failed];
-    for (const c of queue) this.slots.set(c.job, { state: "pending" });
+    const failed = [...checks.failed];
+    for (const c of failed) this.slots.set(c.job, { state: "pending" });
     this.bump();
-    const worker = async () => {
-      for (let c = queue.shift(); c && mine(); c = queue.shift()) await this.judge(c, refresh, mine);
-    };
-    await Promise.all(Array.from({ length: PARALLEL }, worker));
-  }
-
-  private async judge(check: FailedCheck, refresh: boolean, mine: () => boolean): Promise<void> {
-    let slot: Slot;
-    try {
-      const job = await send({ type: "ci.judge", repo: this.repo, number: this.number, check, refresh });
-      slot = { state: "done", job };
-    } catch (e) {
-      slot = { state: "error", message: e instanceof Error ? e.message : String(e) };
-    }
-    if (!mine()) return;
-    this.slots.set(check.job, slot);
-    this.bump();
+    // One batch: the worker reads the PR, its diff and TestGrid once for all the jobs, and answers each as it is done.
+    await sendEach(
+      failed.map((check) => ({ type: "ci.judge" as const, repo: this.repo, number: this.number, check })),
+      (i, env) => {
+        if (!mine()) return;
+        const slot: Slot = env.ok
+          ? { state: "done", job: env.value }
+          : { state: "error", message: env.error };
+        this.slots.set(failed[i]!.job, slot);
+        this.bump();
+      },
+    );
   }
 
   private bump(): void {
@@ -176,7 +168,7 @@ export class PrCi {
           "span.snba-muted",
           {},
           finished
-            ? `Jev read ${done.length} job${done.length === 1 ? "" : "s"}${cost ? ` for $${cost.toFixed(5)}` : ", cached"}.`
+            ? `Jev read ${done.length} job${done.length === 1 ? "" : "s"} for $${cost.toFixed(5)}.`
             : `Judging ${slots.filter((x) => !x || x.state === "pending").length} of ${c.failed.length}…`,
         ),
         this.again(),
@@ -252,8 +244,8 @@ export class PrCi {
   private again(): HTMLElement {
     return runButton(
       "Check again",
-      "Re-read the checks, logs and TestGrid and ask Jev again, bypassing the cache",
-      () => void this.run(true),
+      "Re-read the checks, logs and TestGrid and ask Jev again",
+      () => void this.run(),
     );
   }
 }

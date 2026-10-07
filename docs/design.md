@@ -14,7 +14,7 @@ architecture, the split between code and Jev, and the trials behind each policy.
         │                      │                        │                        │
         └──────── typed messages: reads, and one checked write request ──────────┘
                                          │
- background worker   keys, cache, every network call (GitHub, Jev, TestGrid, GCS), the write allow-list
+ background worker   keys, every network call (GitHub, Jev, TestGrid, GCS), the write allow-list
         │
  src/core            pure functions: signals, state, prompts, policies; no browser APIs
 ```
@@ -35,14 +35,29 @@ GitHub's board is a React app with hashed class names; those two data attributes
 `src/content/dom.ts`.
 
 On issue and PR pages nothing asks Jev until the reader clicks. Each section first offers its check with a button in
-GitHub's own style (Judge, Check failures, Check), which reads Judge again / Check again once it has run and then
-bypasses the cache. Reading the page is free (a PR's checks, an issue's labels); Jev is not, and most visits do not
+GitHub's own style (Judge, Check failures, Check), which reads Judge again / Check again once it has run. Reading
+the page is free (a PR's checks, an issue's labels); Jev is not, and most visits do not
 need it.
 
-The background worker holds the keys and makes every network call. `chrome.storage.local` is the cache (10 minutes
-for a column, 30 for an item, forever for a Jev answer, the same TTLs as the CLI). TestGrid tables stay in the
-worker's memory for 30 minutes instead: they are tens of KB each, and overflowing storage's 10 MB quota would clear
-the whole cache.
+The background worker holds the keys and makes every network call. Nothing that can change is cached: each message
+gets its own GitHub and TestGrid clients (`src/core/reads.ts`), which make each read once and share it (judging a
+PR reads the PR once for its detail, reviews, timeline and checks), and are dropped with the message. A click that
+asks several things at once sends them as one batch over a port (`sendEach`): the PR page's failed jobs share one
+read of the PR, its diff and TestGrid, and each job's answer comes back as soon as it is done. Every Jev question is
+asked fresh. What cannot change once read is kept in the worker's memory (`forever`, at most 500 entries): a
+finished CI run's evidence and result, a PR's diff at a commit, whether an owner is an org or a user.
+
+An issue or PR is read with one GraphQL query (`GitHubClient.item`): its fields, labels, assignees, every comment and
+timeline event, and on a PR its files, review threads, reviews, commits and the head's statuses. That costs about a
+point of GraphQL's 5,000 an hour where REST took up to eighteen requests; a long timeline, file list or set of review
+threads takes one more query per extra page, every page read as REST read them. A PR on an issue workflow's column
+is read as REST's issue endpoint had it: the conversation, without review comments or PR fields. Smaller reads have
+queries of their own: a PR's checks (`pullChecks`) and an issue's labels (`labels`). A GraphQL error fails the read,
+except where a partial answer is expected (a search alias, a missing number, a project the token cannot read), and
+GitHub's GraphQL rate limit, which comes back as a 200, is waited out like REST's. The timeline is mapped onto the REST event shapes the judges read
+(`restEvent`, then `slim`), down to REST's `name[bot]` logins and UTC commit times. Which board and column hold an
+item is one query too (`boardItems`, from its project items). REST is left for project boards and their fields, files'
+text (OWNERS), PR diffs (GraphQL has no patches) and the writes.
 
 ## Keys and settings
 
@@ -53,7 +68,7 @@ extension:
   cannot leak the token or the Jev key.
 - The worker answers a content script's `settings.get` with the keys blanked; it only needs to know whether they are
   set.
-- `settings.set`, `settings.test` and `cache.clear` are refused unless the sender is an extension page
+- `settings.set` and `settings.test` are refused unless the sender is an extension page
   (`sender.url` under the extension's own origin), so only the settings page can change the keys.
 - The settings page keeps Save disabled until the stored settings are in the form: saving the form's blanks would
   otherwise erase the keys.
@@ -63,7 +78,7 @@ extension:
 
 Jev is reached through the TypeSafe SDK's `systemOne` call, against either TypeSafe's API or OpenRouter's System One
 endpoint (`https://openrouter.ai/api`, model `~typesafe/jev-latest`), which takes the same request and reports each
-call's cost. The Jev answer cache is keyed by state and questions, not by provider, so switching keeps it.
+call's cost.
 
 ## Jev decides, code computes
 
@@ -393,8 +408,7 @@ issue was shown.
   flake umbrella #116123; the seccomp umbrella and its issue).
 - The ceiling is search: 29% of originals were never found; people linked those by investigation, not by anything
   either text said.
-- Live, about 40 candidates, one relation question each and a verification for the few that pass; about 9 seconds
-  the first time, cached afterwards.
+- Live, about 40 candidates, one relation question each and a verification for the few that pass; about 9 seconds.
 
 ## Broken Prow commands
 
@@ -434,9 +448,6 @@ outputs, down to the "why" string. Two things had to be deliberate to make that 
   Python.
 - **State size.** Truncation thresholds are measured in characters of Python's `json.dumps` output, which
   has different separators and escapes non-ASCII. `state.pyJsonLength()` reproduces that length.
-
-The Jev cache key is `sha256(stableStringify(state) + stableStringify(questions))`, so a state built in a
-different key order still hits. "Judge again" re-fetches the thread and bypasses that cache.
 
 Where the port deliberately differs from the reference: the state carries every human routing comment as
 `human_routing` (the reference only sent the last 10 comments, so an early `/sig node` was invisible to the

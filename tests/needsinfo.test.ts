@@ -179,12 +179,12 @@ describe("facts", () => {
 describe("judgeInfo", () => {
   it("asks the priority even when the request looks unanswered, so a hand-picked Accept has one", async () => {
     const jev = {
-      askCached: async (_s: unknown, q: Record<string, unknown>) => ({
+      ask: async (_s: unknown, q: Record<string, unknown>) => ({
         answers:
           "priority" in q
             ? { priority: { type: "score", score: 1, confidence: 1, probabilities: { "1": 1 } } }
             : { answered: { type: "noul", noul: 0.5 } },
-        usage: { input_tokens: 0, cost: 0, cached: true },
+        usage: { input_tokens: 0, cost: 0 },
       }),
     } as unknown as JevClient;
     const d = {
@@ -198,7 +198,7 @@ describe("judgeInfo", () => {
       comments: [],
     } as ItemDetail;
     const tl = [{ event: "labeled", created_at: ago(30), label: { name: "triage/needs-information" } }];
-    const r = await judgeInfo(item, d, tl, jev, false, NOW);
+    const r = await judgeInfo(item, d, tl, jev, NOW);
     expect(decideInfo(r).action).toBe("keep");
     expect(r.priority).toBe("important-longterm");
     expect(infoSteps(item, r, "accept").map((s) => s.kind)).toEqual(["comment", "move"]);

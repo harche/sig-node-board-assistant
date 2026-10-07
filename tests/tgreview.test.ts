@@ -235,7 +235,6 @@ describe("tgSteps", () => {
   });
 });
 
-import { Cache, MemoryStore } from "../src/core/cache";
 import type { JevClient } from "../src/core/jev";
 import { judgeTg, runEvidence, type TgDeps } from "../src/core/tgjudge";
 
@@ -263,7 +262,7 @@ describe("judgeTg", () => {
     search: async (qs) => qs.map((_, i) => (i === 0 ? [issue] : [])),
     issueText: async () => text,
     jev: {
-      askCached: async (s: { issue?: { thread?: string } }, q: Record<string, unknown>) => ({
+      ask: async (s: { issue?: { thread?: string } }, q: Record<string, unknown>) => ({
         answers:
           "tracks" in q
             ? { tracks: { type: "noul", noul: 0.9 } }
@@ -272,10 +271,9 @@ describe("judgeTg", () => {
               : {
                   failure_kind: { type: "choice", choice: "test_failure", confidence: 1, probabilities: {} },
                 },
-        usage: { input_tokens: 0, cost: 0, cached: true },
+        usage: { input_tokens: 0, cost: 0 },
       }),
     } as unknown as JevClient,
-    cache: new Cache(new MemoryStore()),
     fetchFn: (async (u: string) =>
       !fetchOk
         ? new Response("", { status: 429 })
@@ -290,29 +288,26 @@ describe("judgeTg", () => {
       deps("body\nThis also fails on `ci-node-e2e`"),
       { dashboard: "d", tab: "ci-node-e2e" },
       "FAILING",
-      false,
       NOW,
     );
     expect(r.tracks[0]).toMatchObject({ number: 5, names_job: true });
     expect(decideTg(r).action).toBe("keep");
-    const r2 = await judgeTg(
-      deps("body only"),
-      { dashboard: "d", tab: "ci-node-e2e" },
-      "FAILING",
-      false,
-      NOW,
-    );
+    const r2 = await judgeTg(deps("body only"), { dashboard: "d", tab: "ci-node-e2e" }, "FAILING", NOW);
     expect(decideTg(r2).action).toBe("comment");
     expect(r.readings?.map((x) => x.label)).toContain("#5 already names the job");
   });
-  it("does not keep evidence a failed read left incomplete", async () => {
-    const d = deps("", false);
-    const e = await runEvidence(d, "b/logs/j", "1", NOW);
-    expect(e.log_signals).toBeNull();
-    expect(await d.cache.get("tgrun:b/logs/j/1", DAY)).toBeUndefined();
-    const ok = deps("");
-    await runEvidence(ok, "b/logs/j", "1", NOW);
-    expect(await ok.cache.get("tgrun:b/logs/j/1", DAY)).toBeDefined();
+  it("keeps a finished run's evidence, but reads a failed read again", async () => {
+    let n = 0;
+    const counted = (ok: boolean): TgDeps => {
+      const d = deps("", ok);
+      const f = d.fetchFn!;
+      return { ...d, fetchFn: ((u: string) => (n++, f(u))) as unknown as typeof fetch };
+    };
+    expect((await runEvidence(counted(false), "b/logs/kept", "1", NOW)).log_signals).toBeNull();
+    expect((await runEvidence(counted(true), "b/logs/kept", "1", NOW)).log_signals).not.toBeNull();
+    const reads = n;
+    expect((await runEvidence(counted(true), "b/logs/kept", "1", NOW)).log_signals).not.toBeNull();
+    expect(n).toBe(reads);
   });
   it("reads a presubmit run where its pr-logs/directory pointer says", async () => {
     const seen: string[] = [];
@@ -320,7 +315,7 @@ describe("judgeTg", () => {
       ...deps(""),
       fetchFn: (async (u: string) => {
         seen.push(u);
-        if (u.endsWith("/b/pr-logs/directory/j/1.txt"))
+        if (/\/b\/pr-logs\/directory\/j\/\d+\.txt$/.test(u))
           return pointer === null ? new Response("", { status: 404 }) : new Response(pointer);
         if (u.includes("/pr-logs/directory/")) return new Response("", { status: 404 });
         if (u.includes("/storage/v1/")) return new Response('{"items":[]}');
@@ -332,9 +327,7 @@ describe("judgeTg", () => {
     expect(e).toMatchObject({ result: "FAILURE", url: "https://prow.k8s.io/view/gs/b/pr-logs/pull/9/j/1" });
     expect(e.log_signals).not.toBeNull();
     expect(seen).toContain("https://storage.googleapis.com/b/pr-logs/pull/9/j/1/build-log.txt");
-    const none = d(null);
-    expect((await runEvidence(none, "b/pr-logs/directory/j", "1", NOW)).log_signals).toBeNull();
-    expect(await none.cache.get("tgrun:b/pr-logs/directory/j/1", DAY)).toBeUndefined();
+    expect((await runEvidence(d(null), "b/pr-logs/directory/j", "2", NOW)).log_signals).toBeNull();
   });
 });
 

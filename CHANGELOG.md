@@ -15,6 +15,15 @@
   browser's cache, which could hide a comment posted a moment before.
 - **TestGrid: the most active tracking issue.** When several open issues track a failure, one that already reports
   the job is kept; otherwise the one with the most recent activity is picked.
+- **Always fresh.** Every judgment reads GitHub, TestGrid and the CI logs again and asks Jev again: no GitHub data or
+  Jev answer is kept between clicks, and the settings page's Clear cache button is gone. Only what cannot change is
+  kept, in memory: a finished CI run, a pull request's diff at a commit. What earlier versions cached is removed on
+  update.
+- **Failing CI: one read per click.** The PR page judges its failed jobs together, reading the PR, its diff and
+  TestGrid once, and shows each job as soon as it is judged.
+- **One GitHub read per item.** An issue or pull request is read with one GraphQL query (about a point of the 5,000
+  an hour) instead of up to eighteen REST requests, and an issue or PR page finds its board and column with one
+  query instead of listing every judged column.
 - **TestGrid: presubmit tabs read their runs.** A presubmit tab's runs were looked for in the wrong GCS folder, so
   Jev judged them without any failure evidence. They are now read from the pull request's folder the tab points to,
   on TestGrid and in the issue page's CI history.

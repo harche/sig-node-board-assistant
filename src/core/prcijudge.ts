@@ -18,6 +18,7 @@ import {
 } from "./prci";
 import { choiceReading, noulReading, type Reading } from "./readings";
 import { matchRows, tally, type TgRef, type TgTable } from "./testgrid";
+import { forever } from "./reads";
 import { candidates, runEvidence, type TgDeps } from "./tgjudge";
 import {
   GCS,
@@ -30,12 +31,12 @@ import {
 } from "./tgreview";
 import type { JevChoice, JevUsage } from "./types";
 
-export interface CiDeps extends Pick<TgDeps, "search" | "cache" | "fetchFn"> {
-  pull(repo: string, number: number, refresh?: boolean): Promise<PullChecks>;
+export interface CiDeps extends Pick<TgDeps, "search" | "fetchFn"> {
+  pull(repo: string, number: number): Promise<PullChecks>;
   /** The PR's diff at `sha`, its head; null once the head has moved on. */
-  diff(repo: string, number: number, sha: string, refresh?: boolean): Promise<ChangedFile[] | null>;
+  diff(repo: string, number: number, sha: string): Promise<ChangedFile[] | null>;
   resolvePresubmit(job: string): Promise<TgRef | null>;
-  failedTable(ref: TgRef, refresh?: boolean): Promise<TgTable>;
+  failedTable(ref: TgRef): Promise<TgTable>;
   jev: JevClient;
 }
 
@@ -91,16 +92,15 @@ async function builds(d: CiDeps, gcs: string): Promise<string[] | null> {
     .sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** One run's result and commit; a finished run never changes, so it is kept a day. */
+/** One run's result and commit. A finished run's are kept for the worker's life (reads.ts `forever`). */
 async function prRun(d: CiDeps, gcs: string, build: string, sha: string): Promise<PrRun> {
-  const key = `prrun:${gcs}/${build}`;
-  type Fin = { result?: string; revision?: string };
-  let fin = await d.cache.get<Fin>(key, DAY);
-  if (!fin) {
-    const f = d.fetchFn ?? ((...a) => fetch(...a));
-    fin = json<Fin>(await text(f, `${GCS}/${gcs}/${build}/finished.json`)) ?? undefined;
-    if (fin?.result) await d.cache.set(key, { result: fin.result, revision: fin.revision });
-  }
+  const f = d.fetchFn ?? ((...a) => fetch(...a));
+  const fin = await forever(
+    `prrun:${gcs}/${build}`,
+    async () =>
+      json<{ result?: string; revision?: string }>(await text(f, `${GCS}/${gcs}/${build}/finished.json`)),
+    (x) => Boolean(x?.result),
+  );
   return {
     build,
     result: fin?.result ?? null,
@@ -118,11 +118,10 @@ async function elsewhere(
   failures: JunitFailure[],
   ours: Set<string>,
   now: number,
-  refresh: boolean,
 ): Promise<Elsewhere | null> {
   const ref = await d.resolvePresubmit(job).catch(() => null);
   if (!ref) return null;
-  const tbl = await d.failedTable(ref, refresh).catch(() => null);
+  const tbl = await d.failedTable(ref).catch(() => null);
   if (!tbl?.timestamps.length) return null;
   const overall = tbl.tests.find((r) => /(^|\.)Overall$/.test(r.name));
   const tests = new Map<string, { test: string; runs: number; failed: number }>();
@@ -162,30 +161,28 @@ export async function judgeCi(
   repo: string,
   number: number,
   check: FailedCheck,
-  refresh = false,
   now = Date.now(),
 ): Promise<CiJob> {
-  const pr = await d.pull(repo, number, refresh);
+  const pr = await d.pull(repo, number);
   const [evidence, all] = await Promise.all([
-    runEvidence(d, check.gcs, check.build, now, refresh),
+    runEvidence(d, check.gcs, check.build, now),
     builds(d, check.gcs),
   ]);
   const ours = new Set(all ?? [check.build]);
   const recent = (all ?? [check.build]).slice(-RUNS).reverse();
   const [this_pr, other] = await Promise.all([
     Promise.all(recent.map((b) => prRun(d, check.gcs, b, pr.sha))),
-    elsewhere(d, check.job, evidence.junit_failures, ours, now, refresh),
+    elsewhere(d, check.job, evidence.junit_failures, ours, now),
   ]);
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const base = { check, evidence, this_pr, elsewhere: other };
   if (neverRan({ check, evidence }))
     return { ...base, cause: null, suspects: [], tracks: [], readings: [], usage };
 
   const ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
-    const res = await d.jev.askCached<A>(state, q, 4, refresh);
+    const res = await d.jev.ask<A>(state, q);
     usage.input_tokens += res.usage.input_tokens;
     usage.cost += res.usage.cost;
-    usage.cached = usage.cached && res.usage.cached;
     return res.answers;
   };
   const failures = evidence.junit_failures.map((j) => ({ test: rowName(j), message: j.message }));
@@ -206,12 +203,10 @@ export async function judgeCi(
         }
       : "TestGrid has no presubmit tab for this job",
   };
-  const cands = await candidates(d, searchFacts(check, evidence.junit_failures), now, refresh, 6).catch(
-    () => [],
-  );
+  const cands = await candidates(d, searchFacts(check, evidence.junit_failures), now, 6).catch(() => []);
   // Every changed file with a text diff, judged on its own against the run. A file that was not judged (no text diff,
   // generated, or Jev did not answer) is listed as such, never as unlikely; an unreadable diff leaves the question out.
-  const files = await d.diff(repo, number, pr.sha, refresh).catch(() => null);
+  const files = await d.diff(repo, number, pr.sha).catch(() => null);
   const unjudged: { file: string; why: string }[] = [];
   const judged = (
     await Promise.all(

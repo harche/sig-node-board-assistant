@@ -99,7 +99,7 @@ describe("triageQuestions()", () => {
   it("issue questions match the YAML prompts", () => expect(both("Issue")).toEqual(q.Issue));
   it("pull request questions match the YAML prompts", () =>
     expect(both("PullRequest")).toEqual(q.PullRequest));
-  it("question order is stable (cache key)", () =>
+  it("question order is stable", () =>
     expect(Object.keys(triageQuestions("Issue"))).toEqual(["bucket", "in_scope", "owner"]));
 });
 

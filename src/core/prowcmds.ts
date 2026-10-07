@@ -195,7 +195,6 @@ export async function prowFixes(
   d: ItemDetail,
   labels: string[],
   jev: JevClient,
-  refresh = false,
 ): Promise<{ fixes: ProwFix[]; usage: JevUsage | null }> {
   const sus = suspects(d);
   if (!sus.length) return { fixes: [], usage: null };
@@ -220,11 +219,9 @@ export async function prowFixes(
       },
     };
   });
-  const r = await jev.askCached<Record<string, JevChoice>>(
+  const r = await jev.ask<Record<string, JevChoice>>(
     { note: "Prow commands are comment lines like /assign @user or /triage accepted." },
     q,
-    4,
-    refresh,
   );
   const have = new Set(labels);
   const later = d.comments.map((c) => c.body).join("\n");

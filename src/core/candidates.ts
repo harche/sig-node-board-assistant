@@ -319,7 +319,6 @@ export async function pickReviewers(
   jev: JevClient,
   pr: { repository: string; title: string; author: string; changed_files: string[] },
   pool: CandidateEvidence[],
-  refresh = false,
 ): Promise<{ picks: Candidate[]; usage: JevUsage | null }> {
   if (!pool.length) return { picks: [], usage: null };
   if (pool.length === 1)
@@ -337,7 +336,7 @@ export async function pickReviewers(
       criteria: Object.fromEntries(pool.map((c, i) => [`c${i}`, { login: c.login }])),
     },
   };
-  const r = await jev.askCached<{ reviewer: JevChoice }>(state, q, 4, refresh);
+  const r = await jev.ask<{ reviewer: JevChoice }>(state, q);
   const ranked = Object.entries(r.answers.reviewer.probabilities)
     .sort((a, b) => b[1] - a[1])
     .map(([k, p]) => ({ c: pool[Number(k.slice(1))]!, p }))

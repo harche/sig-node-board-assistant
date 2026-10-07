@@ -326,7 +326,6 @@ export async function judgeDra(
   item: BoardItem,
   jev: JevClient,
   fetch: { detail(): Promise<ItemDetail>; linkedPrs(): Promise<LinkedPr[]> },
-  refresh = false,
   now = Date.now(),
 ): Promise<DraResult> {
   const r: DraResult = {
@@ -348,7 +347,7 @@ export async function judgeDra(
     kep: false,
     lane: null,
     readings: [],
-    usage: { input_tokens: 0, cost: 0, cached: true },
+    usage: { input_tokens: 0, cost: 0 },
     state_chars: 0,
   };
   // PRs and closed issues are placed by code; nothing to ask.
@@ -372,7 +371,7 @@ export async function judgeDra(
   if (column !== "new" && inRelease(r)) return r;
   // In progress and In review are placed by state alone: Jev could not tell stalled work from live there.
   if (column === "progress" || column === "review") return r;
-  const res = await jev.askCached<{ lane: JevChoice }>(st, laneQuestion(), 4, refresh);
+  const res = await jev.ask<{ lane: JevChoice }>(st, laneQuestion());
   r.usage = { ...res.usage };
   r.lane = res.answers.lane ?? null;
   r.readings = choiceReading(

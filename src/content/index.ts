@@ -226,14 +226,14 @@ class BoardAssistant<R> {
     const missing =
       this.started && this.load.state === "loaded" ? cards.filter((c) => !this.items.has(c.restId)) : [];
     if (missing.length && !this.refreshedOnce) {
-      this.refreshedOnce = true; // a card the 10-minute column cache does not know: refresh once, then accept staleness
+      this.refreshedOnce = true; // a card added since the column was read: read it again once, then leave it
       await this.ensureColumn(true);
       this.judgeAll();
     }
   }
 
   /** The column button: judge every item in the column, not only the cards the board has rendered. Every click is
-   *  fresh: the column and each item are re-read from GitHub and Jev is asked again, skipping every cache. */
+   *  fresh: the column and each item are re-read from GitHub and Jev is asked again. */
   private async run(): Promise<void> {
     if (!this.configured.github || !this.configured.jev) {
       void send({ type: "options.open" });
@@ -255,7 +255,7 @@ class BoardAssistant<R> {
     this.page.scheduleScan();
   }
 
-  /** `fresh` (a Tackle click) re-judges every item past the caches; otherwise only items not judged yet or failed. */
+  /** `fresh` (a Tackle click) re-judges every item; otherwise only items not judged yet or failed. */
   /** One card's own Tackle: judge just that item, fresh. The column is read first only if the item is not known yet
    *  (its node id, repo and number come from there); the header's state is left alone. */
   private async tackleOne(restId: number): Promise<void> {
@@ -280,7 +280,7 @@ class BoardAssistant<R> {
     this.applied.delete(restId);
     this.skipped.delete(restId);
     this.overrides.delete(restId);
-    await this.judged.judge(item, true);
+    await this.judged.judge(item);
     await this.afterJudge([item]);
   }
 
@@ -291,7 +291,7 @@ class BoardAssistant<R> {
       const slot = this.judged.slots.get(item.restId);
       if (fresh || ((!slot || slot.state === "error") && !this.skipped.has(item.restId))) {
         batch.push(item);
-        jobs.push(this.judged.judge(item, fresh));
+        jobs.push(this.judged.judge(item));
       }
     }
     if (batch.length) void Promise.all(jobs).then(() => this.afterJudge(batch));
@@ -299,8 +299,8 @@ class BoardAssistant<R> {
 
   /** One item from the pane: judged, then the workflow's pass over it, so "Judge again" keeps (or finds) its
    *  duplicate instead of dropping it. */
-  private async judgeOne(item: BoardItem, refresh = false): Promise<void> {
-    await this.judged.judge(item, refresh);
+  private async judgeOne(item: BoardItem): Promise<void> {
+    await this.judged.judge(item);
     await this.afterJudge([item]);
   }
 
@@ -348,15 +348,15 @@ class BoardAssistant<R> {
     );
   }
 
-  private ensureColumn(refresh = false): Promise<void> {
-    // A read in flight is joined, never raced by a second (uncached) one.
-    if (this.columnLoad && (!refresh || this.load.state === "loading")) return this.columnLoad;
+  /** Reads the column, or joins the read already made; `again` reads it again unless a read is in flight. */
+  private ensureColumn(again = false): Promise<void> {
+    if (this.columnLoad && (!again || this.load.state === "loading")) return this.columnLoad;
     this.load = { state: "loading" };
     this.paintRunButton();
     this.columnLoad = (async () => {
       try {
         const [items] = await Promise.all([
-          send({ type: "column.items", board: this.board, column: this.column, refresh }),
+          send({ type: "column.items", board: this.board, column: this.column }),
           this.judged.loadFields(this.board),
         ]);
         this.items = new Map(items.map((i) => [i.restId, i]));
@@ -675,7 +675,7 @@ class BoardAssistant<R> {
     this.hover.refresh(restId);
   }
 
-  /** Cancel: drop every verdict and our marks on the board; the next Tackle starts over (Jev answers are cached). */
+  /** Cancel: drop every verdict and our marks on the board; the next Tackle starts over. */
   private cancel(): void {
     if (this.busy()) return;
     this.started = false;
@@ -814,7 +814,7 @@ class BoardAssistant<R> {
     const key = `${this.column}:${restId}:${st.state}:${this.judged.fields ? 1 : 0}:${st.state === "done" ? this.wf.hoverKey(st.result) : ""}`;
     if (existing?.dataset.snbaKey === key && existing.isConnected && side.el.contains(existing)) return true;
     existing?.remove();
-    const section = this.wf.pane(side.adapter, item, st, (it) => this.judgeOne(it, true));
+    const section = this.wf.pane(side.adapter, item, st, (it) => this.judgeOne(it));
     if (st.state === "done")
       section.append(
         boardFeedback({

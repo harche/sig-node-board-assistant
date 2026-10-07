@@ -267,12 +267,6 @@
       .status.bad {
         color: var(--bad);
       }
-      .quiet {
-        margin-left: auto;
-        background: transparent;
-        border-color: transparent;
-        color: var(--muted);
-      }
 
       .promise {
         margin-top: 40px;
@@ -358,7 +352,7 @@
               </select>
               <p class="hint">
                 The same Jev model either way: TypeSafe's own API, or OpenRouter's, billed to an OpenRouter
-                key. Answers are cached by question, so switching keeps them.
+                key.
               </p>
             </div>
             <div data-provider="typesafe">
@@ -366,7 +360,7 @@
               <input id="typesafeApiKey" type="password" autocomplete="off" spellcheck="false" />
               <p class="hint">
                 From <a href="https://typesafe.ai" target="_blank" rel="noopener">typesafe.ai</a>. Judging one
-                card costs about $0.0002 and the answer is cached, so revisiting the board is free.
+                card costs about $0.0002.
               </p>
             </div>
             <div data-provider="openrouter">
@@ -413,9 +407,6 @@
           <button type="submit" class="primary" id="save" disabled>Save</button>
           <button type="button" id="test" disabled>Save and test</button>
           <span class="status" id="status"></span>
-          <button type="button" class="quiet" id="clear" title="Forget cached board data and Jev answers">
-            Clear cache
-          </button>
         </div>
       </form>
 

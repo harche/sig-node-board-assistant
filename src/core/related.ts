@@ -230,8 +230,8 @@ export function openDuplicate(r: RelatedResult | null): RelatedMatch | null {
 }
 
 export interface RelatedDeps {
-  search(queries: SearchQuery[], n?: number, refresh?: boolean): Promise<{ number: number }[][]>;
-  threads(repo: string, numbers: number[], refresh?: boolean): Promise<Map<number, ThreadIssue | null>>;
+  search(queries: SearchQuery[], n?: number): Promise<{ number: number }[][]>;
+  threads(repo: string, numbers: number[]): Promise<Map<number, ThreadIssue | null>>;
   jev: JevClient;
 }
 
@@ -240,14 +240,12 @@ export async function judgeRelated(
   repo: string,
   number: number,
   detail: ItemDetail,
-  refresh = false,
 ): Promise<RelatedResult> {
   const comments = detail.comments.map((c) => ({ author: c.author.login, body: c.body }));
   const qs = candidateQueries(repo, detail.title, detail.body, comments);
   const found = await d.search(
     qs.map((x) => x.query),
     PER_SEARCH,
-    refresh,
   );
   const linked = xrefs([detail.body, ...comments.map((c) => c.body)].join("\n"), repo);
   const numbers = mergeCandidates(
@@ -255,7 +253,7 @@ export async function judgeRelated(
     linked,
     number,
   );
-  const threads = await d.threads(repo, numbers, refresh);
+  const threads = await d.threads(repo, numbers);
   const me = facet({
     number,
     created: detail.createdAt,
@@ -264,11 +262,10 @@ export async function judgeRelated(
     body: detail.body,
     comments,
   });
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const add = (u: JevUsage) => {
     usage.input_tokens += u.input_tokens;
     usage.cost += u.cost;
-    usage.cached = usage.cached && u.cached;
   };
   const cands = numbers.flatMap((n) => {
     const t = threads.get(n);
@@ -282,21 +279,18 @@ export async function judgeRelated(
         // issue_A is the older of the two, as in the trial.
         const s =
           c.created_at <= detail.createdAt ? { issue_A: them, issue_B: me } : { issue_A: me, issue_B: them };
-        const rel = await d.jev.askCached<{ relation: { probabilities: Record<string, number> } }>(
-          s,
-          { relation: RELATION_QUESTION.relation },
-          4,
-          refresh,
-        );
+        const rel = await d.jev.ask<{ relation: { probabilities: Record<string, number> } }>(s, {
+          relation: RELATION_QUESTION.relation,
+        });
         add(rel.usage);
         const probabilities = rel.answers.relation?.probabilities ?? {};
         let closable: number | undefined;
         let link: string | undefined;
         if ((probabilities.duplicate ?? 0) + (probabilities.same_root_cause ?? 0) >= DUPLICATE_AT) {
-          const v = await d.jev.askCached<{
+          const v = await d.jev.ask<{
             closable: { noul: number };
             link: { probabilities: Record<string, number> };
-          }>(s, VERIFY_QUESTIONS, 4, refresh);
+          }>(s, VERIFY_QUESTIONS);
           add(v.usage);
           closable = v.answers.closable?.noul;
           const lp = v.answers.link?.probabilities ?? {};

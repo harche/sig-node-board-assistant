@@ -371,26 +371,22 @@ export async function judgeTodo(
   prs: LinkedPr[],
   tg: TestGridClient,
   jev: JevClient,
-  refresh = false,
 ): Promise<TodoResult> {
   const st = await buildTodoState(item.repository, d, prs, tg);
-  const r = await jev.askCached<TodoAnswers>(st, todoQuestions(), 4, refresh);
+  const r = await jev.ask<TodoAnswers>(st, todoQuestions());
   const answers: TodoAnswers = { ...r.answers };
   const usage = { ...r.usage };
   const rules = todoRules(item, d);
   let prio: { priority: string | null; why: string } = { priority: null, why: "" };
   if (!rules.priority_label) {
     // Same question and policy as Triage's Accept; the triage state is what it was tuned on.
-    const p = await jev.askCached<Pick<TriageAnswers, "priority">>(
+    const p = await jev.ask<Pick<TriageAnswers, "priority">>(
       buildState(item, d, "Issue"),
       priorityQuestion("Issue"),
-      4,
-      refresh,
     );
     answers.priority = p.answers.priority;
     usage.input_tokens += p.usage.input_tokens;
     usage.cost += p.usage.cost;
-    usage.cached = usage.cached && p.usage.cached;
     prio = priority(
       { priority: p.answers.priority } as TriageAnswers,
       { priority_label_already: null } as Signals,

@@ -1,6 +1,6 @@
-/** Service worker: owns the tokens, the cache and every network call. The content script asks it questions
+/** Service worker: owns the tokens and every network call. Nothing is cached: every message reads what it needs
+ *  fresh, through clients made for that message. The content script asks it questions
  *  (read-only views of GitHub plus Jev's opinion) and, on a writable board, to apply an accepted action. */
-import { Cache, MemoryStore } from "../core/cache";
 import { GitHubClient } from "../core/github";
 import { JevClient, type JevCall } from "../core/jev";
 import {
@@ -55,18 +55,17 @@ import { decideReview, judgeReview, type Candidate, type ReviewResult } from "..
 import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
 import type { BoardItem, BoardRef, ItemDetail, JevChoice, JevNoul } from "../core/types";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
-import { jevSettings, TRACED, type Settings } from "../shared/messages";
-import { ChromeLocalStore, loadSettings, saveSettings, TraceStore } from "./storage";
+import { BATCH_PORT, jevSettings, TRACED, type Settings } from "../shared/messages";
+import { dropOldCache, loadSettings, saveSettings, TraceStore } from "./storage";
 
 /** Broken Prow commands in the thread and their fixes (core/prowcmds.ts); a failure here never fails the judge. */
-async function fixes(detail: ItemDetail, jev: JevClient, refresh?: boolean): Promise<ProwFix[]> {
+async function fixes(detail: ItemDetail, jev: JevClient): Promise<ProwFix[]> {
   try {
     return (
       await prowFixes(
         detail,
         detail.labels.map((l) => l.name),
         jev,
-        refresh,
       )
     ).fixes;
   } catch {
@@ -134,8 +133,7 @@ async function duplicates(
     8,
     pairs.map(([a, b]) => async () => {
       const s = dupState(await facetOf(a), await facetOf(b));
-      return (await jev.askCached<{ duplicate: JevNoul; survivor: JevChoice }>(s, DUPLICATE_QUESTIONS))
-        .answers;
+      return (await jev.ask<{ duplicate: JevNoul; survivor: JevChoice }>(s, DUPLICATE_QUESTIONS)).answers;
     }),
   );
   const closing = closeDuplicates(
@@ -188,8 +186,7 @@ async function bugDuplicates(
           shared_assignee: fa.assignees.some((x) => fb.assignees.includes(x)),
         },
       };
-      return (await jev.askCached<{ duplicate: JevNoul; survivor: JevChoice }>(s, BUG_DUPLICATE_QUESTIONS))
-        .answers;
+      return (await jev.ask<{ duplicate: JevNoul; survivor: JevChoice }>(s, BUG_DUPLICATE_QUESTIONS)).answers;
     }),
   );
   const closing = closeDuplicates(
@@ -207,28 +204,30 @@ async function bugDuplicates(
   return out;
 }
 
-const store = new ChromeLocalStore();
-const cache = new Cache(store);
-// The keys and the cache are for the worker and the settings page only: content scripts, which run inside web
-// pages, cannot read chrome.storage.local (they ask the worker, which never hands them the keys).
+// The keys are for the worker and the settings page only: content scripts, which run inside web pages, cannot read
+// chrome.storage.local (they ask the worker, which never hands them the keys).
 chrome.storage.local
   .setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
   .catch((e: unknown) => console.error("could not keep chrome.storage.local from content scripts:", e));
-/** TestGrid tables are tens of KB each and only good for 30 minutes: kept in the worker's memory, never in
- *  chrome.storage.local, whose 10 MB quota (overflow clears the whole cache, Jev answers too) they would eat. */
-const tgCache = new Cache(new MemoryStore());
-
 const traces = new TraceStore();
 
-/** `trace` collects the request's Jev calls (feedback). */
-async function clients(trace?: JevCall[]) {
+/** The GitHub and TestGrid clients one message reads through, or one batch of messages from one click (sendEach):
+ *  each read is made once and shared among them, and dropped with them. */
+interface Shared {
+  gh?: GitHubClient;
+  tg?: TestGridClient;
+}
+
+/** `trace` collects the request's Jev calls (feedback); each request has its own Jev client for that. */
+async function clients(trace?: JevCall[], shared: Shared = {}) {
   const s = await loadSettings();
   if (!s.githubToken) throw new Error("GitHub token not set: open the extension options");
-  const gh = new GitHubClient(s.githubToken, cache);
+  const gh = (shared.gh ??= new GitHubClient(s.githubToken));
+  const tg = (shared.tg ??= new TestGridClient());
   const j = jevSettings(s);
-  const jev = j.apiKey ? new JevClient(j, cache) : null;
+  const jev = j.apiKey ? new JevClient(j) : null;
   if (jev) jev.trace = trace;
-  return { gh, jev, settings: s };
+  return { gh, tg, jev, settings: s };
 }
 
 function feedbackEnv(s: Settings): FeedbackEnv {
@@ -250,10 +249,14 @@ async function traceOf(report: FeedbackReport) {
 }
 
 /** A judge request's result gets a `trace_id`, and its Jev calls are kept under it. */
-async function handle<R extends Request>(req: R, trusted: boolean): Promise<ResponseMap[R["type"]]> {
-  if (!TRACED.has(req.type)) return handleOne(req, trusted);
+async function handle<R extends Request>(
+  req: R,
+  trusted: boolean,
+  shared: Shared = {},
+): Promise<ResponseMap[R["type"]]> {
+  if (!TRACED.has(req.type)) return handleOne(req, trusted, undefined, shared);
   const calls: JevCall[] = [];
-  const value = await handleOne(req, trusted, calls);
+  const value = await handleOne(req, trusted, calls, shared);
   if (value && typeof value === "object" && calls.length) {
     const id = crypto.randomUUID();
     try {
@@ -269,12 +272,13 @@ async function handle<R extends Request>(req: R, trusted: boolean): Promise<Resp
 
 /** Messages only the extension's own pages (the settings page) may send: they read the keys or change settings
  *  (test mode among them). Content scripts run inside github.com and testgrid.k8s.io pages. */
-const TRUSTED_ONLY = new Set<Request["type"]>(["settings.set", "settings.test", "cache.clear"]);
+const TRUSTED_ONLY = new Set<Request["type"]>(["settings.set", "settings.test"]);
 
 async function handleOne<R extends Request>(
   req: R,
   trusted: boolean,
   trace?: JevCall[],
+  shared: Shared = {},
 ): Promise<ResponseMap[R["type"]]> {
   type Out = ResponseMap[R["type"]];
   if (!trusted && TRUSTED_ONLY.has(req.type)) throw new Error(`${req.type} is only for the settings page`);
@@ -292,13 +296,13 @@ async function handleOne<R extends Request>(
       return { ok: true } as Out;
     case "settings.test": {
       const s = await loadSettings();
-      const github = await new GitHubClient(s.githubToken, cache)
+      const github = await new GitHubClient(s.githubToken)
         .viewer()
         .then((u) => ({ ok: true, detail: `authenticated as ${u.login}` }))
         .catch((e: Error) => ({ ok: false, detail: e.message }));
       let jevCheck: { ok: boolean; detail: string };
       try {
-        const jev = new JevClient(jevSettings(s), cache);
+        const jev = new JevClient(jevSettings(s));
         const r = await jev.ask<{ ping: { noul: number } }>(
           { text: "ping" },
           { ping: { type: "noul", instructions: { question: "Is the `text` exactly 'ping'?" } } },
@@ -312,63 +316,58 @@ async function handleOne<R extends Request>(
     case "options.open":
       await chrome.runtime.openOptionsPage();
       return { ok: true } as Out;
-    case "cache.clear":
-      return { removed: await store.clearAll() } as Out;
     case "board.fields": {
-      const { gh } = await clients(trace);
+      const { gh } = await clients(trace, shared);
       return (await gh.fields(req.board)) as Out;
     }
     case "column.items": {
-      const { gh } = await clients(trace);
-      return (await gh.itemsIn(req.board, req.column, req.refresh)) as Out;
+      const { gh } = await clients(trace, shared);
+      return (await gh.itemsIn(req.board, req.column)) as Out;
     }
     case "item.lookup": {
-      const { gh } = await clients(trace);
+      const { gh } = await clients(trace, shared);
       return (await findOnBoards(gh, req.repo, req.number)) as Out;
     }
     case "item.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
-      const detail = await gh.itemDetail(req.item.repository, req.item.type, req.item.number, req.refresh);
-      const r = await judge(req.item, detail, jev, req.refresh);
-      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      const detail = await gh.itemDetail(req.item.repository, req.item.type, req.item.number);
+      const r = await judge(req.item, detail, jev);
+      r.prow_fixes = await fixes(detail, jev);
       return r as Out;
     }
     case "todo.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, tg, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
-      const [detail, prs] = await Promise.all([
-        gh.itemDetail(repo, "Issue", num, req.refresh),
-        gh.linkedPrs(repo, num, req.refresh),
-      ]);
-      const r = await judgeTodo(req.item, detail, prs, new TestGridClient(tgCache), jev, req.refresh);
-      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      const [detail, prs] = await Promise.all([gh.itemDetail(repo, "Issue", num), gh.linkedPrs(repo, num)]);
+      const r = await judgeTodo(req.item, detail, prs, tg, jev);
+      r.prow_fixes = await fixes(detail, jev);
       return r as Out;
     }
     case "progress.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
-      const detail = await gh.itemDetail(repo, "Issue", num, req.refresh);
+      const detail = await gh.itemDetail(repo, "Issue", num);
       const f = {
-        timeline: (r: string, n: number) => gh.timeline(r, n, req.refresh),
-        prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n, req.refresh),
+        timeline: (r: string, n: number) => gh.timeline(r, n),
+        prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n),
       };
-      const r = await judgeProgress(req.item, detail, f, jev, req.refresh);
-      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      const r = await judgeProgress(req.item, detail, f, jev);
+      r.prow_fixes = await fixes(detail, jev);
       return r as Out;
     }
     case "review.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
-        gh.itemDetail(repo, "PullRequest", num, req.refresh),
-        gh.pullState(repo, num, req.refresh),
-        gh.timeline(repo, num, req.refresh),
+        gh.itemDetail(repo, "PullRequest", num),
+        gh.pullState(repo, num),
+        gh.timeline(repo, num),
       ]);
-      const base = await judgeReview(req.item, detail, ps, tl, (r, n) => gh.refState(r, n), jev, req.refresh);
+      const base = await judgeReview(req.item, detail, ps, tl, (r, n) => gh.refState(r, n), jev);
       let candidates: Candidate[] = [];
       let note = "";
       if (decideReview(base).action === "new_ask") {
@@ -399,7 +398,6 @@ async function handleOne<R extends Request>(
             jev,
             { repository: repo, title: detail.title, author: ps.author, changed_files: files.slice(0, 30) },
             pool,
-            req.refresh,
           );
           candidates = pick.picks;
           note = pool.length
@@ -413,20 +411,20 @@ async function handleOne<R extends Request>(
         ...base,
         candidates,
         candidates_note: note,
-        prow_fixes: await fixes(detail, jev, req.refresh),
+        prow_fixes: await fixes(detail, jev),
       };
       return out as Out;
     }
     case "approve.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
-        gh.itemDetail(repo, "PullRequest", num, req.refresh),
-        gh.pullState(repo, num, req.refresh),
-        gh.timeline(repo, num, req.refresh),
+        gh.itemDetail(repo, "PullRequest", num),
+        gh.pullState(repo, num),
+        gh.timeline(repo, num),
       ]);
-      const r = await judgeReview(req.item, detail, ps, tl, (x, n) => gh.refState(x, n), jev, req.refresh);
+      const r = await judgeReview(req.item, detail, ps, tl, (x, n) => gh.refState(x, n), jev);
       const base = { ...r, kind: "approve" as const };
       let candidates: Candidate[] = [];
       let note = "";
@@ -480,25 +478,25 @@ async function handleOne<R extends Request>(
         ...base,
         candidates,
         candidates_note: note,
-        prow_fixes: await fixes(detail, jev, req.refresh),
+        prow_fixes: await fixes(detail, jev),
       };
       return out as Out;
     }
     case "author.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
       const [detail, ps, tl] = await Promise.all([
-        gh.itemDetail(repo, "PullRequest", num, req.refresh),
-        gh.pullState(repo, num, req.refresh),
-        gh.timeline(repo, num, req.refresh),
+        gh.itemDetail(repo, "PullRequest", num),
+        gh.pullState(repo, num),
+        gh.timeline(repo, num),
       ]);
       // Triage's verdict on whether the PR belongs on the board at all.
       const [r, scope] = await Promise.all([
-        judgeReview(req.item, detail, ps, tl, (x, n) => gh.refState(x, n), jev, req.refresh, Date.now(), {
+        judgeReview(req.item, detail, ps, tl, (x, n) => gh.refState(x, n), jev, Date.now(), {
           authorCheckins: true,
         }),
-        judge(req.item, detail, jev, req.refresh),
+        judge(req.item, detail, jev),
       ]);
       const out: AuthorResult = {
         ...r,
@@ -514,141 +512,121 @@ async function handleOne<R extends Request>(
         ],
         candidates: [],
         candidates_note: "",
-        prow_fixes: await fixes(detail, jev, req.refresh),
+        prow_fixes: await fixes(detail, jev),
       };
       return out as Out;
     }
     case "bugs.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
-      const detail = await gh.itemDetail(req.item.repository, "Issue", req.item.number, req.refresh);
-      const r = await judgeBug(req.item, detail, jev, req.refresh);
-      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      const detail = await gh.itemDetail(req.item.repository, "Issue", req.item.number);
+      const r = await judgeBug(req.item, detail, jev);
+      r.prow_fixes = await fixes(detail, jev);
       return r as Out;
     }
     case "info.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
-      const [detail, tl] = await Promise.all([
-        gh.itemDetail(repo, "Issue", num, req.refresh),
-        gh.timeline(repo, num, req.refresh),
-      ]);
-      const r = await judgeInfo(req.item, detail, tl, jev, req.refresh);
-      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      const [detail, tl] = await Promise.all([gh.itemDetail(repo, "Issue", num), gh.timeline(repo, num)]);
+      const r = await judgeInfo(req.item, detail, tl, jev);
+      r.prow_fixes = await fixes(detail, jev);
       return r as Out;
     }
     case "dra.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
-      return (await judgeDra(
-        req.column,
-        req.item,
-        jev,
-        {
-          detail: () => gh.itemDetail(repo, "Issue", num, req.refresh),
-          linkedPrs: () => gh.linkedPrs(repo, num, req.refresh),
-        },
-        req.refresh,
-      )) as Out;
+      return (await judgeDra(req.column, req.item, jev, {
+        detail: () => gh.itemDetail(repo, "Issue", num),
+        linkedPrs: () => gh.linkedPrs(repo, num),
+      })) as Out;
     }
     case "backlog.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       const { repository: repo, number: num } = req.item;
-      const [detail, prs] = await Promise.all([
-        gh.itemDetail(repo, "Issue", num, req.refresh),
-        gh.linkedPrs(repo, num, req.refresh),
-      ]);
+      const [detail, prs] = await Promise.all([gh.itemDetail(repo, "Issue", num), gh.linkedPrs(repo, num)]);
       const f = {
-        timeline: (r: string, n: number) => gh.timeline(r, n, req.refresh),
-        prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n, req.refresh),
+        timeline: (r: string, n: number) => gh.timeline(r, n),
+        prLastCommit: (r: string, n: number) => gh.prLastCommit(r, n),
       };
-      const r = await judgeBacklog(req.item, detail, prs, f, jev, req.refresh);
-      r.prow_fixes = await fixes(detail, jev, req.refresh);
+      const r = await judgeBacklog(req.item, detail, prs, f, jev);
+      r.prow_fixes = await fixes(detail, jev);
       return r as Out;
     }
     case "backlog.duplicates": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await bugDuplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "todo.duplicates": {
-      const { gh, jev } = await clients(trace);
+      const { gh, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await duplicates(gh, jev, req.board, req.targets)) as Out;
     }
     case "tg.judge": {
-      const { gh, jev, settings } = await clients(trace);
+      const { gh, tg, jev, settings } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
       return (await judgeTg(
         {
-          table: (ref, refresh) => new TestGridClient(tgCache).table(ref, refresh),
-          search: (qs, n, r) => gh.searchIssues(qs, n, r),
-          issueText: (repo, n, r) => gh.issueText(repo, n, r, settings.testMode ? TG_TEST_REPO : undefined),
-          threads: (repo, ns, r) => gh.issueThreads(repo, ns, r),
+          table: (ref) => tg.table(ref),
+          search: (qs, n) => gh.searchIssues(qs, n),
+          issueText: (repo, n) => gh.issueText(repo, n, settings.testMode ? TG_TEST_REPO : undefined),
+          threads: (repo, ns) => gh.issueThreads(repo, ns),
           jev,
-          cache,
         },
         req.ref,
         req.status,
-        req.refresh,
       )) as Out;
     }
     case "ci.checks": {
-      const { gh } = await clients(trace);
-      return prChecks(await gh.pullChecks(req.repo, req.number, req.refresh)) as Out;
+      const { gh } = await clients(trace, shared);
+      return prChecks(await gh.pullChecks(req.repo, req.number)) as Out;
     }
     case "ci.judge": {
-      const { gh, jev } = await clients(trace);
+      const { gh, tg, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
-      const tg = new TestGridClient(tgCache);
       const deps: CiDeps = {
-        pull: (repo, n, r) => gh.pullChecks(repo, n, r),
-        // Kept in memory: a head's diff never changes, and a big one is too large for storage.
-        diff: (repo, n, sha, r) =>
-          tgCache.cached(`prdiff:${repo}#${n}@${sha}`, 86_400_000, () => gh.pullDiff(repo, n, sha), r),
+        pull: (repo, n) => gh.pullChecks(repo, n),
+        diff: (repo, n, sha) => gh.pullDiff(repo, n, sha),
         resolvePresubmit: (job) => tg.resolvePresubmit(job),
-        failedTable: (ref, r) => tg.failedTable(ref, r),
-        search: (qs, n, r) => gh.searchIssues(qs, n, r),
+        failedTable: (ref) => tg.failedTable(ref),
+        search: (qs, n) => gh.searchIssues(qs, n),
         jev,
-        cache,
       };
-      return (await judgeCi(deps, req.repo, req.number, req.check, req.refresh)) as Out;
+      return (await judgeCi(deps, req.repo, req.number, req.check)) as Out;
     }
     case "issue.scope": {
-      const { gh } = await clients(trace);
-      const detail = await gh.itemDetail(req.repo, "Issue", req.number);
-      return inScope(detail.labels.map((l) => l.name)) as Out;
+      const { gh } = await clients(trace, shared);
+      return inScope(await gh.labels(req.repo, req.number)) as Out;
     }
     case "issue.ci":
     case "issue.dups": {
-      const { gh, jev } = await clients(trace);
+      const { gh, tg, jev } = await clients(trace, shared);
       if (!jev) throw new Error("Jev key not set: open the extension options");
-      const detail = await gh.itemDetail(req.repo, "Issue", req.number, req.refresh);
+      const detail = await gh.itemDetail(req.repo, "Issue", req.number);
       if (!inScope(detail.labels.map((l) => l.name))) return null as Out;
       if (req.type === "issue.dups")
         return (await judgeRelated(
           {
-            search: (qs, n, r) => gh.searchIssues(qs, n, r),
-            threads: (repo, ns, r) => gh.issueThreads(repo, ns, r),
+            search: (qs, n) => gh.searchIssues(qs, n),
+            threads: (repo, ns) => gh.issueThreads(repo, ns),
             jev,
           },
           req.repo,
           req.number,
           detail,
-          req.refresh,
         )) as Out;
-      const deps = { tg: new TestGridClient(tgCache), jev, cache };
-      const prs = await gh.linkedPrs(req.repo, req.number, req.refresh);
-      return (await judgeIssueCi(deps, req.repo, req.number, detail, prs, req.refresh)) as Out;
+      const deps = { tg, jev };
+      const prs = await gh.linkedPrs(req.repo, req.number);
+      return (await judgeIssueCi(deps, req.repo, req.number, detail, prs)) as Out;
     }
     case "tg.apply": {
       // In test mode, TestGrid writes go to the test repo only (TG_TEST_REPO): a new issue is opened there, and a
       // comment meant for another repo's issue goes on that issue's mirror there. With test mode off they go to the
       // real issue, in TG_LIVE_REPOS only. Either way only bodies this extension drafted are written.
-      const { gh, settings } = await clients(trace);
+      const { gh, settings } = await clients(trace, shared);
       const wrote: string[] = [];
       for (const st of req.steps) {
         if (!isTgDraft(st.body)) throw new Error("refusing a body the extension did not draft");
@@ -692,7 +670,7 @@ async function handleOne<R extends Request>(
             ? await gh.paged<Open>(`/repos/${repo}/issues`, { state: "open" })
             : (
                 await Promise.all([
-                  gh.searchIssues([titleQuery(repo, st.title)], 20, true).then((r) => r[0] ?? []),
+                  gh.searchIssues([titleQuery(repo, st.title)], 20).then((r) => r[0] ?? []),
                   gh.viewer().then((me) =>
                     gh.paged<Open>(`/repos/${repo}/issues`, {
                       state: "open",
@@ -764,7 +742,7 @@ async function handleOne<R extends Request>(
           ...(gist ? { gist } : {}),
         }) as Out;
       if (!s.githubToken) return fallback(new Error("GitHub token not set"));
-      const gh = new GitHubClient(s.githubToken, cache);
+      const gh = new GitHubClient(s.githubToken);
       let out = renderFeedback(req.report, env, trace);
       // Attachments too big for the issue body go to a secret gist on the reader's account, linked from the issue.
       // Without the gist scope they stay in comments on the issue (or on the clipboard, below).
@@ -804,7 +782,7 @@ async function handleOne<R extends Request>(
       // mode off), and every step
       // must touch only the one item named: a Status move of that project item, or a Prow triage comment on the
       // issue / PR that GitHub says is behind it.
-      const { gh, settings } = await clients(trace);
+      const { gh, settings } = await clients(trace, shared);
       if (!writesTo(knownBoard(req.board), settings.testMode))
         throw new Error(
           `${req.board.owner}/${req.board.number} is read-only${settings.testMode ? " in test mode" : " in this extension"}`,
@@ -852,6 +830,38 @@ chrome.runtime.onMessage.addListener((req: Request, sender, sendResponse: (e: En
     .then((value) => sendResponse({ ok: true, value }))
     .catch((e: unknown) => sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }));
   return true; // async response
+});
+
+/** A batch (shared/messages.ts sendEach): requests from one click, answered one by one over the port as each
+ *  finishes, through one set of clients, at most BATCH_PARALLEL at once. */
+const BATCH_PARALLEL = 3;
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== BATCH_PORT) return;
+  const trusted =
+    port.sender?.id === chrome.runtime.id && (port.sender?.url ?? "").startsWith(chrome.runtime.getURL(""));
+  let open = true;
+  port.onDisconnect.addListener(() => (open = false));
+  port.onMessage.addListener((msg: { reqs: Request[] }) => {
+    const shared: Shared = {};
+    const post = (m: unknown) => open && port.postMessage(m);
+    void track(
+      pool(
+        BATCH_PARALLEL,
+        msg.reqs.map((req, i) => async () => {
+          if (!open) return;
+          try {
+            post({ i, env: { ok: true, value: await handle(req, trusted, shared) } });
+          } catch (e) {
+            post({ i, env: { ok: false, error: e instanceof Error ? e.message : String(e) } });
+          }
+        }),
+      ),
+    ).then(() => post({ done: true }));
+  });
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  dropOldCache().catch((e: unknown) => console.warn("could not remove the old cache:", e));
 });
 
 chrome.action.onClicked.addListener(() => {

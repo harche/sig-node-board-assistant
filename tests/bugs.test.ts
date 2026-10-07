@@ -176,14 +176,14 @@ describe("judgeBug", () => {
   const jev = (score: Record<string, number>) => {
     const asked: string[] = [];
     const client = {
-      askCached: async (_s: unknown, q: Record<string, unknown>) => {
+      ask: async (_s: unknown, q: Record<string, unknown>) => {
         asked.push(...Object.keys(q));
         const answers: Record<string, unknown> = {
           ...answers_(),
           sig: choice({ storage: 1 }),
           priority: { type: "score", score: 0, confidence: 0, probabilities: score },
         };
-        return { answers, usage: { input_tokens: 0, cost: 0, cached: true } };
+        return { answers, usage: { input_tokens: 0, cost: 0 } };
       },
     };
     return { client: client as unknown as JevClient, asked };
@@ -207,7 +207,7 @@ describe("judgeBug", () => {
 describe("readings", () => {
   it("records every Jev answer, priority levels named", async () => {
     const client = {
-      askCached: async (_s: unknown, q: Record<string, unknown>) => ({
+      ask: async (_s: unknown, q: Record<string, unknown>) => ({
         answers: {
           ...answers({ info: 0.2 }),
           sig: choice({ storage: 0.7, network: 0.3 }),
@@ -218,7 +218,7 @@ describe("readings", () => {
               .map((k) => [k, { type: "noul", noul: 0.8 }]),
           ),
         },
-        usage: { input_tokens: 0, cost: 0, cached: true },
+        usage: { input_tokens: 0, cost: 0 },
       }),
     } as unknown as JevClient;
     const d = {

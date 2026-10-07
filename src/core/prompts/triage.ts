@@ -174,7 +174,7 @@ const withEvidence = (
 });
 
 /** The three questions behind the verdict, with `evidence` for the item type appended to each one's instructions.
- *  Key order is the file-name order of the reference prompts, so the request (and its cache key) is stable. */
+ *  Key order is the file-name order of the reference prompts, so the request is stable. */
 export function triageQuestions(kind: ItemKind): TriageQuestions {
   return {
     bucket: withEvidence(kind, bucket),

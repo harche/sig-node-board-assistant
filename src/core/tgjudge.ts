@@ -1,7 +1,7 @@
 /** Judging one TestGrid tab: facts from TestGrid, evidence from GCS, candidate issues from GitHub search, Jev's
  *  readings. The pure parts are in tgreview.ts. */
-import { type Cache, MINUTE } from "./cache";
 import type { RawSearchIssue, SearchQuery, ThreadIssue } from "./github";
+import { forever } from "./reads";
 import type { JevClient } from "./jev";
 import {
   coversQuestion,
@@ -42,19 +42,17 @@ import {
 import type { JevUsage } from "./types";
 
 export interface TgDeps {
-  table(ref: TgRef, refresh?: boolean): Promise<TgTable>;
+  table(ref: TgRef): Promise<TgTable>;
   /** Issues matching each query, in order (one batched request). */
-  search(queries: SearchQuery[], n?: number, refresh?: boolean): Promise<RawSearchIssue[][]>;
+  search(queries: SearchQuery[], n?: number): Promise<RawSearchIssue[][]>;
   /** An issue's whole body and every comment, as one text (and, in test mode, its mirror's comments). */
-  issueText(repo: string, number: number, refresh?: boolean): Promise<string>;
+  issueText(repo: string, number: number): Promise<string>;
   jev: JevClient;
-  cache: Cache;
   fetchFn?: typeof fetch;
   /** Issues with their threads, for the related search; without it, no related issues are looked for. */
-  threads?(repo: string, numbers: number[], refresh?: boolean): Promise<Map<number, ThreadIssue | null>>;
+  threads?(repo: string, numbers: number[]): Promise<Map<number, ThreadIssue | null>>;
 }
 
-const HOUR = 60 * MINUTE;
 /** Candidate issues: updated within this many days, and closed ones only if closed this recently. */
 const RECENT_DAYS = 60;
 
@@ -72,33 +70,45 @@ async function text(fetchFn: typeof fetch, url: string): Promise<string | null> 
   return r?.ok ? r.text() : null;
 }
 
-/** One failed run's evidence. Runs never change once finished, so complete evidence is kept for a day; evidence a
- *  failed read left incomplete is not kept, and `refresh` reads it again. */
+/** One failed run's evidence: its result, junit failures and the build log's telling lines (null when the log
+ *  could not be read). A finished run never changes, so evidence read completely is kept for the worker's life
+ *  (reads.ts `forever`); an unfinished run or a failed read is read again next time. */
 export async function runEvidence(
-  d: Pick<TgDeps, "cache" | "fetchFn">,
+  d: Pick<TgDeps, "fetchFn">,
   gcs: string,
   build: string,
   started: number,
-  refresh = false,
 ): Promise<RunEvidence> {
+  const r = await forever(
+    `run:${gcs}/${build}`,
+    () => readRun(d, gcs, build, started),
+    (x) => x.complete,
+  );
+  return { ...r.evidence, started };
+}
+
+async function readRun(
+  d: Pick<TgDeps, "fetchFn">,
+  gcs: string,
+  build: string,
+  started: number,
+): Promise<{ evidence: RunEvidence; complete: boolean }> {
   const f = d.fetchFn ?? ((...a) => fetch(...a));
-  const key = `tgrun:${gcs}/${build}`;
-  if (!refresh) {
-    const hit = await d.cache.get<RunEvidence>(key, 24 * HOUR);
-    if (hit) return hit;
-  }
   // A presubmit tab's query is `<bucket>/pr-logs/directory/<job>`, which holds only `<build>.txt`, naming where the
   // run is (`gs://<bucket>/pr-logs/pull/<pr>/<job>/<build>`).
   if (gcs.includes("/pr-logs/directory/")) {
     const at = /^gs:\/\/(\S+)\/(\d+)$/.exec((await text(f, `${GCS}/${gcs}/${build}.txt`))?.trim() ?? "");
     if (!at || at[2] !== build)
       return {
-        build,
-        started,
-        url: `${PROW}/${gcs}/${build}`,
-        result: null,
-        junit_failures: [],
-        log_signals: null,
+        evidence: {
+          build,
+          started,
+          url: `${PROW}/${gcs}/${build}`,
+          result: null,
+          junit_failures: [],
+          log_signals: null,
+        },
+        complete: false,
       };
     gcs = at[1]!;
   }
@@ -116,16 +126,18 @@ export async function runEvidence(
     text(f, `${base}/build-log.txt`),
     text(f, `${base}/finished.json`),
   ]);
-  const e: RunEvidence = {
-    build,
-    started,
-    url: `${PROW}/${gcs}/${build}`,
-    result: json<{ result?: string }>(finished)?.result ?? null,
-    junit_failures: files.flatMap((x) => (x ? junitFailures(x) : [])).slice(0, 8),
-    log_signals: log === null ? null : signalLines(log),
+  const result = json<{ result?: string }>(finished)?.result ?? null;
+  return {
+    evidence: {
+      build,
+      started,
+      url: `${PROW}/${gcs}/${build}`,
+      result,
+      junit_failures: files.flatMap((x) => (x ? junitFailures(x) : [])).slice(0, 8),
+      log_signals: log === null ? null : signalLines(log),
+    },
+    complete: result !== null && log !== null && listed !== null && files.every((x) => x !== null),
   };
-  if (log !== null && listed !== null && files.every((x) => x !== null)) await d.cache.set(key, e);
-  return e;
 }
 
 const brief = (x: RawSearchIssue, repo: string, via: string): Candidate => ({
@@ -147,7 +159,6 @@ export async function candidates(
   d: Pick<TgDeps, "search">,
   f: JobFacts,
   now: number,
-  refresh = false,
   max = 10,
 ): Promise<Candidate[]> {
   const since = new Date(now - RECENT_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -169,7 +180,6 @@ export async function candidates(
   const found = await d.search(
     q.map((x) => `repo:${x.repo} is:issue ${x.q} updated:>=${since}`),
     10,
-    refresh,
   );
   const hits = q.map((x, i) => (found[i] ?? []).map((r) => brief(r, x.repo, x.via)).filter(recent));
   const out = new Map<string, Candidate>();
@@ -198,14 +208,13 @@ export async function relatedRuns(
   also: number[],
   ask: <A>(state: unknown, q: Record<string, unknown>) => Promise<A>,
   now: number,
-  refresh = false,
 ): Promise<TgRelated[]> {
   if (!d.threads) return [];
   const repo = "kubernetes/kubernetes";
   const tests = f.failing_tests.map((t) => t.name);
   const queries = relatedQueries(repo, evidence, tests, f.job, distinctive);
   const umbrellas = umbrellaPool(repo);
-  const found = await d.search([...queries, ...umbrellas], 20, refresh);
+  const found = await d.search([...queries, ...umbrellas], 20);
   const searched: number[] = [];
   for (let i = 0; i < 20; i++)
     for (const r of found.slice(0, queries.length)) {
@@ -220,7 +229,7 @@ export async function relatedRuns(
       ...found.slice(queries.length).flatMap((r) => r.map((x) => x.number)),
     ]),
   ].filter((n) => !skip.has(n));
-  const threads = await d.threads(repo, nums, refresh);
+  const threads = await d.threads(repo, nums);
   const cands = [...threads.values()].filter(
     (t): t is ThreadIssue => !!t && relatedEligible(t.state, t.closed_at, now),
   );
@@ -266,26 +275,24 @@ export async function judgeTg(
   d: TgDeps,
   ref: TgRef,
   status: "FAILING" | "FLAKY",
-  refresh = false,
   now = Date.now(),
 ): Promise<TgResult> {
-  const facts = jobFacts(ref.dashboard, ref.tab, status, await d.table(ref, refresh), now);
+  const facts = jobFacts(ref.dashboard, ref.tab, status, await d.table(ref), now);
   const evidence = await Promise.all(
     facts.failed_builds.map((b) => runEvidence(d, facts.gcs, b.build, b.started)),
   );
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
-    const res = await d.jev.askCached<A>(state, q, 4, refresh);
+    const res = await d.jev.ask<A>(state, q);
     usage.input_tokens += res.usage.input_tokens;
     usage.cost += res.usage.cost;
-    usage.cached = usage.cached && res.usage.cached;
     return res.answers;
   };
   const runs = evidence
     .filter((e) => e.log_signals !== null || e.junit_failures.length)
     .map((e) => ({ junit_failures: e.junit_failures, log_signals: e.log_signals ?? [] }));
   const st = { job: facts.job, runs };
-  const cands = await candidates(d, facts, now, refresh);
+  const cands = await candidates(d, facts, now);
   // Jev reads each candidate's recent comments with its body: that is where jobs get added and where a thread says
   // the failure changed. Without threads (or if the read fails), the body alone.
   const threads = new Map<string, ThreadIssue | null>();
@@ -294,7 +301,7 @@ export async function judgeTg(
     for (const c of cands) byRepo.set(c.repo, [...(byRepo.get(c.repo) ?? []), c.number]);
     await Promise.all(
       [...byRepo].map(async ([repo, ns]) => {
-        const m = await d.threads!(repo, ns, refresh).catch(() => new Map<number, ThreadIssue | null>());
+        const m = await d.threads!(repo, ns).catch(() => new Map<number, ThreadIssue | null>());
         for (const [n, t] of m) threads.set(`${repo}#${n}`, t);
       }),
     );
@@ -330,7 +337,7 @@ export async function judgeTg(
   const named = await Promise.all(
     scored.map(async ({ c, p }) => {
       if (p < MAYBE_AT) return { named: names.some((n) => c.body.includes(n)), p: null };
-      const all = stripRuns(await d.issueText(c.repo, c.number, refresh).catch(() => c.body));
+      const all = stripRuns(await d.issueText(c.repo, c.number).catch(() => c.body));
       // The body and the newest comments, where a job added later is.
       const thread = all.length > 16000 ? `${all.slice(0, 4000)}\n…\n${all.slice(-12000)}` : all;
       const a = await ask<{ names_job?: { noul: number } }>(
@@ -373,7 +380,6 @@ export async function judgeTg(
         tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p < MAYBE_AT).map((t) => t.number),
         ask,
         now,
-        refresh,
       ).catch(() => [])
     : [];
   const readings: Reading[] = [

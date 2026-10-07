@@ -16,27 +16,21 @@ import type {
   TriageResult,
 } from "./types";
 
-export async function judge(
-  item: BoardItem,
-  d: ItemDetail,
-  jev: JevClient,
-  refresh = false,
-): Promise<TriageResult> {
+export async function judge(item: BoardItem, d: ItemDetail, jev: JevClient): Promise<TriageResult> {
   const kind = item.type;
   const sig = signals(d, kind);
   const state = buildState(item, d, kind);
-  const r = await jev.askCached<TriageAnswers>(state, triageQuestions(kind), 4, refresh);
+  const r = await jev.ask<TriageAnswers>(state, triageQuestions(kind));
   const a: TriageAnswers = { ...r.answers };
   const usage = { ...r.usage };
   const { verdict, why } = decide(a, sig);
   // Priority only matters for an item that stays on the board, and a label a human already set wins anyway.
   const keeping = verdict !== "REMOVE";
   if (keeping && !sig.priority_label_already) {
-    const p = await jev.askCached<Pick<TriageAnswers, "priority">>(state, priorityQuestion(kind), 4, refresh);
+    const p = await jev.ask<Pick<TriageAnswers, "priority">>(state, priorityQuestion(kind));
     a.priority = p.answers.priority;
     usage.input_tokens += p.usage.input_tokens;
     usage.cost += p.usage.cost;
-    usage.cached = usage.cached && p.usage.cached;
   }
   const prio = keeping ? priority(a, sig) : { priority: null, why: "" };
   return {

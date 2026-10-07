@@ -85,7 +85,7 @@ export function renderEvidence(
       h(
         "span.snba-muted",
         {},
-        `Jev read ${r.state_chars.toLocaleString()} chars${r.usage.cached ? ", cached" : ` for $${r.usage.cost.toFixed(5)}`}.`,
+        `Jev read ${r.state_chars.toLocaleString()} chars for $${r.usage.cost.toFixed(5)}.`,
       ),
       rejudgeLink(item, handlers),
     ),
@@ -95,7 +95,7 @@ export function renderEvidence(
 
 function rejudgeLink(item: BoardItem, handlers: EvidenceHandlers): HTMLElement {
   const b = pageButton("Judge again");
-  b.title = "Re-fetch the thread and ask Jev again, bypassing the cache";
+  b.title = "Re-read the thread and ask Jev again";
   b.addEventListener("click", async () => {
     b.disabled = true;
     try {

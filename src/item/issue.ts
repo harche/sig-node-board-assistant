@@ -63,7 +63,7 @@ export class IssueCheck {
     private live: () => boolean,
   ) {}
 
-  /** Whether to offer the check: one cached GitHub read of the labels, no Jev. */
+  /** Whether to offer the check: one GitHub read of the labels, no Jev. */
   async prepare(): Promise<void> {
     try {
       const scope = await send({ type: "issue.scope", repo: this.repo, number: this.number });
@@ -75,9 +75,9 @@ export class IssueCheck {
     }
   }
 
-  /** Both checks, side by side: the first click reads through the cache, "Check again" bypasses it. A failure is
-   *  reported in its section. */
-  async run(refresh = false): Promise<void> {
+  /** Both checks, side by side, read fresh on every click ("Check again" too). A failure is reported in its
+   *  section. */
+  async run(): Promise<void> {
     this.started = true;
     this.busy = true;
     const gen = ++this.runs;
@@ -85,7 +85,7 @@ export class IssueCheck {
     const read = async <K extends "ci" | "dups">(k: K) => {
       const type = k === "ci" ? "issue.ci" : "issue.dups";
       try {
-        const result = await send({ type, repo: this.repo, number: this.number, refresh });
+        const result = await send({ type, repo: this.repo, number: this.number });
         if (mine()) (this[k] as Part<unknown>) = { state: "done", result };
       } catch (e) {
         if (mine())
@@ -140,7 +140,7 @@ export class IssueCheck {
   }
 
   private ciSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
-    // Duplicates can come back first (from the cache): say the CI history is still coming.
+    // Duplicates can come back first: say the CI history is still coming.
     if (this.busy && this.ci.state === "idle" && this.dups.state !== "idle") {
       const { root, body } = adapter.section("CI history");
       body.append(h("p.snba-muted", {}, "Reading the run history…"));
@@ -237,11 +237,7 @@ export class IssueCheck {
       h(
         "div.snba-foot",
         {},
-        h(
-          "span.snba-muted",
-          {},
-          `Jev read ${r.asked} candidates${r.usage.cost ? ` for $${r.usage.cost.toFixed(5)}` : ", cached"}.`,
-        ),
+        h("span.snba-muted", {}, `Jev read ${r.asked} candidates for $${r.usage.cost.toFixed(5)}.`),
         this.again(),
       ),
       feedbackLink(() => ({
@@ -298,19 +294,14 @@ export class IssueCheck {
   }
 
   private foot(cost: number): HTMLElement {
-    return h(
-      "div.snba-foot",
-      {},
-      h("span.snba-muted", {}, cost ? `Jev: $${cost.toFixed(5)}.` : "Jev: cached."),
-      this.again(),
-    );
+    return h("div.snba-foot", {}, h("span.snba-muted", {}, `Jev: $${cost.toFixed(5)}.`), this.again());
   }
 
   private again(): HTMLElement {
     return runButton(
       "Check again",
-      "Re-read the issue, TestGrid and GitHub search and ask Jev again, bypassing the cache",
-      () => void this.run(true),
+      "Re-read the issue, TestGrid and GitHub search and ask Jev again",
+      () => void this.run(),
     );
   }
 }

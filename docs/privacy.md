@@ -8,8 +8,7 @@ and the Jev provider you pick.
 
 - **Your credentials:** a GitHub personal access token and a key for Jev (TypeSafe or OpenRouter), entered on the
   settings page.
-- **Your settings**, and a **cache** of fetched GitHub data and Jev answers, so a revisited page loads without asking
-  again.
+- **Your settings.** Nothing fetched from GitHub, TestGrid or Jev is stored: every check reads it fresh.
 - **What was sent to Jev for each card** you judged in this browser session, so feedback can include it. It is kept
   in session storage (`chrome.storage.session`) and is gone when the browser closes.
 

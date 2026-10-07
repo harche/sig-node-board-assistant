@@ -7,10 +7,9 @@ export type Slot<R = TriageResult> =
   { state: "pending" } | { state: "done"; result: R } | { state: "error"; message: string };
 
 /** How one column's items are judged: Triage asks `item.judge`, To do `todo.judge`. */
-export type JudgeFn<R> = (item: BoardItem, refresh: boolean) => Promise<R>;
+export type JudgeFn<R> = (item: BoardItem) => Promise<R>;
 
-export const judgeTriage: JudgeFn<TriageResult> = (item, refresh) =>
-  send({ type: "item.judge", item, refresh });
+export const judgeTriage: JudgeFn<TriageResult> = (item) => send({ type: "item.judge", item });
 
 export class Judged<R = TriageResult> {
   readonly slots = new Map<number, Slot<R>>();
@@ -38,13 +37,13 @@ export class Judged<R = TriageResult> {
     this.emit(restId);
   }
 
-  judge(item: BoardItem, refresh = false): Promise<void> {
+  judge(item: BoardItem): Promise<void> {
     this.slots.set(item.restId, { state: "pending" });
     this.emit(item.restId);
     return new Promise((resolve) => {
       this.queue.push(async () => {
         try {
-          const result = await this.judgeFn(item, refresh);
+          const result = await this.judgeFn(item);
           this.slots.set(item.restId, { state: "done", result });
         } catch (e) {
           this.slots.set(item.restId, {

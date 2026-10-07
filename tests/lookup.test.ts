@@ -22,11 +22,18 @@ const mk = (repository: string, number: number): BoardItem => ({
 });
 
 describe("findOnBoards", () => {
+  const on: Record<string, { board: { owner: string; number: number }; item: BoardItem }[]> = {
+    "kubernetes/test-infra#2": [
+      // On another board too, in a column no workflow judges: not a placement.
+      {
+        board: { owner: "kubernetes", number: 185 },
+        item: { ...mk("kubernetes/test-infra", 2), status: "Done" },
+      },
+      { board: { owner: "kubernetes", number: 151 }, item: mk("kubernetes/test-infra", 2) },
+    ],
+  };
   const gh = {
-    itemsIn: async (board: { number: number }, column: string) =>
-      board.number === 151 && column === "Triage"
-        ? [mk("kubernetes/kubernetes", 1), mk("kubernetes/test-infra", 2)]
-        : [],
+    boardItems: async (repo: string, number: number) => on[`${repo}#${number}`] ?? [],
   } as unknown as GitHubClient;
   it("finds an item in a judged column", async () => {
     const p = await findOnBoards(gh, "kubernetes/test-infra", 2);

@@ -1,10 +1,15 @@
-/** GitHub REST client on Octokit (no GraphQL: the hourly GraphQL point budget is never touched). Octokit adds
- *  Link-header pagination; this class adds a short retry on 5xx, the cache and the board shapes.
- *  Reads are GETs; the two writes are a Status move and an issue / PR comment (for Prow commands). */
+/** GitHub client on Octokit. An issue or pull request is read with one GraphQL query (its fields, labels,
+ *  assignees, every comment and timeline event, and on a PR its files, review threads, commits and the head's
+ *  statuses: about a point of the 5,000 an hour, where REST took up to eighteen requests). Project boards, files' text,
+ *  PR diffs and the writes use REST. Nothing that can change is cached: the background makes a client per message
+ *  (or per click's batch), and the client makes each read once and shares it, so judging a card reads it once, fresh.
+ *  What cannot change (a PR's diff at a commit, an owner's type) is kept in memory (reads.ts `forever`). Octokit adds
+ *  Link-header pagination; this class adds a short retry on 5xx and rate limits, and the board shapes. */
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
-import { DAY, MINUTE, type Cache } from "./cache";
+import { forever, Reads } from "./reads";
 import type {
+  Comment,
   LinkedPr,
   BoardFields,
   BoardItem,
@@ -43,15 +48,18 @@ const RATE_LIMIT_MAX_WAIT_MS = 60_000;
 
 export class GitHubClient {
   readonly octokit: InstanceType<typeof Client>;
+  /** Reads this client made: each is fetched once for the client's life, never kept after. */
+  private reads = new Reads();
+  private sleep: (ms: number) => Promise<void>;
 
   constructor(
     token: string,
-    private cache: Cache,
     // "no-cache": GitHub's reads say max-age=60, so the browser would otherwise answer a read from its HTTP cache,
     // and a thread read just before a comment was posted would come back without it. Revalidating costs a 304.
     fetchFn: typeof fetch = (input, init) => fetch(input, { ...init, cache: "no-cache" }),
     sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
   ) {
+    this.sleep = sleep;
     this.octokit = new Client({
       auth: token || undefined,
       userAgent: "sig-node-board-assistant",
@@ -82,6 +90,15 @@ export class GitHubClient {
     });
   }
 
+  private once<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    return this.reads.once(key, fn);
+  }
+
+  /** After a write every read is made again: a thread read before a comment must not stand for after it. */
+  private wrote(): void {
+    this.reads.clear();
+  }
+
   async api<T = unknown>(path: string, params: Params = {}): Promise<T> {
     try {
       return (await this.octokit.request(`GET ${path}`, params)).data as T;
@@ -99,132 +116,284 @@ export class GitHubClient {
     }
   }
 
-  /** A GraphQL query (reads only). A 502 or 504 is GitHub timing out a heavy query: retried twice, since a read
-   *  is safe to repeat (the request hook never retries a POST). */
-  async graphql<T = unknown>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
+  /** A GraphQL query (reads only). Any error fails it, unless `partial`: then what GitHub could answer comes back
+   *  beside the errors (a search alias that failed, a project the token cannot read), and the caller checks for
+   *  nulls. GitHub reports its GraphQL rate limit as a 200 with a RATE_LIMITED error: that is waited out like a REST
+   *  limit. A 502 or 504 is GitHub timing out a heavy query: retried twice, since a read is safe to repeat (the
+   *  request hook never retries a POST). */
+  async graphql<T = unknown>(
+    query: string,
+    variables: Record<string, unknown> = {},
+    partial = false,
+  ): Promise<T> {
+    let limited = 0;
     for (let attempt = 0; ; attempt++) {
+      let r: { data: unknown; headers: Record<string, string | number | undefined> };
       try {
-        const r = await this.octokit.request("POST /graphql", { query, variables });
-        const body = r.data as { data?: T; errors?: { message: string }[] };
-        if (body.errors?.length && !body.data) throw new Error(body.errors.map((e) => e.message).join("; "));
-        return body.data as T;
+        r = await this.octokit.request("POST /graphql", { query, variables });
       } catch (e) {
         const status = (e as { status?: number }).status;
         if ((status === 502 || status === 504) && attempt < 2) continue;
         throw toGitHubError(e, "/graphql");
       }
+      const body = r.data as { data?: T | null; errors?: { type?: string; message: string }[] };
+      const errors = body.errors ?? [];
+      if (errors.some((e) => e.type === "RATE_LIMITED")) {
+        const reset = Number(r.headers["x-ratelimit-reset"]) || 0;
+        const wait = reset
+          ? reset * 1000 - Date.now() + 1000
+          : Math.min(RATE_LIMIT_MAX_WAIT_MS, 2000 * 2 ** limited);
+        if (limited < RATE_LIMIT_RETRIES && wait <= RATE_LIMIT_MAX_WAIT_MS) {
+          limited++;
+          await this.sleep(Math.max(wait, 1000));
+          continue;
+        }
+        throw new GitHubError(
+          `GitHub GraphQL rate limit${reset ? ` (resets ${new Date(reset * 1000).toLocaleTimeString()})` : ""}`,
+          429,
+          reset ? new Date(reset * 1000) : undefined,
+        );
+      }
+      if (errors.length && (!partial || !body.data)) {
+        const type = errors[0]?.type;
+        throw new GitHubError(
+          `GitHub GraphQL: ${errors.map((e) => e.message).join("; ")}`,
+          type === "NOT_FOUND" ? 404 : type === "FORBIDDEN" ? 403 : 502,
+        );
+      }
+      return body.data as T;
     }
+  }
+
+  /** An issue or pull request with everything the extension reads about it, in one GraphQL query (more pages of
+   *  the timeline, files or review threads only when a long one has them). */
+  item(repo: string, num: number): Promise<ItemRead> {
+    return this.once(`item:${repo}#${num}`, async (): Promise<ItemRead> => {
+      const [owner, name] = repo.split("/");
+      const data = await this.graphql<{ repository: { issueOrPullRequest: RawItem | null } | null }>(
+        ITEM_QUERY,
+        {
+          owner,
+          name,
+          number: num,
+        },
+      );
+      const x = data.repository?.issueOrPullRequest;
+      if (!x) throw new GitHubError(`GitHub 404 for ${repo}#${num}: no such issue or pull request`, 404);
+      const pr = x.__typename === "PullRequest";
+      // Every page, as REST read every page.
+      const pages = async <N>(c: Connection<N>, field: string, args: string, fields: string) => {
+        const out = [...c.nodes];
+        for (let at = c.pageInfo; at.hasNextPage;) {
+          const q = `query($id: ID!, $after: String!) { node(id: $id) { ... on ${x.__typename} { ${field}(first: 100, after: $after${args}) { pageInfo { hasNextPage endCursor } nodes { ${fields} } } } } }`;
+          const more = await this.graphql<{ node: Record<string, Connection<N>> }>(q, {
+            id: x.id,
+            after: at.endCursor,
+          });
+          const next = more.node[field]!;
+          out.push(...next.nodes);
+          at = next.pageInfo;
+        }
+        return out;
+      };
+      const events = await pages(
+        x.timelineItems,
+        "timelineItems",
+        `, itemTypes: [${pr ? PR_EVENTS : ISSUE_EVENTS}]`,
+        pr ? PR_TIMELINE : ISSUE_TIMELINE,
+      );
+      const comments: Comment[] = events
+        .filter((e): e is RawTimeline & { __typename: "IssueComment" } => e.__typename === "IssueComment")
+        .map((e) => ({ author: { login: login(e.author) }, body: e.body ?? "", createdAt: e.createdAt }));
+      const detail: ItemDetail = {
+        title: x.title,
+        body: x.body ?? "",
+        labels: x.labels.nodes.map((l) => ({ name: l.name })),
+        state: x.state === "OPEN" ? "open" : "closed",
+        author: { login: login(x.author) },
+        createdAt: x.createdAt,
+        url: x.url,
+        milestone: x.milestone?.title ?? null,
+        closedAt: x.closedAt ?? null,
+        assignees: x.assignees.nodes.map((a) => a.login),
+        comments: [...comments],
+      };
+      const timeline = slim(events.map(restEvent).filter((e): e is TimelineEvent => e !== null));
+      // As REST's issue endpoint has it: what an issue workflow reads about a PR on its column.
+      const conversation: ItemDetail = { ...detail, comments: [...comments] };
+      if (!pr) return { kind: "Issue", detail, conversation, timeline, comments };
+      const p = x as RawPullRequest;
+      // The reviews connection, not the timeline: the timeline leaves out the author's replies in review threads.
+      const [files, threads, allReviews] = await Promise.all([
+        pages(p.files, "files", "", FILE_FIELDS),
+        pages(p.reviewThreads, "reviewThreads", "", THREAD_FIELDS),
+        pages(p.reviews, "reviews", "", REVIEW_FIELDS),
+      ]);
+      const reviews = allReviews
+        // A pending (unsubmitted) review of the token's owner has no date and is nobody's move yet.
+        .filter((r) => r.author && r.state !== "PENDING" && r.submittedAt)
+        .map((r) => ({ author: login(r.author), state: r.state, at: r.submittedAt!, body: r.body ?? "" }));
+      detail.isDraft = p.isDraft;
+      detail.additions = p.additions;
+      detail.deletions = p.deletions;
+      detail.files = files.map((f) => ({ path: f.path, additions: f.additions, deletions: f.deletions }));
+      detail.reviewDecision = decision(reviews);
+      detail.comments.push(
+        ...threads.flatMap((t) =>
+          t.comments.nodes.map((c) => ({
+            author: { login: login(c.author) },
+            body: c.body ?? "",
+            createdAt: c.createdAt,
+          })),
+        ),
+      );
+      detail.comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const head = p.head.nodes[0]?.commit;
+      const dates = p.commits.nodes
+        .map((c) => c.commit.committedDate)
+        .filter(Boolean)
+        .sort();
+      return {
+        kind: "PullRequest",
+        detail,
+        conversation,
+        timeline,
+        comments,
+        pull: {
+          state: p.mergedAt ? "merged" : p.state === "OPEN" ? "open" : "closed",
+          sha: p.headRefOid,
+          changedFiles: p.changedFiles,
+          lastCommit: dates.at(-1) ?? null,
+          reviews,
+          // By context: GraphQL and REST list them in different orders.
+          statuses: statuses(head?.status),
+        },
+      };
+    });
+  }
+
+  /** The pull request read, or an error naming what it is instead. */
+  private async pull(repo: string, num: number): Promise<ItemRead & { pull: PullRead }> {
+    const r = await this.item(repo, num);
+    if (!r.pull) throw new GitHubError(`${repo}#${num} is an issue, not a pull request`, 404);
+    return r as ItemRead & { pull: PullRead };
   }
 
   /** A pull request's state for the Needs Reviewer checks: the PR, its reviews, and Prow's tide status on the
    *  head commit (tide's description says what still blocks the merge). */
-  pullState(repo: string, num: number, refresh = false): Promise<PullState> {
-    return this.cache.cached(
-      `pullstate:${repo}#${num}`,
-      15 * MINUTE,
-      async () => {
-        const pr = await this.api<RawPullFull>(`/repos/${repo}/pulls/${num}`);
-        const reviews = await this.paged<RawReview>(`/repos/${repo}/pulls/${num}/reviews`);
-        const status = await this.api<{
-          statuses: { context: string; state: string; description: string | null }[];
-        }>(`/repos/${repo}/commits/${pr.head.sha}/status`).catch(() => ({ statuses: [] }));
-        const tide = status.statuses.find((x) => x.context === "tide");
-        return {
-          state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open",
-          draft: pr.draft,
-          author: pr.user.login,
-          created_at: pr.created_at,
-          labels: pr.labels.map((l) => l.name),
-          tide: tide ? { state: tide.state, description: tide.description ?? "" } : null,
-          failing: status.statuses
-            .filter((x) => x.context !== "tide" && (x.state === "failure" || x.state === "error"))
-            .map((x) => x.context),
-          reviews: reviews
-            // A pending (unsubmitted) review of the token's owner has no date and is nobody's move yet.
-            .filter((r) => r.user && r.state !== "PENDING" && r.submitted_at)
-            .map((r) => ({
-              author: r.user!.login,
-              state: r.state,
-              at: r.submitted_at,
-              body: (r.body ?? "").slice(0, 600),
-            })),
-        };
-      },
-      refresh,
-    );
+  async pullState(repo: string, num: number): Promise<PullState> {
+    const { detail: d, pull: p } = await this.pull(repo, num);
+    const tide = p.statuses.find((x) => x.context === "tide");
+    return {
+      state: p.state,
+      draft: Boolean(d.isDraft),
+      author: d.author.login,
+      created_at: d.createdAt,
+      labels: d.labels.map((l) => l.name),
+      tide: tide ? { state: tide.state, description: tide.description } : null,
+      failing: p.statuses
+        .filter((x) => x.context !== "tide" && (x.state === "failure" || x.state === "error"))
+        .map((x) => x.context),
+      reviews: p.reviews.map((r) => ({ ...r, body: r.body.slice(0, 600) })),
+    };
   }
 
   /** The pull request's diff file by file, each patch cut at PATCH_MAX (null for a binary file or one GitHub will not
-   *  diff). null when the head is no longer `sha`: a diff read after a push is not the one the run tested. */
-  async pullDiff(repo: string, num: number, sha: string): Promise<ChangedFile[] | null> {
-    const [pr, files] = await Promise.all([
-      this.api<RawPullFull>(`/repos/${repo}/pulls/${num}`),
-      this.paged<RawFile & { status: string; patch?: string }>(`/repos/${repo}/pulls/${num}/files`),
-    ]);
-    if (pr.head.sha !== sha) return null;
-    return files.map((f) => ({
-      file: f.filename,
-      status: f.status,
-      patch:
-        f.patch === undefined
-          ? null
-          : f.patch.length > PATCH_MAX
-            ? `${f.patch.slice(0, PATCH_MAX)}\n…cut`
-            : f.patch,
-    }));
-  }
-
-  /** What the PR page's CI check reads about a pull request: its head commit, title and changed paths, and every
-   *  status on the head commit (the combined status: the newest per context). Kept two minutes: CI moves fast. */
-  pullChecks(repo: string, num: number, refresh = false): Promise<PullChecks> {
-    return this.cache.cached(
-      `pullchecks:${repo}#${num}`,
-      2 * MINUTE,
+   *  diff). null when the head is no longer `sha`: a diff read after a push is not the one the run tested. REST: the
+   *  GraphQL API has no patches. */
+  pullDiff(repo: string, num: number, sha: string): Promise<ChangedFile[] | null> {
+    // A diff at a commit never changes: kept, unless the head had moved on (null).
+    return forever(
+      `diff:${repo}#${num}@${sha}`,
       async () => {
-        const pr = await this.api<RawPullFull & { title: string; changed_files: number }>(
-          `/repos/${repo}/pulls/${num}`,
-        );
-        // The combined status is an object, not a list, so octokit's paginate cannot follow it: pages by hand.
-        const statuses = async () => {
-          const out: RawStatus[] = [];
-          for (let page = 1; page <= 5; page++) {
-            const r = await this.api<{ statuses: RawStatus[] }>(
-              `/repos/${repo}/commits/${pr.head.sha}/status`,
-              {
-                per_page: 100,
-                page,
-              },
-            );
-            out.push(...r.statuses);
-            if (r.statuses.length < 100) break;
-          }
-          return out;
-        };
-        const [files, status] = await Promise.all([
-          this.paged<RawFile>(`/repos/${repo}/pulls/${num}/files`),
-          statuses(),
+        const [pr, files] = await Promise.all([
+          this.api<{ head: { sha: string } }>(`/repos/${repo}/pulls/${num}`),
+          this.paged<{ filename: string; status: string; patch?: string }>(
+            `/repos/${repo}/pulls/${num}/files`,
+          ),
         ]);
-        return {
-          sha: pr.head.sha,
-          title: pr.title,
-          state: pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : "open",
-          files: files.map((f) => f.filename).slice(0, 300),
-          files_total: pr.changed_files,
-          statuses: status.map((x) => ({
-            context: x.context,
-            state: x.state,
-            description: x.description ?? "",
-            target_url: x.target_url ?? "",
-          })),
-        };
+        if (pr.head.sha !== sha) return null;
+        return files.map((f) => ({
+          file: f.filename,
+          status: f.status,
+          patch:
+            f.patch === undefined
+              ? null
+              : f.patch.length > PATCH_MAX
+                ? `${f.patch.slice(0, PATCH_MAX)}\n…cut`
+                : f.patch,
+        }));
       },
-      refresh,
+      (v) => v !== null,
     );
   }
 
-  /** A file's text on the default branch (OWNERS, OWNERS_ALIASES), cached a day; null when it does not exist. */
+  /** What the PR page's CI check reads about a pull request: its head commit, title and changed paths, and every
+   *  status on the head commit (the newest per context). */
+  async pullChecks(repo: string, num: number): Promise<PullChecks> {
+    if (this.reads.has(`item:${repo}#${num}`)) {
+      const { detail: d, pull: p } = await this.pull(repo, num);
+      return {
+        sha: p.sha,
+        title: d.title,
+        state: p.state,
+        files: (d.files ?? []).map((f) => f.path).slice(0, 300),
+        files_total: p.changedFiles,
+        statuses: p.statuses,
+      };
+    }
+    // Only what the check needs: no timeline, no review threads.
+    return this.once(`checks:${repo}#${num}`, async () => {
+      const [owner, name] = repo.split("/");
+      const data = await this.graphql<{ repository: { pullRequest: RawChecks | null } | null }>(
+        CHECKS_QUERY,
+        {
+          owner,
+          name,
+          number: num,
+        },
+      );
+      const x = data.repository?.pullRequest;
+      if (!x) throw new GitHubError(`GitHub 404 for ${repo}#${num}: no such pull request`, 404);
+      const files = [...x.files.nodes];
+      for (let at = x.files.pageInfo; at.hasNextPage && files.length < 300;) {
+        const more = await this.graphql<{ node: { files: Connection<{ path: string }> } }>(
+          CHECKS_FILES_QUERY,
+          {
+            id: x.id,
+            after: at.endCursor,
+          },
+        );
+        files.push(...more.node.files.nodes);
+        at = more.node.files.pageInfo;
+      }
+      return {
+        sha: x.headRefOid,
+        title: x.title,
+        state: x.mergedAt ? "merged" : x.state === "OPEN" ? "open" : "closed",
+        files: files.map((f) => f.path).slice(0, 300),
+        files_total: x.changedFiles,
+        statuses: statuses(x.head.nodes[0]?.commit.status),
+      };
+    });
+  }
+
+  /** An issue's or PR's labels: what the issue page's checks look at before offering themselves. */
+  labels(repo: string, num: number): Promise<string[]> {
+    return this.once(`labels:${repo}#${num}`, async () => {
+      const [owner, name] = repo.split("/");
+      const data = await this.graphql<{
+        repository: { issueOrPullRequest: { labels: { nodes: { name: string }[] } } | null } | null;
+      }>(LABELS_QUERY, { owner, name, number: num });
+      const x = data.repository?.issueOrPullRequest;
+      if (!x) throw new GitHubError(`GitHub 404 for ${repo}#${num}: no such issue or pull request`, 404);
+      return x.labels.nodes.map((l) => l.name);
+    });
+  }
+
+  /** A file's text on the default branch (OWNERS, OWNERS_ALIASES); null when it does not exist. */
   rawFile(repo: string, path: string): Promise<string | null> {
-    return this.cache.cached(`raw:${repo}:${path}`, DAY, async () => {
+    return this.once(`raw:${repo}:${path}`, async () => {
       try {
         const r = await this.octokit.request(`GET /repos/${repo}/contents/${path}`, {
           headers: { accept: "application/vnd.github.raw" },
@@ -239,7 +408,7 @@ export class GitHubClient {
 
   /** open / closed / merged for an issue or PR another item refers to. */
   refState(repo: string, num: number): Promise<"open" | "closed" | "merged" | "missing"> {
-    return this.cache.cached(`ref:${repo}#${num}`, 30 * MINUTE, async () => {
+    return this.once(`ref:${repo}#${num}`, async () => {
       const x = await this.api<{ state: string; pull_request?: { merged_at: string | null } }>(
         `/repos/${repo}/issues/${num}`,
       ).catch(() => null);
@@ -248,14 +417,15 @@ export class GitHubClient {
     });
   }
 
-  /** Who the token belongs to; the options page's "test" button. */
-  async viewer(): Promise<{ login: string }> {
-    return this.api<{ login: string }>("/user");
+  /** Who the token belongs to; the options page's "test" button, and who a comment would come from. */
+  viewer(): Promise<{ login: string }> {
+    return this.once("viewer", () => this.api<{ login: string }>("/user"));
   }
 
-  /** 'orgs' or 'users' for the REST projectsV2 routes; resolved once and cached for a month. */
+  /** 'orgs' or 'users' for the REST projectsV2 routes. */
   ownerType(owner: string): Promise<"orgs" | "users"> {
-    return this.cache.cached(`ownertype:${owner}`, 30 * DAY, async () => {
+    // An account does not turn from an org into a user: kept.
+    return forever(`ownertype:${owner}`, async () => {
       const u = await this.api<{ type: string }>(`/users/${owner}`);
       return u.type === "Organization" ? "orgs" : "users";
     });
@@ -268,7 +438,7 @@ export class GitHubClient {
   /** Project node id, Status field ids and option ids: what a Status move needs, and what the proposed `gh`
    *  command shows. */
   fields(board: BoardRef): Promise<BoardFields> {
-    return this.cache.cached(`fields:${board.owner}/${board.number}`, DAY, async () => {
+    return this.once(`fields:${board.owner}/${board.number}`, async () => {
       const base = await this.projectPath(board);
       const proj = await this.api<{ title: string; node_id: string }>(base);
       const fl = await this.paged<{
@@ -301,10 +471,12 @@ export class GitHubClient {
       });
     } catch (e) {
       throw toGitHubError(e, path);
+    } finally {
+      this.wrote();
     }
   }
 
-  /** The issue or PR behind one project item, read fresh (never cached): what a write is checked against. */
+  /** The issue or PR behind one project item: what a write is checked against. */
   async projectItem(board: BoardRef, restId: number): Promise<{ repository: string; number: number } | null> {
     const it = await this.api<RawProjectItem>(`${await this.projectPath(board)}/items/${restId}`);
     const c = it.content;
@@ -314,22 +486,16 @@ export class GitHubClient {
 
   /** Issues matching each search query, at most `n` each. A plain query is a keyword search, newest-updated first;
    *  `{ q, type }` asks GitHub's semantic or hybrid (semantic and keyword) search, best match first. One GraphQL
-   *  request carries every query not already cached (aliased searches cost about one point of the 5,000 an hour,
-   *  and do not count against REST search's 30 a minute). Results are kept for 30 minutes. */
-  async searchIssues(queries: SearchQuery[], n = 10, refresh = false): Promise<RawSearchIssue[][]> {
+   *  request carries every query (aliased searches cost about one point of the 5,000 an hour, and do not count
+   *  against REST search's 30 a minute). */
+  async searchIssues(queries: SearchQuery[], n = 10): Promise<RawSearchIssue[][]> {
     const norm = (x: SearchQuery) => (typeof x === "string" ? { q: x, type: "ISSUE" as const } : x);
     const id = (x: SearchQuery) => {
       const { q, type } = norm(x);
       return type === "ISSUE" ? q : `${type}|${q}`;
     };
-    const key = (x: SearchQuery) => `gsearch3:${n}:${id(x)}`;
     const out = new Map<string, RawSearchIssue[]>();
-    if (!refresh)
-      for (const x of queries) {
-        const hit = await this.cache.get<RawSearchIssue[]>(key(x), 30 * MINUTE);
-        if (hit) out.set(id(x), hit);
-      }
-    const todo = [...new Map(queries.filter((x) => !out.has(id(x))).map((x) => [id(x), norm(x)])).values()];
+    const todo = [...new Map(queries.map((x) => [id(x), norm(x)])).values()];
     if (todo.length) {
       const fields =
         "nodes { ... on Issue { number title state closedAt createdAt updatedAt url body author { login } assignees(first: 5) { nodes { login } } } }";
@@ -354,47 +520,40 @@ export class GitHubClient {
         Object.fromEntries(
           todo.map((x, i) => [`q${i}`, x.type === "ISSUE" ? `${x.q} sort:updated-desc` : x.q]),
         ),
+        // A failed alias comes back null beside the others: partial, and checked below.
+        true,
       );
       for (const [i, x] of todo.entries()) {
         // A failed alias comes back null beside the others' data: an error, not "nothing found".
         const hit = data[`s${i}`];
         if (!hit) throw new Error(`GitHub search failed for: ${x.q}`);
-        const xs = hit.nodes
-          .filter((y) => y.number)
-          .map((y) => ({
-            number: y.number!,
-            title: y.title,
-            state: y.state.toLowerCase() as "open" | "closed",
-            closed_at: y.closedAt,
-            html_url: y.url,
-            body: (y.body ?? "").slice(0, 3000),
-            created_at: y.createdAt,
-            updated_at: y.updatedAt,
-            author: y.author?.login ?? "ghost",
-            assignees: (y.assignees?.nodes ?? []).map((a) => a.login),
-          }));
-        await this.cache.set(key(x), xs);
-        out.set(id(x), xs);
+        out.set(
+          id(x),
+          hit.nodes
+            .filter((y) => y.number)
+            .map((y) => ({
+              number: y.number!,
+              title: y.title,
+              state: y.state.toLowerCase() as "open" | "closed",
+              closed_at: y.closedAt,
+              html_url: y.url,
+              body: (y.body ?? "").slice(0, 3000),
+              created_at: y.createdAt,
+              updated_at: y.updatedAt,
+              author: y.author?.login ?? "ghost",
+              assignees: (y.assignees?.nodes ?? []).map((a) => a.login),
+            })),
+        );
       }
     }
     return queries.map((x) => out.get(id(x)) ?? []);
   }
 
   /** Issues with their recent thread, by number, in one GraphQL request (pull requests and missing numbers come back
-   *  null). For the duplicates check: each candidate's title, body, labels and last 15 comments. Kept 30 minutes. */
-  async issueThreads(
-    repo: string,
-    numbers: number[],
-    refresh = false,
-  ): Promise<Map<number, ThreadIssue | null>> {
-    const key = (n: number) => `thread2:${repo}#${n}`;
+   *  null). For the duplicates check: each candidate's title, body, labels and last 15 comments. */
+  async issueThreads(repo: string, numbers: number[]): Promise<Map<number, ThreadIssue | null>> {
     const out = new Map<number, ThreadIssue | null>();
-    if (!refresh)
-      for (const n of numbers) {
-        const hit = await this.cache.get<ThreadIssue | { none: true }>(key(n), 30 * MINUTE);
-        if (hit) out.set(n, "none" in hit ? null : hit);
-      }
-    const todo = [...new Set(numbers.filter((n) => !out.has(n)))];
+    const todo = [...new Set(numbers)];
     const [owner, name] = repo.split("/");
     for (let i = 0; i < todo.length; i += 25) {
       const chunk = todo.slice(i, i + 25);
@@ -417,10 +576,16 @@ export class GitHubClient {
         labels: { nodes: { name: string }[] };
         comments: { nodes: { author: { login: string } | null; body: string; createdAt: string }[] };
       };
-      const data = await this.graphql<{ repository: Record<string, Node | null> }>(query, { owner, name });
+      // A number that is no issue comes back null beside a NOT_FOUND error: partial.
+      const data = await this.graphql<{ repository: Record<string, Node | null> }>(
+        query,
+        { owner, name },
+        true,
+      );
       for (const n of chunk) {
         const x = data.repository?.[`i${n}`];
-        const v: ThreadIssue | null =
+        out.set(
+          n,
           x && x.__typename === "Issue"
             ? {
                 number: x.number,
@@ -438,9 +603,8 @@ export class GitHubClient {
                   created_at: c.createdAt,
                 })),
               }
-            : null;
-        await this.cache.set(key(n), v ?? { none: true });
-        out.set(n, v);
+            : null,
+        );
       }
     }
     return out;
@@ -448,31 +612,18 @@ export class GitHubClient {
 
   /** An issue's whole body and every comment, as one text. With `mirrorRepo`, the comments on its
    *  "[mirror] <repo>#<n>" issue there too (where the TestGrid review writes while being tried out). */
-  issueText(repo: string, number: number, refresh = false, mirrorRepo?: string): Promise<string> {
-    return this.cache.cached(
-      `issuetext:${repo}#${number}:${mirrorRepo ?? ""}`,
-      10 * MINUTE,
-      async () => {
-        const body = (await this.api<{ body?: string | null }>(`/repos/${repo}/issues/${number}`)).body ?? "";
-        const comments = await this.paged<{ body?: string }>(`/repos/${repo}/issues/${number}/comments`);
-        const parts = [body, ...comments.map((c) => c.body ?? "")];
-        if (mirrorRepo) {
-          const title = `[mirror] ${repo}#${number}`;
-          const all = await this.paged<{ number: number; title: string }>(`/repos/${mirrorRepo}/issues`, {
-            state: "all",
-          });
-          const m = all.find((x) => x.title === title);
-          if (m)
-            parts.push(
-              ...(
-                await this.paged<{ body?: string }>(`/repos/${mirrorRepo}/issues/${m.number}/comments`)
-              ).map((c) => c.body ?? ""),
-            );
-        }
-        return parts.join("\n");
-      },
-      refresh,
-    );
+  async issueText(repo: string, number: number, mirrorRepo?: string): Promise<string> {
+    const { detail, comments } = await this.item(repo, number);
+    const parts = [detail.body, ...comments.map((c) => c.body)];
+    if (mirrorRepo) {
+      const title = `[mirror] ${repo}#${number}`;
+      const all = await this.paged<{ number: number; title: string }>(`/repos/${mirrorRepo}/issues`, {
+        state: "all",
+      });
+      const m = all.find((x) => x.title === title);
+      if (m) parts.push(...(await this.item(mirrorRepo, m.number)).comments.map((c) => c.body));
+    }
+    return parts.join("\n");
   }
 
   /** Creates a secret gist on the token's account (feedback's attachments); returns its URL. Needs the `gist` scope. */
@@ -487,6 +638,8 @@ export class GitHubClient {
       return (r.data as { html_url: string }).html_url;
     } catch (e) {
       throw toGitHubError(e, path);
+    } finally {
+      this.wrote();
     }
   }
 
@@ -498,6 +651,8 @@ export class GitHubClient {
       return (r.data as { number: number }).number;
     } catch (e) {
       throw toGitHubError(e, path);
+    } finally {
+      this.wrote();
     }
   }
 
@@ -514,158 +669,412 @@ export class GitHubClient {
       await this.octokit.request(`POST ${path}`, { body });
     } catch (e) {
       throw toGitHubError(e, path);
+    } finally {
+      this.wrote();
     }
   }
 
   /** Items in one Status column via the server-side `q=status:` filter; draft issues (no content) are skipped. */
-  itemsIn(board: BoardRef, status: string, refresh = false): Promise<BoardItem[]> {
-    const key = `col:${board.owner}/${board.number}:${status}`;
-    return this.cache.cached(
-      key,
-      10 * MINUTE,
-      async () => {
-        const base = await this.projectPath(board);
-        const raw = await this.paged<RawProjectItem>(`${base}/items`, { q: `status:"${status}"` });
-        const out: BoardItem[] = [];
-        for (const it of raw) {
-          const c = it.content;
-          if (!c?.number) continue;
-          const isPr = c.url.includes("/pulls/");
-          out.push({
-            id: it.node_id,
-            restId: it.id,
-            status,
-            type: isPr ? "PullRequest" : "Issue",
-            number: c.number,
-            url: c.html_url,
-            repository: c.html_url.split("/").slice(3, 5).join("/"),
-            title: c.title,
-            state: c.state,
-            merged: Boolean(c.merged_at),
-            draft: Boolean(c.draft),
-            labels: (c.labels ?? []).map((l) => l.name),
-            assignees: (c.assignees ?? []).map((a) => a.login),
-            updatedAt: c.updated_at,
-            closedAt: c.closed_at ?? null,
-          });
-        }
-        return out;
-      },
-      refresh,
-    );
+  itemsIn(board: BoardRef, status: string): Promise<BoardItem[]> {
+    return this.once(`col:${board.owner}/${board.number}:${status}`, async () => {
+      const base = await this.projectPath(board);
+      const raw = await this.paged<RawProjectItem>(`${base}/items`, { q: `status:"${status}"` });
+      const out: BoardItem[] = [];
+      for (const it of raw) {
+        const c = it.content;
+        if (!c?.number) continue;
+        const isPr = c.url.includes("/pulls/");
+        out.push({
+          id: it.node_id,
+          restId: it.id,
+          status,
+          type: isPr ? "PullRequest" : "Issue",
+          number: c.number,
+          url: c.html_url,
+          repository: c.html_url.split("/").slice(3, 5).join("/"),
+          title: c.title,
+          state: c.state,
+          merged: Boolean(c.merged_at),
+          draft: Boolean(c.draft),
+          labels: (c.labels ?? []).map((l) => l.name),
+          assignees: (c.assignees ?? []).map((a) => a.login),
+          updatedAt: c.updated_at,
+          closedAt: c.closed_at ?? null,
+        });
+      }
+      return out;
+    });
   }
 
-  /** Last approve/reject per reviewer wins; any CHANGES_REQUESTED outranks approvals. */
-  async reviewDecision(repo: string, num: number): Promise<ReviewDecision> {
-    const latest = new Map<string, string>();
-    for (const r of await this.paged<{ state: string; user: { login: string } }>(
-      `/repos/${repo}/pulls/${num}/reviews`,
-    )) {
-      if (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED") latest.set(r.user.login, r.state);
-    }
-    const s = new Set(latest.values());
-    return s.has("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : s.has("APPROVED") ? "APPROVED" : null;
+  /** The board items an issue or PR has: each one's board, its Status column and the item as a column lists it, in
+   *  one GraphQL query (archived items left out). A project the token cannot read comes back null beside an error;
+   *  it is left out, as REST would not have listed it. */
+  boardItems(repo: string, num: number): Promise<{ board: BoardRef; item: BoardItem }[]> {
+    return this.once(`boarditems:${repo}#${num}`, async () => {
+      const [owner, name] = repo.split("/");
+      const data = await this.graphql<{ repository: { issueOrPullRequest: RawBoardContent | null } | null }>(
+        BOARD_ITEMS_QUERY,
+        { owner, name, number: num },
+        true,
+      );
+      const x = data?.repository?.issueOrPullRequest;
+      if (!x) return [];
+      return (x.projectItems?.nodes ?? [])
+        .filter((p): p is NonNullable<typeof p> =>
+          Boolean(p && !p.isArchived && p.project?.owner?.login && p.status?.name),
+        )
+        .map((p) => ({
+          board: { owner: p.project!.owner!.login!, number: p.project!.number },
+          item: {
+            id: p.id,
+            restId: p.databaseId,
+            status: p.status!.name!,
+            type: x.__typename,
+            number: x.number,
+            url: x.url,
+            repository: repo,
+            title: x.title,
+            state: x.state === "OPEN" ? "open" : "closed",
+            merged: Boolean(x.merged),
+            draft: Boolean(x.isDraft),
+            labels: x.labels.nodes.map((l) => l.name),
+            assignees: x.assignees.nodes.map((a) => a.login),
+            updatedAt: x.updatedAt,
+            closedAt: x.closedAt ?? null,
+          },
+        }));
+    });
   }
 
-  /** An issue's or PR's timeline (REST), oldest first: assignments, comments, cross-references, labels, and on a
-   *  PR its commits, reviews and force-pushes. */
-  timeline(repo: string, num: number, refresh = false): Promise<TimelineEvent[]> {
-    return this.cache.cached(
-      `tl:${repo}#${num}`,
-      30 * MINUTE,
-      async () => slim(await this.paged<TimelineEvent>(`/repos/${repo}/issues/${num}/timeline`)),
-      refresh,
-    );
+  /** An issue's or PR's timeline, oldest first: assignments, comments, cross-references, labels, and on a PR its
+   *  commits, reviews and force-pushes. Shaped like the REST timeline's events. */
+  async timeline(repo: string, num: number): Promise<TimelineEvent[]> {
+    return (await this.item(repo, num)).timeline;
   }
 
   /** When a PR's newest commit was committed, or null. */
-  prLastCommit(repo: string, num: number, refresh = false): Promise<string | null> {
-    return this.cache.cached(
-      `prcommit:${repo}#${num}`,
-      30 * MINUTE,
-      async () => {
-        const cs = await this.paged<{ commit: { committer: { date: string } | null } }>(
-          `/repos/${repo}/pulls/${num}/commits`,
-        );
-        const dates = cs.map((c) => c.commit.committer?.date).filter((d): d is string => Boolean(d));
-        return dates.length ? dates.sort().at(-1)! : null;
-      },
-      refresh,
-    );
+  async prLastCommit(repo: string, num: number): Promise<string | null> {
+    return (await this.pull(repo, num)).pull.lastCommit;
   }
 
   /** PRs that reference an issue (cross-referenced timeline events), newest reference last, deduped. */
-  linkedPrs(repo: string, num: number, refresh = false): Promise<LinkedPr[]> {
-    return this.cache.cached(
-      `linked:${repo}#${num}`,
-      30 * MINUTE,
-      async () => {
-        const out = new Map<string, LinkedPr>();
-        for (const e of await this.timeline(repo, num, refresh)) {
-          const src = e.event === "cross-referenced" ? e.source?.issue : undefined;
-          if (!src?.pull_request) continue;
-          out.delete(src.html_url);
-          out.set(src.html_url, {
-            repository: src.html_url.split("/").slice(3, 5).join("/"),
-            number: src.number,
-            title: src.title,
-            author: src.user?.login ?? "ghost",
-            state: src.pull_request.merged_at ? "merged" : src.state === "closed" ? "closed" : "open",
-            createdAt: src.created_at,
-            mergedAt: src.pull_request.merged_at ?? null,
-            body: src.body ?? "",
-          });
-        }
-        return [...out.values()];
-      },
-      refresh,
-    );
+  async linkedPrs(repo: string, num: number): Promise<LinkedPr[]> {
+    const out = new Map<string, LinkedPr>();
+    for (const e of await this.timeline(repo, num)) {
+      const src = e.event === "cross-referenced" ? e.source?.issue : undefined;
+      if (!src?.pull_request) continue;
+      out.delete(src.html_url);
+      out.set(src.html_url, {
+        repository: src.html_url.split("/").slice(3, 5).join("/"),
+        number: src.number,
+        title: src.title,
+        author: src.user?.login ?? "ghost",
+        state: src.pull_request.merged_at ? "merged" : src.state === "closed" ? "closed" : "open",
+        createdAt: src.created_at,
+        mergedAt: src.pull_request.merged_at ?? null,
+        body: src.body ?? "",
+      });
+    }
+    return [...out.values()];
   }
 
-  itemDetail(repo: string, kind: ItemKind, num: number, refresh = false): Promise<ItemDetail> {
-    // item3: details now carry the close time and assignees; entries cached before that must not be reused.
-    return this.cache.cached(
-      `item3:${repo}#${num}`,
-      30 * MINUTE,
-      async () => {
-        const iss = await this.api<RawIssue>(`/repos/${repo}/issues/${num}`);
-        const cm = (c: RawComment) => ({
-          author: { login: c.user.login },
-          body: c.body ?? "",
-          createdAt: c.created_at,
-        });
-        const d: ItemDetail = {
-          title: iss.title,
-          body: iss.body ?? "",
-          labels: iss.labels.map((l) => ({ name: l.name })),
-          state: iss.state,
-          author: { login: iss.user.login },
-          createdAt: iss.created_at,
-          url: iss.html_url,
-          milestone: iss.milestone?.title ?? null,
-          closedAt: iss.closed_at ?? null,
-          assignees: (iss.assignees ?? []).map((a) => a.login),
-          comments: (await this.paged<RawComment>(`/repos/${repo}/issues/${num}/comments`)).map(cm),
-        };
-        if (kind === "PullRequest") {
-          const pr = await this.api<RawPull>(`/repos/${repo}/pulls/${num}`);
-          d.isDraft = pr.draft;
-          d.additions = pr.additions;
-          d.deletions = pr.deletions;
-          d.files = (await this.paged<RawFile>(`/repos/${repo}/pulls/${num}/files`)).map((f) => ({
-            path: f.filename,
-            additions: f.additions,
-            deletions: f.deletions,
-          }));
-          d.reviewDecision = await this.reviewDecision(repo, num);
-          d.comments.push(...(await this.paged<RawComment>(`/repos/${repo}/pulls/${num}/comments`)).map(cm));
-          d.comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-        }
-        return d;
-      },
-      refresh,
-    );
+  /** The issue or PR as the judges read it: fields, labels, assignees and comments; read as a PullRequest, also its
+   *  review comments, draft flag, size, files and review decision. A PR on an issue workflow's column (DRA's, say)
+   *  is read as an Issue: its conversation only, as before. */
+  async itemDetail(repo: string, kind: ItemKind, num: number): Promise<ItemDetail> {
+    const r = await this.item(repo, num);
+    return kind === "PullRequest" ? r.detail : r.conversation;
   }
+}
+
+/** One item read: the detail, its timeline, and for a PR what the PR checks read. */
+export interface ItemRead {
+  kind: ItemKind;
+  detail: ItemDetail;
+  /** The detail as REST's issue endpoint had it: on a PR, without the review comments and PR fields. */
+  conversation: ItemDetail;
+  timeline: TimelineEvent[];
+  /** The conversation's comments, without a PR's review comments. */
+  comments: Comment[];
+  pull?: PullRead;
+}
+interface PullRead {
+  state: "open" | "closed" | "merged";
+  sha: string;
+  changedFiles: number;
+  lastCommit: string | null;
+  reviews: { author: string; state: string; at: string; body: string }[];
+  statuses: CommitStatus[];
+}
+
+/** A commit's statuses, as REST's names them, by context: GraphQL and REST list them in different orders. */
+function statuses(s: RawStatus | null | undefined): CommitStatus[] {
+  return (s?.contexts ?? [])
+    .map((c) => ({
+      context: c.context,
+      state: c.state.toLowerCase(),
+      description: c.description ?? "",
+      target_url: c.targetUrl ?? "",
+    }))
+    .sort((a, b) => a.context.localeCompare(b.context));
+}
+
+/** Last approve/reject per reviewer wins; any CHANGES_REQUESTED outranks approvals. */
+function decision(reviews: { author: string; state: string }[]): ReviewDecision {
+  const latest = new Map<string, string>();
+  for (const r of reviews)
+    if (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED") latest.set(r.author, r.state);
+  const s = new Set(latest.values());
+  return s.has("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : s.has("APPROVED") ? "APPROVED" : null;
+}
+
+/** REST's login for an actor: an app's bot account is `name[bot]` there, `name` in GraphQL. A deleted user is ghost. */
+function login(a: RawActor | null | undefined): string {
+  if (!a?.login) return "ghost";
+  return a.__typename === "Bot" ? `${a.login}[bot]` : a.login;
+}
+const actor = (a: RawActor | null | undefined) => (a ? { login: login(a) } : null);
+
+/** An ISO time in UTC, to the second, as REST writes it. */
+const utc = (t: string) => new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+/** A GraphQL timeline item as the REST timeline event the judges read (null for one they do not). */
+function restEvent(e: RawTimeline): TimelineEvent | null {
+  switch (e.__typename) {
+    case "IssueComment":
+      return {
+        event: "commented",
+        created_at: e.createdAt,
+        actor: actor(e.author),
+        user: actor(e.author),
+        body: e.body,
+      };
+    case "AssignedEvent":
+    case "UnassignedEvent":
+      return {
+        event: e.__typename === "AssignedEvent" ? "assigned" : "unassigned",
+        created_at: e.createdAt,
+        actor: actor(e.actor),
+        assignee: actor(e.assignee),
+      };
+    case "LabeledEvent":
+    case "UnlabeledEvent":
+      return {
+        event: e.__typename === "LabeledEvent" ? "labeled" : "unlabeled",
+        created_at: e.createdAt,
+        actor: actor(e.actor),
+        label: e.label ? { name: e.label.name } : undefined,
+      };
+    case "ReviewRequestedEvent":
+      return {
+        event: "review_requested",
+        created_at: e.createdAt,
+        actor: actor(e.actor),
+        // A team asked has no login: REST names it requested_team, which nothing reads.
+        requested_reviewer: e.requestedReviewer?.login ? actor(e.requestedReviewer) : undefined,
+      };
+    case "HeadRefForcePushedEvent":
+      return { event: "head_ref_force_pushed", created_at: e.createdAt, actor: actor(e.actor) };
+    case "PullRequestCommit":
+      return {
+        event: "committed",
+        // A git timestamp keeps the committer's offset; REST gives UTC.
+        committer: e.commit?.committer?.date ? { date: utc(e.commit.committer.date) } : null,
+      };
+    case "PullRequestReview":
+      return {
+        event: "reviewed",
+        submitted_at: e.submittedAt ?? undefined,
+        state: e.state?.toLowerCase(),
+        user: actor(e.author),
+        // REST has no body for a review without a summary.
+        body: e.body || null,
+      };
+    case "CrossReferencedEvent": {
+      const s = e.source;
+      if (!s?.number) return { event: "cross-referenced", created_at: e.createdAt, actor: actor(e.actor) };
+      return {
+        event: "cross-referenced",
+        created_at: e.createdAt,
+        actor: actor(e.actor),
+        source: {
+          issue: {
+            number: s.number,
+            title: s.title ?? "",
+            state: s.state === "OPEN" ? "open" : "closed",
+            html_url: s.url ?? "",
+            created_at: s.createdAt ?? "",
+            body: s.body ?? null,
+            user: { login: login(s.author) },
+            pull_request: s.__typename === "PullRequest" ? { merged_at: s.mergedAt ?? null } : undefined,
+          },
+        },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+const ACTOR = "__typename login";
+const ISSUE_EVENTS =
+  "ISSUE_COMMENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, CROSS_REFERENCED_EVENT, LABELED_EVENT, UNLABELED_EVENT";
+const PR_EVENTS = `${ISSUE_EVENTS}, REVIEW_REQUESTED_EVENT, PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, PULL_REQUEST_REVIEW`;
+const USER_LIKE = `... on User { ${ACTOR} } ... on Bot { ${ACTOR} } ... on Mannequin { ${ACTOR} }`;
+const ISSUE_TIMELINE = `__typename
+  ... on IssueComment { author { ${ACTOR} } body createdAt }
+  ... on AssignedEvent { actor { ${ACTOR} } createdAt assignee { ${USER_LIKE} } }
+  ... on UnassignedEvent { actor { ${ACTOR} } createdAt assignee { ${USER_LIKE} } }
+  ... on LabeledEvent { actor { ${ACTOR} } createdAt label { name } }
+  ... on UnlabeledEvent { actor { ${ACTOR} } createdAt label { name } }
+  ... on CrossReferencedEvent { actor { ${ACTOR} } createdAt source { __typename
+    ... on Issue { number title state url createdAt body author { ${ACTOR} } }
+    ... on PullRequest { number title state url createdAt body author { ${ACTOR} } mergedAt } } }`;
+const PR_TIMELINE = `${ISSUE_TIMELINE}
+  ... on ReviewRequestedEvent { actor { ${ACTOR} } createdAt requestedReviewer { ${USER_LIKE} } }
+  ... on HeadRefForcePushedEvent { actor { ${ACTOR} } createdAt }
+  ... on PullRequestCommit { commit { committer { date } } }
+  ... on PullRequestReview { author { ${ACTOR} } state submittedAt body }`;
+const FILE_FIELDS = "path additions deletions";
+const REVIEW_FIELDS = `author { ${ACTOR} } state submittedAt body`;
+const THREAD_FIELDS = `comments(first: 100) { nodes { author { ${ACTOR} } body createdAt } }`;
+const PAGE = "pageInfo { hasNextPage endCursor }";
+const STATUS_FIELDS = "status { contexts { context state description targetUrl } }";
+const COMMON = `id number title body state url createdAt closedAt author { ${ACTOR} } milestone { title }
+  labels(first: 100) { nodes { name } } assignees(first: 50) { nodes { login } }`;
+const ITEM_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) { __typename
+    ... on Issue { ${COMMON} timelineItems(first: 100, itemTypes: [${ISSUE_EVENTS}]) { ${PAGE} nodes { ${ISSUE_TIMELINE} } } }
+    ... on PullRequest { ${COMMON} isDraft additions deletions mergedAt changedFiles headRefOid
+      timelineItems(first: 100, itemTypes: [${PR_EVENTS}]) { ${PAGE} nodes { ${PR_TIMELINE} } }
+      files(first: 100) { ${PAGE} nodes { ${FILE_FIELDS} } }
+      reviewThreads(first: 100) { ${PAGE} nodes { ${THREAD_FIELDS} } }
+      reviews(first: 100) { ${PAGE} nodes { ${REVIEW_FIELDS} } }
+      commits(last: 100) { nodes { commit { committedDate } } }
+      head: commits(last: 1) { nodes { commit { ${STATUS_FIELDS} } } } } } } }`;
+
+const CHECKS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    id title state mergedAt headRefOid changedFiles files(first: 100) { ${PAGE} nodes { path } }
+    head: commits(last: 1) { nodes { commit { ${STATUS_FIELDS} } } } } } }`;
+const CHECKS_FILES_QUERY = `query($id: ID!, $after: String!) { node(id: $id) { ... on PullRequest {
+  files(first: 100, after: $after) { ${PAGE} nodes { path } } } } }`;
+const LABELS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) {
+    ... on Issue { labels(first: 100) { nodes { name } } } ... on PullRequest { labels(first: 100) { nodes { name } } } } } }`;
+const BOARD_FIELDS = `number title state url updatedAt closedAt labels(first: 100) { nodes { name } }
+  assignees(first: 50) { nodes { login } }
+  projectItems(first: 50) { nodes { id databaseId isArchived
+    project { number owner { ... on Organization { login } ... on User { login } } }
+    status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } }`;
+const BOARD_ITEMS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) { __typename
+    ... on Issue { ${BOARD_FIELDS} }
+    ... on PullRequest { ${BOARD_FIELDS} isDraft merged } } } }`;
+
+// GraphQL payload shapes (only the fields read above)
+interface RawActor {
+  __typename?: string;
+  login?: string;
+}
+interface Connection<N> {
+  pageInfo: { hasNextPage: boolean; endCursor: string };
+  nodes: N[];
+}
+interface RawTimeline {
+  __typename: string;
+  author?: RawActor | null;
+  actor?: RawActor | null;
+  assignee?: RawActor | null;
+  requestedReviewer?: RawActor | null;
+  body?: string | null;
+  createdAt: string;
+  submittedAt?: string | null;
+  state?: string;
+  label?: { name: string } | null;
+  commit?: { committer: { date: string | null } | null } | null;
+  source?: {
+    __typename: string;
+    number?: number;
+    title?: string;
+    state?: string;
+    url?: string;
+    createdAt?: string;
+    body?: string | null;
+    author?: RawActor | null;
+    mergedAt?: string | null;
+  } | null;
+}
+interface RawStatus {
+  contexts: { context: string; state: string; description: string | null; targetUrl: string | null }[];
+}
+interface RawChecks {
+  id: string;
+  title: string;
+  state: string;
+  mergedAt: string | null;
+  headRefOid: string;
+  changedFiles: number;
+  files: Connection<{ path: string }>;
+  head: { nodes: { commit: { status: RawStatus | null } }[] };
+}
+interface RawBoardContent {
+  __typename: ItemKind;
+  number: number;
+  title: string;
+  state: string;
+  url: string;
+  updatedAt: string;
+  closedAt: string | null;
+  isDraft?: boolean;
+  merged?: boolean;
+  labels: { nodes: { name: string }[] };
+  assignees: { nodes: { login: string }[] };
+  projectItems: {
+    nodes: ({
+      id: string;
+      databaseId: number;
+      isArchived: boolean;
+      project: { number: number; owner: { login?: string } | null } | null;
+      status: { name?: string } | null;
+    } | null)[];
+  } | null;
+}
+interface RawItem {
+  __typename: "Issue" | "PullRequest";
+  id: string;
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  url: string;
+  createdAt: string;
+  closedAt: string | null;
+  author: RawActor | null;
+  milestone: { title: string } | null;
+  labels: { nodes: { name: string }[] };
+  assignees: { nodes: { login: string }[] };
+  timelineItems: Connection<RawTimeline>;
+}
+interface RawPullRequest extends RawItem {
+  isDraft: boolean;
+  additions: number;
+  deletions: number;
+  mergedAt: string | null;
+  changedFiles: number;
+  headRefOid: string;
+  files: Connection<{ path: string; additions: number; deletions: number }>;
+  reviews: Connection<{
+    author: RawActor | null;
+    state: string;
+    submittedAt: string | null;
+    body: string | null;
+  }>;
+  reviewThreads: Connection<{
+    comments: { nodes: { author: RawActor | null; body: string | null; createdAt: string }[] };
+  }>;
+  commits: { nodes: { commit: { committedDate: string } }[] };
+  head: { nodes: { commit: { status: RawStatus | null } }[] };
 }
 
 type RequestErrorLike = {
@@ -765,20 +1174,8 @@ export interface RawSearchIssue {
   assignees?: string[];
 }
 
-interface RawIssue {
-  title: string;
-  body: string | null;
-  labels: { name: string }[];
-  state: string;
-  user: { login: string };
-  created_at: string;
-  html_url: string;
-  milestone?: { title: string } | null;
-  closed_at?: string | null;
-  assignees?: { login: string }[];
-}
-/** Timeline events the extension reads, cut to the fields it reads: raw events carry full user objects and the
- *  whole cross-referenced issue, and the cache lives in chrome.storage.local's 10 MB (overflow clears it all). */
+/** Timeline events the extension reads, cut to the fields it reads, with long bodies cut: the judges see the
+ *  thread's comments in full elsewhere. */
 const KEPT_EVENTS = new Set([
   "review_requested",
   "assigned",
@@ -853,11 +1250,6 @@ export interface TimelineEvent {
     };
   };
 }
-interface RawComment {
-  user: { login: string };
-  body: string | null;
-  created_at: string;
-}
 /** What the Needs Reviewer checks read about a pull request. */
 export interface PullState {
   state: "open" | "closed" | "merged";
@@ -876,12 +1268,6 @@ export interface CommitStatus {
   description: string;
   target_url: string;
 }
-interface RawStatus {
-  context: string;
-  state: string;
-  description: string | null;
-  target_url: string | null;
-}
 /** A changed file's patch is cut here: one file of a huge change is judged from its first hunks. */
 export const PATCH_MAX = 8000;
 export interface ChangedFile {
@@ -898,29 +1284,4 @@ export interface PullChecks {
   files: string[];
   files_total: number;
   statuses: CommitStatus[];
-}
-interface RawPullFull {
-  state: string;
-  merged_at: string | null;
-  draft: boolean;
-  created_at: string;
-  user: { login: string };
-  labels: { name: string }[];
-  head: { sha: string };
-}
-interface RawReview {
-  user: { login: string } | null;
-  state: string;
-  submitted_at: string;
-  body: string | null;
-}
-interface RawPull {
-  draft: boolean;
-  additions: number;
-  deletions: number;
-}
-interface RawFile {
-  filename: string;
-  additions: number;
-  deletions: number;
 }

@@ -334,18 +334,16 @@ export async function judgeInfo(
   d: ItemDetail,
   tl: TimelineEvent[],
   jev: JevClient,
-  refresh = false,
   now = Date.now(),
 ): Promise<InfoResult> {
   const labels = bugLabels(d.labels.map((l) => l.name));
   const asked = askedAt(tl);
   const st = infoState(d, asked, now);
-  const usage: JevUsage = { input_tokens: 0, cost: 0, cached: true };
+  const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
-    const res = await jev.askCached<A>(state, q, 4, refresh);
+    const res = await jev.ask<A>(state, q);
     usage.input_tokens += res.usage.input_tokens;
     usage.cost += res.usage.cost;
-    usage.cached = usage.cached && res.usage.cached;
     return res.answers;
   };
   const reporterReplies = st.replies.filter((c) => c.is_reporter);

@@ -97,10 +97,10 @@ class ItemAssistant {
   }
 
   /** Judges the item, then runs its workflow's pass over it (To do: the duplicate check), as the board does. */
-  private async judgeOne(item: BoardItem, refresh = false): Promise<void> {
+  private async judgeOne(item: BoardItem): Promise<void> {
     const { judged, wf, placement } = this;
     if (!judged || !wf || !placement) return;
-    await judged.judge(item, refresh);
+    await judged.judge(item);
     const slot = judged.slots.get(item.restId);
     if (!wf.afterJudge || slot?.state !== "done") return;
     try {
@@ -132,7 +132,7 @@ class ItemAssistant {
     const existing = document.querySelector<HTMLElement>(".snba-evidence");
     if (existing?.dataset.snbaKey === key && side.el.contains(existing)) return;
     existing?.remove();
-    const section = wf.pane(side.adapter, item, st, (it) => this.judgeOne(it, true));
+    const section = wf.pane(side.adapter, item, st, (it) => this.judgeOne(it));
     if (st.state === "done")
       section.append(
         boardFeedback({

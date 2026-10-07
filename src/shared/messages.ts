@@ -48,30 +48,29 @@ export type Request =
   | { type: "settings.set"; settings: Partial<Settings> }
   | { type: "settings.test" }
   | { type: "options.open" }
-  | { type: "cache.clear" }
   | { type: "board.fields"; board: BoardRef }
-  | { type: "column.items"; board: BoardRef; column: string; refresh?: boolean }
+  | { type: "column.items"; board: BoardRef; column: string }
   | { type: "item.lookup"; repo: string; number: number }
-  | { type: "item.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "todo.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "item.judge"; item: BoardItem }
+  | { type: "todo.judge"; item: BoardItem }
   | { type: "todo.duplicates"; board: BoardRef; targets: BoardItem[] }
-  | { type: "progress.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "review.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "approve.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "author.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "bugs.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "info.judge"; item: BoardItem; refresh?: boolean }
-  | { type: "backlog.judge"; item: BoardItem; refresh?: boolean }
+  | { type: "progress.judge"; item: BoardItem }
+  | { type: "review.judge"; item: BoardItem }
+  | { type: "approve.judge"; item: BoardItem }
+  | { type: "author.judge"; item: BoardItem }
+  | { type: "bugs.judge"; item: BoardItem }
+  | { type: "info.judge"; item: BoardItem }
+  | { type: "backlog.judge"; item: BoardItem }
   | { type: "backlog.duplicates"; board: BoardRef; targets: BoardItem[] }
-  | { type: "dra.judge"; column: DraColumn; item: BoardItem; refresh?: boolean }
+  | { type: "dra.judge"; column: DraColumn; item: BoardItem }
   | { type: "item.apply"; board: BoardRef; restId: number; steps: ActionStep[] }
-  | { type: "tg.judge"; ref: TgRef; status: "FAILING" | "FLAKY"; refresh?: boolean }
+  | { type: "tg.judge"; ref: TgRef; status: "FAILING" | "FLAKY" }
   | { type: "tg.apply"; steps: TgStep[] }
-  | { type: "ci.checks"; repo: string; number: number; refresh?: boolean }
-  | { type: "ci.judge"; repo: string; number: number; check: FailedCheck; refresh?: boolean }
+  | { type: "ci.checks"; repo: string; number: number }
+  | { type: "ci.judge"; repo: string; number: number; check: FailedCheck }
   | { type: "issue.scope"; repo: string; number: number }
-  | { type: "issue.ci"; repo: string; number: number; refresh?: boolean }
-  | { type: "issue.dups"; repo: string; number: number; refresh?: boolean }
+  | { type: "issue.ci"; repo: string; number: number }
+  | { type: "issue.dups"; repo: string; number: number }
   | { type: "feedback.preview"; report: FeedbackReport }
   | { type: "feedback.submit"; report: FeedbackReport };
 
@@ -98,7 +97,6 @@ export interface ResponseMap {
   "settings.set": { ok: true };
   "settings.test": { github: { ok: boolean; detail: string }; jev: { ok: boolean; detail: string } };
   "options.open": { ok: true };
-  "cache.clear": { removed: number };
   "board.fields": BoardFields;
   "column.items": BoardItem[];
   "item.lookup": Placement | null;
@@ -157,6 +155,37 @@ export function send<R extends Request>(req: R): Promise<Response<R>> {
       if (env.ok) resolve(env.value);
       else reject(new Error(env.error));
     });
+  });
+}
+
+/** The port a batch of requests travels over. */
+export const BATCH_PORT = "batch";
+
+/** Several requests from one click, answered one by one as each finishes (`onEach`, with the request's index), by
+ *  one set of clients in the worker: what they all read (a PR and its diff, for each failed job) is read once.
+ *  Resolves when every request has answered; a lost worker answers the rest with an error. */
+export function sendEach<R extends Request>(
+  reqs: R[],
+  onEach: (i: number, env: Envelope<Response<R>>) => void,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const answered = new Set<number>();
+    const port = chrome.runtime.connect({ name: BATCH_PORT });
+    port.onMessage.addListener((m: { i?: number; env?: Envelope<Response<R>>; done?: boolean }) => {
+      if (m.done) {
+        port.disconnect();
+        resolve();
+      } else if (m.i !== undefined && m.env) {
+        answered.add(m.i);
+        onEach(m.i, m.env);
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      const why = chrome.runtime.lastError?.message ?? "the background worker stopped";
+      reqs.forEach((_, i) => answered.has(i) || onEach(i, { ok: false, error: why }));
+      resolve();
+    });
+    port.postMessage({ reqs });
   });
 }
 

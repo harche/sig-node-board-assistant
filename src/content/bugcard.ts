@@ -234,7 +234,7 @@ export function renderBugEvidence(
       h(
         "span.snba-muted",
         {},
-        `Jev read ${r.state_chars.toLocaleString()} chars${r.usage.cached ? ", cached" : ` for $${r.usage.cost.toFixed(5)}`}.`,
+        `Jev read ${r.state_chars.toLocaleString()} chars for $${r.usage.cost.toFixed(5)}.`,
       ),
       again,
     ),
