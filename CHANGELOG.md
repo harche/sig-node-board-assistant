@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- No change to the extension. Releases are now published to the Chrome Web Store by the release workflow.
+
 ## 0.1.4 (unreleased)
 
 - **TestGrid: dark theme.** With TestGrid's dark theme on, the hover card, the job badges and the feedback dialog take

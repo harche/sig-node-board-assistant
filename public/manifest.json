@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SIG Node Board Assistant",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Jev-judged suggestions for the SIG Node GitHub project boards and TestGrid dashboards, with the evidence behind each.",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],

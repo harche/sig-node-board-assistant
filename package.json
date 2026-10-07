@@ -1,6 +1,6 @@
 {
   "name": "sig-node-board-assistant",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Chrome extension: Jev-judged suggestions for the SIG Node GitHub project boards, TestGrid dashboards, and pull request and issue pages.",
   "type": "module",
