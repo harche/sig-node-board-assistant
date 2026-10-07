@@ -1,0 +1,34 @@
+name: Chrome Web Store
+# Uploads a GitHub release's zip to the Chrome Web Store and submits it for review. The release workflow calls it
+# after each release; run it by hand ("Run workflow", with the tag) to retry a release.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v0.1.5
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: gh release download "$TAG" --pattern 'sig-node-board-assistant-*.zip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+      - run: node scripts/publish-cws.mjs sig-node-board-assistant-*.zip
+        env:
+          CWS_SERVICE_ACCOUNT_KEY: ${{ secrets.CWS_SERVICE_ACCOUNT_KEY }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ngimkkgeokllcnfdjeijegalfgkaemdj
