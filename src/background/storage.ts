@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS, type Settings } from "../shared/messages";
 const OLD_CACHE_PREFIX = "cache:";
 const SETTINGS_KEY = "settings";
 
-/** Removes what versions before 0.1.2 cached in chrome.storage.local (GitHub reads and Jev answers, up to 10 MB):
+/** Removes what versions before 0.1.3 cached in chrome.storage.local (GitHub reads and Jev answers, up to 10 MB):
  *  nothing reads it any more. */
 export async function dropOldCache(): Promise<void> {
   const all = await chrome.storage.local.get(null);
