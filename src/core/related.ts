@@ -229,6 +229,58 @@ export function openDuplicate(r: RelatedResult | null): RelatedMatch | null {
   );
 }
 
+// ---------------------------------------------------------------------------------------------------- comment
+
+/** The comment that points the thread at the matches the reader picked. Hedged on purpose: a search found them, a
+ *  person decides. The issues are bare references, one per list item, which GitHub draws with their titles. */
+export const RELATED_PREFIX =
+  "A search of existing issues turned up some that may be duplicates of this one or related to it. They may not be, but please take a look:";
+const DUP_HEAD = "Possible duplicates:";
+const REL_HEAD = "Possibly related:";
+/** References one comment may carry. */
+export const MAX_REFS = 10;
+const REF_LINE = /^- (?:[\w.-]+\/[\w.-]+)?#\d+$/;
+
+/** `#N` in `own` (the issue's repo), `owner/repo#N` elsewhere: how the comment and the pages name an issue. */
+export const shortRef = (repo: string, number: number, own: string) =>
+  `${repo === own ? "" : repo}#${number}`;
+
+export function relatedComment(
+  repo: string,
+  dups: { repository: string; number: number }[],
+  related: { repository: string; number: number }[],
+): string {
+  const line = (m: { repository: string; number: number }) => `- ${shortRef(m.repository, m.number, repo)}`;
+  const parts = [RELATED_PREFIX];
+  if (dups.length) parts.push("", DUP_HEAD, ...dups.map(line));
+  if (related.length) parts.push("", REL_HEAD, ...related.map(line));
+  return parts.join("\n");
+}
+
+/** Whether `body` is a comment relatedComment drafted: its opening, its two headings, and 1 to MAX_REFS references. */
+export function isRelatedComment(body: string): boolean {
+  const [first, ...rest] = body.split("\n");
+  if (first !== RELATED_PREFIX) return false;
+  const refs = rest.filter((l) => REF_LINE.test(l));
+  return (
+    refs.length >= 1 &&
+    refs.length <= MAX_REFS &&
+    rest.every((l) => l === "" || l === DUP_HEAD || l === REL_HEAD || REF_LINE.test(l))
+  );
+}
+
+/** Whether a comment already on a thread is one of these, as posted or as mirrored: one per issue is enough. */
+export const isPostedRelated = (body: string) => body.startsWith(`${RELATED_PREFIX}\n`);
+
+/** The same comment for a stand-in issue in another repo: each reference in backticks and in full, so it neither
+ *  points at that repo's own issues nor shows up on the real issues' timelines. */
+export function mirroredComment(body: string, repo: string): string {
+  return body.replace(
+    /^- ([\w.-]+\/[\w.-]+)?#(\d+)$/gm,
+    (_, r: string | undefined, n: string) => `- \`${r ?? repo}#${n}\``,
+  );
+}
+
 export interface RelatedDeps {
   search(queries: SearchQuery[], n?: number): Promise<{ number: number }[][]>;
   threads(repo: string, numbers: number[]): Promise<Map<number, ThreadIssue | null>>;

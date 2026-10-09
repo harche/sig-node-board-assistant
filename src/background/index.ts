@@ -27,7 +27,7 @@ import { judgeDra } from "../core/dra";
 import { judgeTg } from "../core/tgjudge";
 import { judgeCi, prChecks, type CiDeps } from "../core/prcijudge";
 import { inScope, judgeIssueCi } from "../core/issuecheck";
-import { judgeRelated } from "../core/related";
+import { isPostedRelated, isRelatedComment, judgeRelated, mirroredComment } from "../core/related";
 import {
   isTgDraft,
   mirrorTitle,
@@ -636,12 +636,8 @@ async function handleOne<R extends Request>(
       // Where a comment for `repo#number` lands: the issue itself, or its mirror in test mode (null: no mirror yet).
       const commentTarget = async (repo: string, number: number): Promise<[string, number] | null> => {
         if (!settings.testMode) return [repo, number];
-        const title = mirrorTitle(repo, number);
-        const all = await gh.paged<{ number: number; title: string }>(`/repos/${TG_TEST_REPO}/issues`, {
-          state: "all",
-        });
-        const m = all.find((x) => x.title === title);
-        return m ? [TG_TEST_REPO, m.number] : null;
+        const m = await findMirror(gh, repo, number);
+        return m === null ? null : [TG_TEST_REPO, m];
       };
       for (const st of req.steps) {
         // An earlier Apply (another tab, a retry) may have posted this job's comment since the judge read the thread.
@@ -692,24 +688,35 @@ async function handleOne<R extends Request>(
           await gh.comment(st.repo, st.number, st.body);
           wrote.push(`${st.repo}#${st.number}`);
         } else {
-          const title = mirrorTitle(st.repo, st.number);
-          const all = await gh.paged<{ number: number; title: string }>(`/repos/${TG_TEST_REPO}/issues`, {
-            state: "all",
-          });
-          const n =
-            all.find((x) => x.title === title)?.number ??
-            (await gh.createIssue(
-              TG_TEST_REPO,
-              title,
-              // In backticks: a link from this repo would show up on the real issue's timeline.
-              `Stands in for \`${st.repo}#${st.number}\` while the TestGrid review is in test mode.`,
-              [],
-            ));
+          const n = await mirrorIssue(gh, st.repo, st.number);
           await gh.comment(TG_TEST_REPO, n, st.body);
           wrote.push(`${TG_TEST_REPO}#${n}`);
         }
       }
       return { wrote } as Out;
+    }
+    case "issue.comment": {
+      // The related-issues comment, from the issue page or a Triage hover card, on the issue it was drafted for. In
+      // test mode it goes to the test repo only: on the issue itself when it is one of the test repo's, else on that
+      // issue's mirror there, with its references in backticks. One per issue: a thread that already has one (another
+      // tab, a retry after a lost response) is left alone.
+      const { gh, settings } = await clients(trace, shared);
+      if (!isRelatedComment(req.body)) throw new Error("refusing a body the extension did not draft");
+      if (!inScope(await gh.labels(req.repo, req.number)))
+        throw new Error(`${req.repo}#${req.number} is not a SIG Node or DRA issue`);
+      const mirrored = settings.testMode && req.repo !== TG_TEST_REPO;
+      if (!settings.testMode && !/^kubernetes(-sigs)?\//.test(req.repo))
+        throw new Error(`refusing a write to ${req.repo}`);
+      const repo = mirrored ? TG_TEST_REPO : req.repo;
+      const n = mirrored ? await mirrorIssue(gh, req.repo, req.number) : req.number;
+      // One at a time per thread, so a second post (two tabs at once) reads the first one's comment.
+      return (await oneAtATime(`${repo}#${n}`, async () => {
+        const thread = await gh.paged<{ body?: string }>(`/repos/${repo}/issues/${n}/comments`);
+        if (thread.some((c) => isPostedRelated(c.body ?? "")))
+          return { wrote: `${repo}#${n}`, already: true };
+        await gh.comment(repo, n, mirrored ? mirroredComment(req.body, req.repo) : req.body);
+        return { wrote: `${repo}#${n}`, already: false };
+      })) as Out;
     }
     case "feedback.preview": {
       const s = await loadSettings();
@@ -807,6 +814,49 @@ async function handleOne<R extends Request>(
       return { ok: true } as Out;
     }
   }
+}
+
+/** The test repo's stand-in for `repo#number` ("[mirror] repo#number"), or null when there is none yet. The test
+ *  repo is small enough to list. Test mode only. */
+async function findMirror(gh: GitHubClient, repo: string, number: number): Promise<number | null> {
+  const title = mirrorTitle(repo, number);
+  const all = await gh.paged<{ number: number; title: string }>(`/repos/${TG_TEST_REPO}/issues`, {
+    state: "all",
+  });
+  return all.find((x) => x.title === title)?.number ?? null;
+}
+
+/** The last task queued per key: oneAtATime runs a key's tasks in order, each after the one before has settled. */
+const queues = new Map<string, Promise<unknown>>();
+
+function oneAtATime<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const run = (queues.get(key) ?? Promise.resolve()).catch(() => undefined).then(task);
+  const tail = run.catch(() => undefined);
+  queues.set(key, tail);
+  void tail.then(() => queues.get(key) === tail && queues.delete(key));
+  return run;
+}
+
+/** Mirrors being looked up or opened, by title: two writes for one issue at once (the issue page and a board card,
+ *  TestGrid's Apply) share one lookup, so they cannot open two. */
+const mirroring = new Map<string, Promise<number>>();
+
+/** The stand-in for `repo#number`, opened on first use. Test mode only. */
+function mirrorIssue(gh: GitHubClient, repo: string, number: number): Promise<number> {
+  const title = mirrorTitle(repo, number);
+  const running = mirroring.get(title);
+  if (running) return running;
+  const p = (async () =>
+    (await findMirror(gh, repo, number)) ??
+    (await gh.createIssue(
+      TG_TEST_REPO,
+      title,
+      // In backticks: a link from this repo would show up on the real issue's timeline.
+      `Stands in for \`${repo}#${number}\` while the extension is in test mode.`,
+      [],
+    )))().finally(() => mirroring.delete(title));
+  mirroring.set(title, p);
+  return p;
 }
 
 /** MV3 stops a service worker after ~30s without extension API activity; a slow Jev call plus retries can take

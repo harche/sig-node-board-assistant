@@ -3,11 +3,18 @@ import {
   candidateQueries,
   classify,
   distinctive,
+  isPostedRelated,
+  isRelatedComment,
+  MAX_REFS,
   mergeCandidates,
+  mirroredComment,
   openDuplicate,
+  RELATED_PREFIX,
+  relatedComment,
   xrefs,
   type RelatedResult,
 } from "../src/core/related";
+import { isDraftedComment } from "../src/core/comments";
 
 describe("candidates", () => {
   it("finds strings rare enough to search verbatim", () => {
@@ -112,5 +119,39 @@ describe("classify", () => {
     expect(
       openDuplicate({ ...r, duplicates: [m(1, "closed")], related: [reg(3, true), reg(4, false)] })?.number,
     ).toBe(4);
+  });
+});
+
+describe("comment", () => {
+  const dup = { repository: "kubernetes/kubernetes", number: 120001 };
+  const rel = { repository: "kubernetes/test-infra", number: 3400 };
+
+  it("lists the picked matches, short in the issue's own repo", () => {
+    const body = relatedComment("kubernetes/kubernetes", [dup], [rel]);
+    expect(body).toBe(
+      `${RELATED_PREFIX}\n\nPossible duplicates:\n- #120001\n\nPossibly related:\n- kubernetes/test-infra#3400`,
+    );
+    expect(isRelatedComment(body)).toBe(true);
+    expect(isPostedRelated(body)).toBe(true);
+    expect(isPostedRelated(mirroredComment(body, "kubernetes/kubernetes"))).toBe(true);
+    // Posted through issue.comment only, never through a board's Apply.
+    expect(isDraftedComment(body)).toBe(false);
+    expect(isRelatedComment(relatedComment("kubernetes/kubernetes", [], [rel]))).toBe(true);
+  });
+
+  it("refuses anything else", () => {
+    expect(isRelatedComment(RELATED_PREFIX)).toBe(false);
+    expect(isRelatedComment(`${RELATED_PREFIX}\n- #1\n@someone look`)).toBe(false);
+    expect(isRelatedComment(`${RELATED_PREFIX}\n- #1\n/close`)).toBe(false);
+    expect(isRelatedComment(`Something else\n- #1`)).toBe(false);
+    const many = Array.from({ length: MAX_REFS + 1 }, (_, i) => ({ ...dup, number: i + 10 }));
+    expect(isRelatedComment(relatedComment("kubernetes/kubernetes", many, []))).toBe(false);
+  });
+
+  it("mirrors with every reference in backticks and in full", () => {
+    const body = relatedComment("kubernetes/kubernetes", [dup], [rel]);
+    expect(mirroredComment(body, "kubernetes/kubernetes")).toBe(
+      `${RELATED_PREFIX}\n\nPossible duplicates:\n- \`kubernetes/kubernetes#120001\`\n\nPossibly related:\n- \`kubernetes/test-infra#3400\``,
+    );
   });
 });

@@ -20,7 +20,7 @@ export interface HoverContent {
   suggested: { priority: string; why: string } | null;
   fields: BoardFields | null;
   applied: Applied | undefined;
-  /** False while the header's Accept is running: single-item buttons wait for it. */
+  /** False while the header's Accept, or the item's related-issues comment, is running: its buttons wait. */
   canApply: boolean;
   /** Where GitHub's button classes are borrowed from (the column). */
   scope: ParentNode;
@@ -137,7 +137,8 @@ function actions(c: HoverContent): HTMLElement {
   box.append(row, lines);
   if (c.applied?.state === "pending") box.append(h("p.snba-hc-status", {}, "Applying…"));
   else if (c.applied?.state === "error") box.append(h("p.snba-hc-status.snba-error", {}, c.applied.message));
-  else if (!c.canApply) box.append(h("p.snba-hc-status.snba-muted", {}, "Waiting for Accept to finish."));
+  else if (!c.canApply)
+    box.append(h("p.snba-hc-status.snba-muted", {}, "Waiting for another write to finish."));
   return box;
 }
 
@@ -266,8 +267,14 @@ export class HoverCard {
   }
 
   private focusables(): HTMLElement[] {
-    return [...this.el.querySelectorAll<HTMLElement>("button, select, a[href], [tabindex]")].filter(
-      (x) => x.getAttribute("aria-disabled") !== "true" && !(x as HTMLSelectElement).disabled,
+    // Checkboxes and a preview's summary too (the related-issues picker); nothing inside a hidden part.
+    return [
+      ...this.el.querySelectorAll<HTMLElement>("button, select, input, summary, a[href], [tabindex]"),
+    ].filter(
+      (x) =>
+        x.getAttribute("aria-disabled") !== "true" &&
+        !(x as HTMLSelectElement | HTMLInputElement).disabled &&
+        !x.closest("[hidden]"),
     );
   }
 

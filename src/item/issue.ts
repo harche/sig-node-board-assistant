@@ -1,46 +1,21 @@
 /** The issue page's "CI history" (core/issuecheck.ts) and "Duplicates and related" (core/related.ts) sections, on
  *  SIG Node and DRA issues. A section appears only when it has something to say: an issue naming a job TestGrid
  *  has, a duplicate or a related issue Jev is sure of. Both run when the reader clicks "Check": until then, and when
- *  neither has anything to say, one section offers the check. Read-only: a suggested command is for the reader to
- *  post. */
-import { findSidebar, placeSection } from "../content/adapters";
+ *  neither has anything to say, one section offers the check. A suggested command is for the reader to post; the one
+ *  write is the comment listing the duplicates and related issues the reader ticks (issue.comment). */
+import { findSidebar, pageButton, placeSection } from "../content/adapters";
 import { readingsBlock } from "../content/hcparts";
 import { h } from "../content/ui";
 import { decideIssueCi, ISSUE_CI_LABEL, ISSUE_CI_TINT, type IssueCiResult } from "../core/issuecheck";
 import { shortTest } from "../core/prci";
-import { openDuplicate, type RelatedMatch, type RelatedResult } from "../core/related";
+import { openDuplicate, shortRef as ref, type RelatedResult } from "../core/related";
 import { send } from "../shared/messages";
 import { feedbackLink } from "../content/feedback";
+import { freshPicks, relatedPicker, relationLabel, type PickState } from "../content/relatedpick";
 import { runButton } from "./button";
 
 const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
-const ref = (repo: string, n: number, own: string) => `${repo === own ? "" : repo}#${n}`;
-
-/** How a match relates to the issue on the page, in the page's terms. */
-function relationLabel(m: RelatedMatch): string {
-  switch (m.relation) {
-    case "duplicate":
-      return "duplicate";
-    case "same_root_cause":
-      return "same root cause";
-    case "regression":
-      return m.older ? "this is it coming back" : "it came back there";
-    case "follow_up":
-      return m.older ? "this follows up on it" : "follows up on this";
-    case "part_of":
-      return "umbrella or sub-item";
-    default:
-      return m.relation;
-  }
-}
-const LINK_LABEL: Record<string, string> = {
-  same_error: "same error",
-  same_test: "same test",
-  same_code_path: "same code path",
-  same_request: "same request",
-  same_trigger: "same trigger",
-};
 
 type Part<T> = { state: "idle" } | { state: "done"; result: T } | { state: "error"; message: string };
 
@@ -56,6 +31,9 @@ export class IssueCheck {
   private scope = false;
   private started = false;
   private busy = false;
+  /** The reader's ticks and the comment's write. A new search ticks afresh but keeps a posted (or posting) comment,
+   *  so "Check again" does not offer it twice; the worker also refuses a second one on the thread. */
+  private picks: PickState = freshPicks(null);
 
   constructor(
     private repo: string,
@@ -87,6 +65,13 @@ export class IssueCheck {
       try {
         const result = await send({ type, repo: this.repo, number: this.number });
         if (mine()) (this[k] as Part<unknown>) = { state: "done", result };
+        if (mine() && k === "dups") {
+          const post = this.picks.post;
+          this.picks = freshPicks(
+            result as RelatedResult | null,
+            post.state === "pending" || post.state === "done" ? post : { state: "idle" },
+          );
+        }
       } catch (e) {
         if (mine())
           (this[k] as Part<unknown>) = {
@@ -115,6 +100,12 @@ export class IssueCheck {
     const have = [...document.querySelectorAll<HTMLElement>(".snba-issuecheck")];
     if (this.rendered === key && have.length === this.placed && have.every((e) => side?.el.contains(e)))
       return;
+    // A redraw replaces the control that had focus (a checkbox, Comment): focus goes to the same one in the new
+    // sections, else to the section it was in.
+    const active = document.activeElement as HTMLElement | null;
+    const inside = have.find((e) => active && e.contains(active));
+    const focusKey = inside ? active!.dataset.focusKey : undefined;
+    const title = inside?.querySelector("h3")?.textContent;
     have.forEach((e) => e.remove());
     if (!side) return;
     this.rendered = key;
@@ -137,6 +128,17 @@ export class IssueCheck {
       else placeSection(side.el, el);
       after = el;
     }
+    if (!inside) return;
+    const same = focusKey
+      ? out
+          .map((el) => el.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`))
+          .find(Boolean)
+      : null;
+    const section = out.find((el) => el.querySelector("h3")?.textContent === title);
+    const to = same ?? section;
+    if (!to) return;
+    if (!same) to.tabIndex = -1;
+    to.focus({ preventScroll: true });
   }
 
   private ciSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
@@ -213,26 +215,17 @@ export class IssueCheck {
     const r = this.dups.result!;
     if (!r.duplicates.length && !r.related.length) return null;
     const { root, body } = adapter.section(title);
-    const row = (m: RelatedMatch) =>
-      h(
-        "div.snba-rel",
-        {},
-        h(
-          "div",
-          {},
-          link(m.url, ref(m.repository, m.number, this.repo)),
-          ` ${m.state === "closed" ? "(closed) " : ""}${m.title.slice(0, 90)}`,
-        ),
-        h(
-          "div.snba-muted",
-          {},
-          [relationLabel(m), m.link ? LINK_LABEL[m.link] : null, `P ${m.p.toFixed(2)}`]
-            .filter(Boolean)
-            .join(" · "),
-        ),
-      );
-    if (r.duplicates.length) body.append(h("div.snba-subhead", {}, "Duplicates"), ...r.duplicates.map(row));
-    if (r.related.length) body.append(h("div.snba-subhead", {}, "Related"), ...r.related.map(row));
+    body.append(
+      ...relatedPicker({
+        repo: this.repo,
+        number: this.number,
+        result: r,
+        state: this.picks,
+        blocked: null,
+        button: (label) => pageButton(label),
+        comment: (b) => void this.comment(b),
+      }),
+    );
     body.append(
       h(
         "div.snba-foot",
@@ -254,6 +247,26 @@ export class IssueCheck {
       })),
     );
     return root;
+  }
+
+  /** Posts the related-issues comment (the worker sends it to the test repo in test mode). */
+  private async comment(body: string): Promise<void> {
+    const picks = this.picks;
+    if (picks.post.state === "pending" || picks.post.state === "done") return;
+    picks.post = { state: "pending" };
+    this.bump();
+    try {
+      const { wrote, already } = await send({
+        type: "issue.comment",
+        repo: this.repo,
+        number: this.number,
+        body,
+      });
+      picks.post = { state: "done", wrote, already };
+    } catch (e) {
+      picks.post = { state: "error", message: e instanceof Error ? e.message : String(e) };
+    }
+    if (this.live()) this.bump();
   }
 
   private item() {

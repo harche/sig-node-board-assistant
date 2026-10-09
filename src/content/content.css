@@ -373,6 +373,40 @@
 .snba-rel {
   padding: 4px 0;
 }
+.snba-rel-pick {
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+}
+.snba-rel-comment {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+}
+.snba-rel-comment[aria-disabled="true"],
+.snba-rel-comment [aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.snba-rel-preview {
+  margin: 4px 0 0;
+  padding: 8px;
+  max-width: 100%;
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: var(--bgColor-muted, #f6f8fa);
+  border-radius: 6px;
+}
+/* The hover card's search sits under its buttons, apart from them. */
+.snba-hc-related {
+  margin-top: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--borderColor-muted, #d1d9e0b3);
+}
+.snba-hc-related .snba-subhead {
+  margin: 8px 0 4px;
+}
 .snba-ci-tide {
   margin: 8px 0 0;
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Comment the duplicates and related issues.** On the issue page, "Duplicates and related" has a checkbox per match
+  and a **Comment** button: it posts one comment listing the ticked issues as possible duplicates or related, and
+  asks the thread to take a look. On the CI/Test board, an issue's Triage hover card can run the same search
+  (**Find**) and post the same comment.
+
 ## 0.1.5
 
 - No change to the extension. Releases are now published to the Chrome Web Store by the release workflow.

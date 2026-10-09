@@ -24,6 +24,8 @@ import type { PaneState } from "./workflows";
 import { boardFeedback } from "./feedback";
 import { HoverCard, type Applied } from "./hovercard";
 import { Judged } from "./judged";
+import { freshPicks, relatedPicker, type PickState } from "./relatedpick";
+import type { RelatedResult } from "../core/related";
 import { h, octicon } from "./ui";
 import { withFixes, WORKFLOWS, type ColumnWorkflow, type Overrides } from "./workflows";
 
@@ -102,6 +104,23 @@ class Page {
   }
 }
 
+interface RelState {
+  check:
+    | { state: "idle" }
+    | { state: "pending" }
+    | { state: "done"; result: RelatedResult | null }
+    | { state: "error"; message: string };
+  picks: PickState;
+}
+
+/** What of a RelState the hover card shows, for its re-render key. Ticks are left out: the picker paints them in
+ *  place. */
+function relKey(st: RelState | undefined): string {
+  if (!st) return "";
+  const post = st.picks.post;
+  return [st.check.state, post.state, post.state === "error" ? post.message : ""].join(";");
+}
+
 class BoardAssistant<R> {
   private items = new Map<number, BoardItem>();
   /** Items are independent, so the column is judged in parallel, 8 at a time: enough to be quick, few enough to keep
@@ -140,6 +159,9 @@ class BoardAssistant<R> {
   private seen = "";
   /** Items a write moved out of the column since the last read. */
   private gone = new Set<number>();
+  /** Per issue, the hover card's duplicates-and-related search (workflows with `related`), what the reader unticked
+   *  and the comment's write. Run only when asked: it reads dozens of candidates. */
+  private rel = new Map<number, RelState>();
 
   constructor(
     private page: Page,
@@ -184,6 +206,7 @@ class BoardAssistant<R> {
       this.applying,
       Boolean(this.judged.fields),
       JSON.stringify(this.overrides.get(restId) ?? {}),
+      relKey(this.rel.get(restId)),
     ].join("|");
   }
 
@@ -247,6 +270,7 @@ class BoardAssistant<R> {
     this.applied.clear();
     this.skipped.clear();
     this.overrides.clear();
+    this.keepPosted();
     this.applySummary = null;
     this.paintRunButton();
     await this.ensureColumn(true);
@@ -450,9 +474,30 @@ class BoardAssistant<R> {
     return this.load.state === "idle" && !this.drawn.length && !boardFiltered();
   }
 
-  /** A write is in flight: the header's Accept, or one item's own button. Tackle and Cancel wait for it. */
+  /** A write is in flight: the header's Accept, one item's own button, or a related-issues comment. Tackle and Cancel
+   *  wait for it. */
   private busy(): boolean {
-    return this.applying || [...this.applied.values()].some((a) => a.state === "pending");
+    return (
+      this.applying ||
+      [...this.applied.values()].some((a) => a.state === "pending") ||
+      [...this.rel.values()].some((r) => r.picks.post.state === "pending")
+    );
+  }
+
+  /** The item's related-issues comment is being posted: its own Apply waits for it. */
+  private commenting(restId: number): boolean {
+    return this.rel.get(restId)?.picks.post.state === "pending";
+  }
+
+  /** Tackle and Cancel drop the searches, but not a comment posted (or posting) from one: a new search for that
+   *  issue still shows it as commented, so it is not offered twice. */
+  private keepPosted(): void {
+    for (const [id, r] of this.rel) {
+      const post = r.picks.post;
+      if (post.state === "done" || post.state === "pending")
+        this.rel.set(id, { check: { state: "idle" }, picks: freshPicks(null, post) });
+      else this.rel.delete(id);
+    }
   }
 
   /** Every item judged (or Accept under way): Accept and Cancel take Tackle's place in the header. */
@@ -501,7 +546,7 @@ class BoardAssistant<R> {
     // Icon only, except for the progress count while Accept applies.
     accept.querySelector(".snba-run-text")?.classList.toggle("snba-sr-only", !this.applying);
     accept.dataset.state = this.applying ? "applying" : "ready";
-    accept.setAttribute("aria-disabled", String(this.applying || !plan.length));
+    accept.setAttribute("aria-disabled", String(this.busy() || !plan.length));
     accept.dataset.tip = this.applying
       ? "Applying the recommendations"
       : plan.length
@@ -542,7 +587,7 @@ class BoardAssistant<R> {
 
   /** Accept: the recommendations in parallel, 8 items at a time like judging. Each item's own steps run in order. */
   private async accept(): Promise<void> {
-    if (!this.reviewing() || this.applying) return;
+    if (!this.reviewing() || this.busy()) return;
     const plan = this.plan();
     if (!plan.length) return;
     this.applying = true;
@@ -572,6 +617,7 @@ class BoardAssistant<R> {
       slot?.state !== "done" ||
       !fields ||
       this.applying ||
+      this.commenting(restId) ||
       state === "pending" ||
       state === "done"
     )
@@ -629,7 +675,7 @@ class BoardAssistant<R> {
       setOverride: (k, v) => this.setOverride(restId, k, v),
       fields: this.judged.fields,
       applied: this.applied.get(restId),
-      canApply: !this.applying,
+      canApply: !this.applying && !this.commenting(restId),
       skip: () => this.skip(restId),
       scope: col,
       apply: (choice) => void this.applyOne(restId, choice),
@@ -645,6 +691,7 @@ class BoardAssistant<R> {
           `Prow ignored ${fixes.map((f) => `"${f.wrote}" (${f.who})`).join(", ")}; Apply and Accept also post ${fixes.map((f) => `"${f.fix}"`).join(", ")}, unless the item is closed or archived.`,
         ),
       );
+    if (this.wf.related && item.type === "Issue") el.append(this.relatedBlock(item, col));
     const a = this.applied.get(restId);
     el.append(
       boardFeedback({
@@ -660,6 +707,113 @@ class BoardAssistant<R> {
       }),
     );
     return el;
+  }
+
+  /** The hover card's "Duplicates and related": a button that runs the search, then the matches to tick and a
+   *  button that comments on the issue (issue.comment, as on the issue page). */
+  private relatedBlock(item: BoardItem, scope: ParentNode): HTMLElement {
+    const id = item.restId;
+    const st = this.rel.get(id) ?? { check: { state: "idle" }, picks: freshPicks(null) };
+    this.rel.set(id, st);
+    const box = h("div.snba-hc-related", {}, h("div.snba-subhead", {}, "Duplicates and related"));
+    const button = (label: string) => {
+      const b = nativeButton(scope, null, label, "default").root;
+      b.classList.add("snba-hc-btn");
+      return b;
+    };
+    const c = st.check;
+    if (c.state === "idle" || c.state === "error") {
+      const b = button(c.state === "idle" ? "Find" : "Find again");
+      b.dataset.focusKey = "rel:find";
+      b.title = "Search current and past issues for duplicates and related ones, and ask Jev about each";
+      b.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this.findRelated(item);
+      });
+      if (c.state === "error") box.append(h("p.snba-hc-status.snba-error", {}, c.message));
+      box.append(h("div.snba-hc-buttons", {}, b));
+    } else if (c.state === "pending") box.append(h("p.snba-hc-status.snba-muted", {}, "Searching…"));
+    else if (!c.result)
+      box.append(h("p.snba-hc-status.snba-muted", {}, "Not a SIG Node or DRA issue: not searched."));
+    else if (!c.result.duplicates.length && !c.result.related.length)
+      box.append(
+        h(
+          "p.snba-hc-status.snba-muted",
+          {},
+          `No duplicate or related issue Jev is sure of (${c.result.asked} read, $${c.result.usage.cost.toFixed(5)}).`,
+        ),
+      );
+    else
+      box.append(
+        ...relatedPicker({
+          repo: item.repository,
+          number: item.number,
+          result: c.result,
+          state: st.picks,
+          blocked: this.relatedBlocked(id),
+          button,
+          comment: (body) => void this.commentRelated(item, body),
+        }),
+        h(
+          "p.snba-muted",
+          {},
+          `Jev read ${c.result.asked} candidates for $${c.result.usage.cost.toFixed(5)}.`,
+        ),
+      );
+    return box;
+  }
+
+  /** Why the related-issues comment has to wait: another write to the item (Accept, its own Apply) is running. */
+  private relatedBlocked(restId: number): string | null {
+    if (this.applying) return "Waiting for Accept to finish.";
+    if (this.applied.get(restId)?.state === "pending") return "Waiting for its Apply to finish.";
+    return null;
+  }
+
+  private async findRelated(item: BoardItem): Promise<void> {
+    const id = item.restId;
+    const st = this.rel.get(id);
+    if (!st || st.check.state === "pending") return;
+    st.check = { state: "pending" };
+    this.hover.refresh(id);
+    let check: RelState["check"];
+    try {
+      check = {
+        state: "done",
+        result: await send({ type: "issue.dups", repo: item.repository, number: item.number }),
+      };
+    } catch (e) {
+      check = { state: "error", message: e instanceof Error ? e.message : String(e) };
+    }
+    // Tackle or Cancel dropped the search while it ran.
+    if (this.rel.get(id) !== st) return;
+    st.check = check;
+    if (check.state === "done") st.picks = freshPicks(check.result, st.picks.post);
+    this.hover.refresh(id);
+  }
+
+  private async commentRelated(item: BoardItem, body: string): Promise<void> {
+    const id = item.restId;
+    const picks = this.rel.get(id)?.picks;
+    const post = picks?.post.state;
+    if (!picks || post === "pending" || post === "done" || this.relatedBlocked(id)) return;
+    picks.post = { state: "pending" };
+    this.hover.refresh(id);
+    this.paintRunButton();
+    try {
+      const { wrote, already } = await send({
+        type: "issue.comment",
+        repo: item.repository,
+        number: item.number,
+        body,
+      });
+      picks.post = { state: "done", wrote, already };
+    } catch (e) {
+      picks.post = { state: "error", message: e instanceof Error ? e.message : String(e) };
+    }
+    this.hover.refresh(id);
+    this.paintRunButton();
   }
 
   /** A pick on the hover card (a priority, an action) in place of the suggested one. */
@@ -685,6 +839,7 @@ class BoardAssistant<R> {
     this.applied.clear();
     this.skipped.clear();
     this.overrides.clear();
+    this.keepPosted();
     this.applySummary = null;
     // Only this column's badges and tints: the other columns keep theirs.
     const col = columns(document).find((c) => c.name === this.column)?.el;

@@ -134,6 +134,8 @@ export interface ColumnWorkflow<R> {
   ): HTMLElement;
   runTip(column: string): string;
   acceptTip(counts: Record<string, number>): string;
+  /** An issue's hover card offers the duplicates-and-related search, and a comment listing what it found. */
+  related?: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------------- Triage
@@ -181,6 +183,7 @@ export const triageWorkflow: ColumnWorkflow<TriageResult> = {
     }),
   hoverKey: (r) => r.verdict + r.why,
   pane: (adapter, item, st, rejudge) => renderEvidence(adapter, item, st, { rejudge }),
+  related: true,
   runTip: (column) => `Ask Jev for a keep / remove verdict on every item in ${column}`,
   acceptTip: (n) =>
     `${n.KEEP ?? 0} keep (/triage accepted + /priority, move to its lane), ${n.REMOVE ?? 0} remove (move to Archive-it)`,

@@ -1,6 +1,7 @@
 /** Typed request/response protocol between the content script / options page and the background worker.
  *  Every request is a read except `item.apply`, which the worker only runs on boards marked writable, `tg.apply`,
- *  and `feedback.submit`, which opens an issue on the extension's own repo. */
+ *  `issue.comment` (the related-issues comment, from the issue page or a Triage card) and `feedback.submit`, which opens an issue on the
+ *  extension's own repo. */
 import type { Placement } from "../core/lookup";
 import type { ProgressResult } from "../core/inprogress";
 import type { ApproveResult } from "../core/approver";
@@ -71,6 +72,7 @@ export type Request =
   | { type: "issue.scope"; repo: string; number: number }
   | { type: "issue.ci"; repo: string; number: number }
   | { type: "issue.dups"; repo: string; number: number }
+  | { type: "issue.comment"; repo: string; number: number; body: string }
   | { type: "feedback.preview"; report: FeedbackReport }
   | { type: "feedback.submit"; report: FeedbackReport };
 
@@ -126,6 +128,9 @@ export interface ResponseMap {
   "issue.ci": IssueCiResult | null;
   /** null when the issue is out of scope. */
   "issue.dups": RelatedResult | null;
+  /** Where the comment is, as `repo#number`: the issue, or its mirror in test mode. `already`: the thread had one,
+   *  so nothing was posted. */
+  "issue.comment": { wrote: string; already: boolean };
   /** Where the issue would go, its title and head, and the size of what is attached. `gist`: the attachments are too
    *  big for the issue and go to a secret gist on the reader's account. */
   "feedback.preview": {

@@ -121,9 +121,14 @@ account (`gistFiles`); delete test gists with `gh gist delete`.
 
 ### Failing CI on the PR page, CI history and duplicates on the issue page
 
-Read-only (they show a Prow command, never post it), so test them on real kubernetes/kubernetes items: PRs with
-failing jobs (e.g. #142200), flake issues (e.g. #141786 open, #141469 closed and failing again). If they ever post,
-the post goes through test mode like every other write.
+The checks only read (they show a Prow command, never post it), so test them on real kubernetes/kubernetes items: PRs
+with failing jobs (e.g. #142200), flake issues (e.g. #141786 open, #141469 closed and failing again).
+
+"Duplicates and related" (the issue page, and an issue's Triage hover card) also writes: **Comment** posts the list
+of ticked matches (`issue.comment`, `isRelatedComment` in `src/core/related.ts`). Test it only in a test build with
+test mode on: then a real issue's comment goes on its `[mirror] kubernetes/kubernetes#N` issue in the test repo
+(references in backticks), and a test-repo issue's on the issue itself. Never post it on kubernetes/kubernetes
+without the user asking. The worker posts one per thread; delete the mirror's comment to post again.
 
 ### Access
 

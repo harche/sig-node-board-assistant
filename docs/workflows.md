@@ -38,6 +38,9 @@ Does the item belong on the board, and at which priority?
   - a keep where Jev is at least 0.6 sure another SIG owns the code becomes borderline.
 - **Accept** comments `/triage accepted` with Jev's priority (editable on the card) and moves the card to its lane.
   **Archive** moves it to Archive-it.
+- On an issue's card, **Find** under "Duplicates and related" runs the issue page's search (below) for that issue.
+  Untick any match you don't want, then **Comment** posts a comment on the issue listing the rest as possible
+  duplicates or related issues.
 
 ### Issues - To do
 
@@ -367,6 +370,11 @@ thread links. Jev reads each candidate against the issue, with both threads.
   other. The section says what links them: the same error, test, code path, request or trigger.
 - **A related issue** is shown only for a concrete relation: an umbrella or sub-item, a follow-up, or a regression.
 
+Every match starts ticked, up to 10, the most one comment lists. **Comment on #N** posts one comment on the issue
+that lists the ticked ones under "Possible duplicates" and "Possibly related" and asks the thread to take a look. It
+says they may not be; it never closes or labels anything. "What it posts" shows the comment before you post it. An
+issue that already has the comment does not get a second one.
+
 ## What Apply and Accept may write
 
 The background worker checks every write against an allow-list, whatever the page asks for:
@@ -382,4 +390,6 @@ The background worker checks every write against an allow-list, whatever the pag
   - Prow-command fixes.
 
 Only the nudges and the unassign may @-mention anyone, one person each. TestGrid's new issues and comments go through
-the same worker, and go only to kubernetes/kubernetes and kubernetes/test-infra.
+the same worker, and go only to kubernetes/kubernetes and kubernetes/test-infra. The duplicates-and-related
+comment (from the issue page or a Triage card) also goes through it: only that comment (at most 10 references,
+nothing else), only on the SIG Node or DRA issue it was found for, and only once per issue.
