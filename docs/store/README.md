@@ -14,7 +14,8 @@ surface that changes least. The README shows the same file, so a release that ch
 - **Language:** English
 - **Summary** (from the manifest, 132 characters at most): Jev-judged suggestions for the SIG Node GitHub project boards
   and TestGrid dashboards, with the evidence behind each.
-- **Screenshots** (1280×800): `board.png`, also the one image in the README
+- **Screenshots** (1280×800): `board.png`, also the one image in the README. Shot from 0.1.6 on 2026-10-24 on the
+  real CI/Test board (kubernetes/151), To do column judged, one card's hover card open, GitHub in its light theme.
 - **Small promo tile** (440×280): `promo-small.png`
 - **Homepage:** https://github.com/harche/sig-node-board-assistant
 - **Support:** https://github.com/harche/sig-node-board-assistant/issues

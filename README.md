@@ -14,9 +14,10 @@ on the GitHub and TestGrid pages you already use.**
 
 <br>
 
-![The CI/Test board's Triage column after Tackle: each card has a badge, and the hover card shows Jev's answers and the suggested action](docs/store/board.png)
+![The CI/Test board's To do column after Tackle: each card has a verdict badge, and the hover card shows Jev's answers and the suggested action](docs/store/board.png)
 
-<sub>Screenshots highlight what the extension adds; the dimmed parts are GitHub's or TestGrid's own page.</sub>
+<sub>The CI/Test board's To do column after Tackle: each card carries Jev's verdict, and the hover card shows the
+answers behind one. Everything outside the extension's own badges and card is GitHub's page.</sub>
 
 ## Features
 
