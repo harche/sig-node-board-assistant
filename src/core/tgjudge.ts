@@ -7,6 +7,7 @@ import { forever } from "./reads";
 import type { JevClient } from "./jev";
 import {
   canonicalQuestion,
+  sameCauseQuestion,
   coversQuestion,
   failureKindQuestion,
   fixesQuestion,
@@ -19,8 +20,18 @@ import { choiceReading, noulReading, type Reading } from "./readings";
 import type { TgRef, TgTable } from "./testgrid";
 import {
   CANONICAL_AT,
+  CAUSE_RUNS,
+  causeFacts,
+  causeKey,
+  causeLabel,
   fragment,
+  groupRuns,
+  MAX_CAUSES,
+  READ_RUNS,
+  SAME_AT,
+  UNKNOWN_CAUSE,
   GCS,
+  infraQueries,
   jobFacts,
   JUNIT_FILES,
   junitFailures,
@@ -43,6 +54,7 @@ import {
   type JunitFailure,
   type RunEvidence,
   type TgAnswers,
+  type TgCause,
   type TgResult,
   type TgRelated,
   type Track,
@@ -339,6 +351,43 @@ export async function candidates(
   return [...out.values()].slice(0, max);
 }
 
+/** Infra candidates read for tracking, at most, and how many of each search's best are taken. */
+const MAX_INFRA = 6;
+const INFRA_HITS = 5;
+
+/** Issues that may already report an infra failure, found by its error text (infraQueries), recent as candidates()'s
+ *  are and not among `known`: the searches' best first, at most MAX_INFRA. */
+export async function infraCandidates(
+  d: Pick<TgDeps, "search">,
+  evidence: RunEvidence[],
+  now: number,
+  known: Candidate[],
+): Promise<Candidate[]> {
+  const q = infraQueries(evidence);
+  if (!q.length) return [];
+  const since = new Date(now - RECENT_DAYS * 86_400_000).toISOString().slice(0, 10);
+  // Semantic search takes no `updated:` qualifier: old issues are dropped here instead.
+  const recent = (c: Candidate) =>
+    (c.state === "open" && (c.updated_at ?? since) >= since) || (c.closed_at ?? "") >= since;
+  const found = await d.search(
+    q.map((x) => x.query),
+    INFRA_HITS,
+  );
+  const seen = new Set(known.map((c) => `${c.repo}#${c.number}`));
+  const out: Candidate[] = [];
+  for (let i = 0; i < INFRA_HITS; i++)
+    q.forEach((x, k) => {
+      const r = found[k]?.[i];
+      if (!r) return;
+      const c = brief(r, x.repo, "infra error");
+      const key = `${c.repo}#${c.number}`;
+      if (seen.has(key) || !recent(c)) return;
+      seen.add(key);
+      out.push(c);
+    });
+  return out.slice(0, MAX_INFRA);
+}
+
 /** Candidates the related search reads, at most. */
 const MAX_RELATED = 30;
 
@@ -462,37 +511,215 @@ async function mainTracker(
   return { canonical, reading: a.canonical ? reading : [] };
 }
 
+type Ask = <A>(state: unknown, q: Record<string, unknown>) => Promise<A>;
+/** Whether an issue's thread names the job, by `repo#number`: asked once per issue, whichever cause reads it. */
+type NamedMemo = Map<string, Promise<{ named: boolean; p: number | null }>>;
+
 export async function judgeTg(
-  d: TgDeps,
+  d0: TgDeps,
   ref: TgRef,
   status: "FAILING" | "FLAKY",
   now = Date.now(),
 ): Promise<TgResult> {
-  const facts = jobFacts(ref.dashboard, ref.tab, status, await d.table(ref), now);
-  const evidence = await Promise.all(
-    facts.failed_builds.map((b) => runEvidence(d, facts.gcs, b.build, b.started)),
-  );
+  const d = sharedReads(d0);
+  const facts = jobFacts(ref.dashboard, ref.tab, status, await d.table(ref), now, READ_RUNS);
+  const read = (bs: JobFacts["failed_builds"]) =>
+    Promise.all(bs.map((b) => runEvidence(d, facts.gcs, b.build, b.started)));
+  const told = (e: RunEvidence[]) => e.filter((x) => x.log_signals !== null || x.junit_failures.length);
+  // The newest runs first; the older ones only when those already show more than one cause.
+  let evidence = await read(facts.failed_builds.slice(0, CAUSE_RUNS));
+  if (new Set(told(evidence).map(causeKey)).size > 1)
+    evidence = [...evidence, ...(await read(facts.failed_builds.slice(CAUSE_RUNS)))];
   const usage: JevUsage = { input_tokens: 0, cost: 0 };
-  const ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
+  const ask: Ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
     const res = await d.jev.ask<A>(state, q);
     usage.input_tokens += res.usage.input_tokens;
     usage.cost += res.usage.cost;
     return res.answers;
   };
+  const named: NamedMemo = new Map();
+  // Runs that failed for different reasons are judged apart: each cause has its own tracking issue and action.
+  const merged = await mergeCauses(facts, groupRuns(told(evidence)), ask);
+  if (merged.groups.length <= 1) {
+    // One cause: the job judged on its newest runs, as before causes.
+    const one = await judgeRuns(d, facts, evidence.slice(0, CAUSE_RUNS), ask, now, true, named);
+    return { ...one, readings: [...merged.readings, ...(one.readings ?? [])], usage };
+  }
+  // The newest cause, and others with two runs or more; a single older run is a one-off, listed only.
+  const judged = merged.groups.filter((g, i) => i === 0 || g.runs.length >= 2).slice(0, MAX_CAUSES);
+  const readCount = merged.groups.reduce((n, g) => n + g.runs.length, 0);
+  const results = await Promise.all(
+    judged.map((g, i) =>
+      judgeRuns(
+        d,
+        causeFacts(facts, g.runs, i === 0, readCount, now),
+        g.runs.slice(0, CAUSE_RUNS),
+        ask,
+        now,
+        i === 0,
+        named,
+      ),
+    ),
+  );
+  const causes: TgCause[] = merged.groups.map((g) => {
+    const result = results[judged.indexOf(g)];
+    return {
+      key: g.key,
+      label: causeLabel(g.key),
+      builds: g.runs.map((r) => r.build),
+      // The job's usage counts every cause's questions. A cause no log line names gets no name in its issue's title.
+      ...(result
+        ? {
+            result: {
+              ...result,
+              ...(g.key === UNKNOWN_CAUSE ? {} : { cause: causeLabel(g.key) }),
+              usage: { input_tokens: 0, cost: 0 },
+            },
+          }
+        : {}),
+    };
+  });
+  const top = results[0]!;
+  return {
+    ...top,
+    facts,
+    evidence,
+    causes,
+    readings: [...merged.readings, ...(top.readings ?? [])],
+    usage,
+  };
+}
+
+/** `d` with searches and thread reads kept for one judging: the causes of a job share its job-name and label-pool
+ *  searches and their candidates' threads, read once. */
+function sharedReads(d: TgDeps): TgDeps {
+  const searches = new Map<string, Promise<RawSearchIssue[]>>();
+  const threads = new Map<string, Promise<ThreadIssue | null>>();
+  const id = (q: SearchQuery, n?: number) => `${n ?? ""}|${typeof q === "string" ? q : `${q.type}|${q.q}`}`;
+  return {
+    ...d,
+    search: (qs, n) => {
+      const todo = [...new Map(qs.filter((q) => !searches.has(id(q, n))).map((q) => [id(q, n), q])).values()];
+      if (todo.length) {
+        const p = d.search(todo, n);
+        todo.forEach((q, i) =>
+          searches.set(
+            id(q, n),
+            p.then((r) => r[i] ?? []),
+          ),
+        );
+      }
+      return Promise.all(qs.map((q) => searches.get(id(q, n))!));
+    },
+    ...(d.threads
+      ? {
+          threads: async (repo: string, ns: number[]) => {
+            const todo = [...new Set(ns)].filter((n) => !threads.has(`${repo}#${n}`));
+            if (todo.length) {
+              const p = d.threads!(repo, todo);
+              for (const n of todo)
+                threads.set(
+                  `${repo}#${n}`,
+                  p.then((m) => m.get(n) ?? null),
+                );
+            }
+            return new Map(
+              await Promise.all(ns.map(async (n) => [n, await threads.get(`${repo}#${n}`)!] as const)),
+            );
+          },
+        }
+      : {}),
+  };
+}
+
+/** Groups Jev reads as one cause, merged, and merged through each other: a ~ b and b ~ c make one cause even when
+ *  a and c read apart. Asked for each pair of the groups that could get a verdict (the newest, and those with two
+ *  runs or more, one more than MAX_CAUSES), both groups' newest runs side by side (they fit in RUNS_MAX), at
+ *  SAME_AT. The order stays newest cause first. */
+async function mergeCauses(
+  f: JobFacts,
+  groups: { key: string; runs: RunEvidence[] }[],
+  ask: Ask,
+): Promise<{ groups: { key: string; runs: RunEvidence[] }[]; readings: Reading[] }> {
+  const readings: Reading[] = [];
+  const head = groups.filter((g, i) => i === 0 || g.runs.length >= 2).slice(0, MAX_CAUSES + 1);
+  const pairs = head.flatMap((a, i) => head.slice(i + 1).map((b) => [a, b] as const));
+  const answers = await Promise.all(
+    pairs.map(([a, b]) =>
+      ask<{ same_cause?: { noul: number } }>(
+        {
+          job: f.job,
+          tab: f.tab,
+          runs_a: fitRuns(a.runs.slice(0, CAUSE_RUNS).map(runState), RUNS_MAX / 2),
+          runs_b: fitRuns(b.runs.slice(0, CAUSE_RUNS).map(runState), RUNS_MAX / 2),
+        },
+        sameCauseQuestion(),
+      ).catch(() => ({}) as { same_cause?: { noul: number } }),
+    ),
+  );
+  // Each group points at the group it joins; the root is the newest of them, since groups are newest first.
+  const root = new Map(groups.map((g) => [g, g]));
+  const find = (g: (typeof groups)[number]): (typeof groups)[number] => {
+    const r = root.get(g)!;
+    return r === g ? g : find(r);
+  };
+  pairs.forEach(([a, b], i) => {
+    const p = answers[i]?.same_cause?.noul;
+    if (p === undefined) return;
+    readings.push(
+      ...noulReading(`Same cause: ${causeLabel(a.key).slice(0, 40)} / ${causeLabel(b.key).slice(0, 40)}`, {
+        type: "noul",
+        noul: p,
+      }),
+    );
+    if (p < SAME_AT) return;
+    const [x, y] = [find(a), find(b)].sort((u, v) => groups.indexOf(u) - groups.indexOf(v));
+    if (x !== y) root.set(y!, x!);
+  });
+  const out = new Map<(typeof groups)[number], RunEvidence[]>();
+  for (const g of groups) out.set(find(g), [...(out.get(find(g)) ?? []), ...g.runs]);
+  return {
+    groups: [...out].map(([g, runs]) => ({ key: g.key, runs: runs.sort((x, y) => y.started - x.started) })),
+    readings,
+  };
+}
+
+/** One failure judged: its kind, its candidate tracking issues and whether they name the job, the main one among
+ *  several, and (with `withRelated`) issues that cause or group it. For a job with one cause, the job; for several,
+ *  one cause with its own facts and runs. */
+async function judgeRuns(
+  d: TgDeps,
+  facts: JobFacts,
+  evidence: RunEvidence[],
+  ask: Ask,
+  now: number,
+  withRelated: boolean,
+  namedMemo: NamedMemo,
+): Promise<Omit<TgResult, "usage">> {
   const st = jobState(facts, evidence);
   const runs = st.runs;
   const cands = await candidates(d, facts, now);
   // Jev reads each candidate's whole thread with its body: that is where jobs get added and where a thread says
   // the failure changed. Without threads (or if the read fails), the body alone.
   const threads = await candidateThreads(d, cands);
-  const [kind, answers] = await Promise.all([
-    runs.length ? ask<TgAnswers>(st, failureKindQuestion()) : Promise.resolve(null),
+  const tracksOf = (cs: Candidate[]) =>
     Promise.all(
-      cands.map((c) =>
+      cs.map((c) =>
         ask<TrackAnswer>(withIssue(st, c, threads.get(`${c.repo}#${c.number}`)?.comments), tracksQuestion()),
       ),
-    ),
+    );
+  const [kind, answers] = await Promise.all([
+    runs.length ? ask<TgAnswers>(st, failureKindQuestion()) : Promise.resolve(null),
+    tracksOf(cands),
   ]);
+  // An infra breakage is reported by its error under the jobs its reporter saw, so the searches above rarely reach
+  // it: when Jev reads infra, the error text is searched too and those issues are read like the rest.
+  if (kind?.failure_kind?.choice === "infra") {
+    const more = await infraCandidates(d, evidence, now, cands).catch(() => []);
+    for (const [k, t] of await candidateThreads(d, more)) threads.set(k, t);
+    answers.push(...(await tracksOf(more)));
+    cands.push(...more);
+  }
   const names = [facts.job, facts.tab].filter(Boolean);
   const scored = cands.map((c, i) => ({ c, p: answers[i]?.tracks?.noul ?? 0 }));
   // Only issues that could be the tracking one are read in full, and Jev says whether the thread already reports
@@ -501,30 +728,34 @@ export async function judgeTg(
   const tracking = scored.filter(({ c, p }) => c.state === "open" && p >= TRACKED_AT).map(({ c }) => c);
   const [named, main] = await Promise.all([
     Promise.all(
-      scored.map(async ({ c, p }) => {
+      scored.map(({ c, p }) => {
         if (p < MAYBE_AT) return { named: names.some((n) => c.body.includes(n)), p: null };
-        const [body, ...comments] = (await d.issueText(c.repo, c.number).catch(() => [c.body])).map(
-          stripRuns,
-        );
-        const issue = { number: c.number, title: c.title, state: c.state };
-        const base = { job: facts.job, tab: facts.tab, issue: { ...issue, thread: "" } };
-        // The whole thread; one too long for a state loses its oldest comments after the first.
-        const kept = fitMiddle(
-          comments,
-          (k) => size(base) + size([body ?? "", ...k].join("\n")),
-          MAX_STATE_CHARS,
-          (n) => `(${n} comments left out here: the thread is too long)`,
-        );
-        const a = await ask<{ names_job?: { noul: number } }>(
-          { ...base, issue: { ...issue, thread: [body ?? "", ...kept].join("\n") } },
-          namesJobQuestion(),
-        );
-        const q = a.names_job?.noul ?? 0;
-        return { named: q >= NAMED_AT, p: q };
+        const key = `${c.repo}#${c.number}`;
+        if (!namedMemo.has(key)) namedMemo.set(key, namesJob(c));
+        return namedMemo.get(key)!;
       }),
     ),
     tracking.length > 1 ? mainTracker(st, tracking, threads, ask) : Promise.resolve(null),
   ]);
+  // Jev reads the issue's whole thread for whether it already reports this job.
+  async function namesJob(c: Candidate): Promise<{ named: boolean; p: number | null }> {
+    const [body, ...comments] = (await d.issueText(c.repo, c.number).catch(() => [c.body])).map(stripRuns);
+    const issue = { number: c.number, title: c.title, state: c.state };
+    const base = { job: facts.job, tab: facts.tab, issue: { ...issue, thread: "" } };
+    // The whole thread; one too long for a state loses its oldest comments after the first.
+    const kept = fitMiddle(
+      comments,
+      (k) => size(base) + size([body ?? "", ...k].join("\n")),
+      MAX_STATE_CHARS,
+      (n) => `(${n} comments left out here: the thread is too long)`,
+    );
+    const a = await ask<{ names_job?: { noul: number } }>(
+      { ...base, issue: { ...issue, thread: [body ?? "", ...kept].join("\n") } },
+      namesJobQuestion(),
+    );
+    const q = a.names_job?.noul ?? 0;
+    return { named: q >= NAMED_AT, p: q };
+  }
   const tracks: Track[] = scored
     .map(({ c, p }, i) => ({
       repo: c.repo,
@@ -539,22 +770,23 @@ export async function judgeTg(
     }))
     .sort((a, b) => b.p - a.p);
   // Only with evidence: the related search is the failure's own words.
-  const related = runs.length
-    ? await relatedRuns(
-        d,
-        facts,
-        st,
-        evidence,
-        // Issues Jev reads as tracking are the tracking candidates; the rest of them may still be a root cause
-        // or an umbrella, and are read like the related search's own finds.
-        new Set(
-          tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p >= MAYBE_AT).map((t) => t.number),
-        ),
-        tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p < MAYBE_AT).map((t) => t.number),
-        ask,
-        now,
-      ).catch(() => [])
-    : [];
+  const related =
+    runs.length && withRelated
+      ? await relatedRuns(
+          d,
+          facts,
+          st,
+          evidence,
+          // Issues Jev reads as tracking are the tracking candidates; the rest of them may still be a root cause
+          // or an umbrella, and are read like the related search's own finds.
+          new Set(
+            tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p >= MAYBE_AT).map((t) => t.number),
+          ),
+          tracks.filter((t) => t.repo === "kubernetes/kubernetes" && t.p < MAYBE_AT).map((t) => t.number),
+          ask,
+          now,
+        ).catch(() => [])
+      : [];
   const readings: Reading[] = [
     ...choiceReading("Kind of failure", kind?.failure_kind),
     ...tracks
@@ -590,6 +822,5 @@ export async function judgeTg(
     ...(main ? { canonical: main.canonical } : {}),
     related,
     readings,
-    usage,
   };
 }

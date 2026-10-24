@@ -58,7 +58,7 @@ export interface JobFacts {
 const expand = (st: { count: number; value: number }[]) =>
   st.flatMap((s) => Array<number>(s.count).fill(s.value));
 const HARNESS =
-  /(^|\.)Overall$|^kubetest\.|^Node Tests$|^Test$|^Up$|^Down$|^TearDown|^DumpClusterLogs|^Timeout$|^listResources/;
+  /(^|\.)Overall$|^kubetest2?\.|^Node Tests$|^Test$|^Up$|^Down$|^TearDown|^DumpClusterLogs|^Timeout$|^listResources/;
 const DAY = 86_400_000;
 
 export function jobFacts(
@@ -387,6 +387,11 @@ export interface TgResult {
   canonical?: { repo: string; number: number; p: number } | null;
   /** Issues the failure's own words found that cause it or group it (relatedRuns); absent in older results. */
   related?: TgRelated[];
+  /** Two or more causes in the failed runs read: each judged on its own runs, newest first. The fields above are then
+   *  the newest cause's, with the job's facts and every run read. Absent with one cause, and in older results. */
+  causes?: TgCause[];
+  /** For a cause's own result: what it failed on (TgCause.label), so its issue's title names it. */
+  cause?: string;
   readings?: Reading[];
   usage: JevUsage;
 }
@@ -461,6 +466,193 @@ export function relatedQueries(
     { q: `${base} ${probe}`.slice(0, 250), type: "ISSUE_SEMANTIC" },
     { q: `${base} ${probe}`.slice(0, 250), type: "ISSUE_HYBRID" },
   ];
+}
+
+/** A log line that says what broke in the environment, and one that only says something did. */
+const INFRA_STRONG =
+  /unavailable|exhausted|stockout|quota|not ready|did not become ready|deadline exceeded|connection refused|i\/o timeout|NoSuchKey|Bad Gateway|\b50[234]\b|permission denied|forbidden|not running|not found/i;
+const INFRA_WEAK = /unable to|could not|failed to|error/i;
+/** The wrapper's own lines: they end every failed run. */
+const INFRA_WRAPPER = /exit status \d+|errors encountered|Refer to artifacts|^\s*[+<>]/;
+
+/** An infra error line as words to search for: no klog header, quoted names (projects, instances), generated names
+ *  (image dates, instance hashes) or addresses, so the same breakage on another job reads the same. */
+export function infraError(line: string): string {
+  const s = line
+    .replace(/^[IWEF]\d{4} [\d:.]+\s+\d+ [\w.-]+:\d+\]\s*/, "")
+    .replace(/^[-\s]*(?:ERROR|Error|message|reason|code):\s*/, "")
+    .replace(/"[^"]*"/g, " ")
+    .split(/\s+/)
+    .filter((w) => !/[0-9a-f]{8,}|\d{6,}|\d+\.\d+\.\d+\.\d+/.test(w))
+    .join(" ")
+    .replace(/["\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s.length > 200 ? s.slice(0, 200).replace(/\s+\S*$/, "") : s;
+}
+
+/** Log words GitHub search reads as words only: no grouping brackets, no `word:` qualifiers, no leading `-`. */
+const searchable = (x: string) =>
+  x
+    .replace(/[()[\]{}<>]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.replace(/:+$/, ""))
+    .filter((w) => w && !w.startsWith("-") && !w.includes(":"))
+    .join(" ");
+
+const infraScore = (l: string) => (INFRA_STRONG.test(l) ? 2 : 0) + (INFRA_WEAK.test(l) ? 1 : 0);
+
+/** What a run shows on the card: the lines saying what broke (an error over a failure), the last `n`, in log order. A
+ *  run whose tests failed shows its first log lines, as before: its junit failures say the rest. */
+export function runHighlights(e: Pick<RunEvidence, "junit_failures" | "log_signals">, n = 4): string[] {
+  const logs = (e.log_signals ?? []).filter((l) => !/^\[FAIL\]/.test(l));
+  if (e.junit_failures.some((j) => !HARNESS.test(j.test))) return logs.slice(0, n);
+  // Each line once, by its text with numbers and ids masked (a retried command logs the same line again).
+  const seen = new Set<string>();
+  const scored = logs
+    .map((l) => ({
+      l,
+      s: INFRA_WRAPPER.test(l) ? 0 : infraScore(l),
+      k: l.trim().replace(/[0-9a-f]{6,}|\d+/g, "#"),
+    }))
+    .filter((x) => x.s > 0 && !seen.has(x.k) && seen.add(x.k));
+  // Lines saying what broke, when there are any; else the ones saying only that something failed.
+  const strong = scored.filter((x) => x.s >= 2);
+  const shown = (strong.length ? strong : scored).slice(-n).map((x) => x.l);
+  return shown.length ? shown : logs.slice(0, n);
+}
+
+/** A run's most telling error line, as infraError words: one saying what broke over one saying only that something
+ *  failed, and the last of those, nearest how the run ended. null when no line says either. */
+export function infraLine(r: Pick<RunEvidence, "log_signals">): string | null {
+  return (
+    (r.log_signals ?? [])
+      .filter((l) => !INFRA_WRAPPER.test(l) && infraScore(l) > 0)
+      .map((l) => ({ s: infraScore(l), x: infraError(l) }))
+      .filter((l) => l.x.length >= 20)
+      .reduce<{ s: number; x: string } | null>((a, b) => (!a || b.s >= a.s ? b : a), null)?.x ?? null
+  );
+}
+
+/** The searches for issues that already report an infra failure: an infra issue is filed under the jobs its reporter
+ *  saw, by its error, so neither this job's name nor its tests find it. Each run's most telling error line (one
+ *  saying what broke over one saying only that something failed; the last of those, nearest how the run ended),
+ *  newest run first, distinct, at most `max`; each by
+ *  hybrid and semantic search in kubernetes/kubernetes and hybrid in kubernetes/test-infra. On ci-node-crio-dra's
+ *  `e2-standard-2` stockout this found the us-central1-b stockout issues the job-name search never reached. */
+export function infraQueries(
+  e: Pick<RunEvidence, "log_signals">[],
+  max = 2,
+): { repo: string; query: { q: string; type: "ISSUE_SEMANTIC" | "ISSUE_HYBRID" } }[] {
+  const errs: string[] = [];
+  for (const r of e) {
+    const x = infraLine(r);
+    if (x && !errs.includes(x)) errs.push(x);
+  }
+  return errs
+    .slice(0, max)
+    .map(searchable)
+    .filter(Boolean)
+    .flatMap((x) => [
+      {
+        repo: "kubernetes/kubernetes",
+        query: { q: `repo:kubernetes/kubernetes is:issue ${x}`, type: "ISSUE_HYBRID" as const },
+      },
+      {
+        repo: "kubernetes/kubernetes",
+        query: { q: `repo:kubernetes/kubernetes is:issue ${x}`, type: "ISSUE_SEMANTIC" as const },
+      },
+      {
+        repo: "kubernetes/test-infra",
+        query: { q: `repo:kubernetes/test-infra is:issue ${x}`, type: "ISSUE_HYBRID" as const },
+      },
+    ]);
+}
+
+// ---------------------------------------------------------------------------------------------------- causes
+
+/** Failed runs read, at most: enough for a second cause to show. Jev reads each cause's newest CAUSE_RUNS, and ten
+ *  runs fit in RUNS_MAX (tgjudge.ts) many times over. */
+export const READ_RUNS = 10;
+/** A cause's runs Jev reads to judge it, as the review read a job's before there were causes. */
+export const CAUSE_RUNS = 3;
+/** Causes given a verdict, at most; the newest first. */
+export const MAX_CAUSES = 3;
+/** Two groups of runs are one cause from this P(same cause). */
+export const SAME_AT = 0.65;
+
+/** What a run failed on: its failing tests (the harness's own rows left out), else its infra error line. Runs with
+ *  one key are one cause; Jev may still merge two keys (sameCauseQuestion). */
+export function causeKey(r: Pick<RunEvidence, "junit_failures" | "log_signals">): string {
+  const tests = [...new Set(r.junit_failures.filter((j) => !HARNESS.test(j.test)).map((j) => j.test))].sort();
+  if (tests.length) return `tests:${tests.slice(0, 3).join("|")}`;
+  return infraLine(r) ? `error:${infraLine(r)}` : UNKNOWN_CAUSE;
+}
+
+/** The key of runs no log line names: their own group, but never a name in an issue's title. */
+export const UNKNOWN_CAUSE = "error:unknown";
+
+/** Runs grouped by causeKey, the group of the newest run first, each group newest first. */
+export function groupRuns<R extends Pick<RunEvidence, "junit_failures" | "log_signals">>(
+  e: R[],
+): { key: string; runs: R[] }[] {
+  const by = new Map<string, R[]>();
+  for (const r of e) {
+    const k = causeKey(r);
+    by.set(k, [...(by.get(k) ?? []), r]);
+  }
+  return [...by].map(([key, runs]) => ({ key, runs }));
+}
+
+/** A cause in a few words, for the card: its first test, or its error line. */
+export function causeLabel(key: string): string {
+  if (key.startsWith("tests:"))
+    return key
+      .slice(6)
+      .split("|")[0]!
+      .replace(/^[\w.-]+ Suite\.?\s*/, "");
+  return key === UNKNOWN_CAUSE ? "no log line says what broke" : key.slice(6);
+}
+
+/** The job's facts as one cause sees them. Its failed runs: its share of the `read` runs applied to all the job's
+ *  failed runs (TestGrid does not say why the others failed), at least the runs it has. FAILING and the streak only
+ *  when it is the newest cause: an older cause is not what fails now. And only the failing tests its runs show,
+ *  matched to TestGrid's rows as a Go test's `<classname>.<name>` or a suite's `<suite>.<name>`. */
+export function causeFacts(
+  f: JobFacts,
+  runs: RunEvidence[],
+  newest: boolean,
+  read: number,
+  now: number,
+): JobFacts {
+  const names = runs.flatMap((r) =>
+    r.junit_failures.flatMap((j) => (j.classname ? [`${j.classname}.${j.test}`, j.test] : [j.test])),
+  );
+  const tests = f.failing_tests.filter((t) => names.some((n) => t.name === n || t.name.endsWith(`.${n}`)));
+  const oldest = runs.at(-1)?.started;
+  let streak = 0;
+  if (newest)
+    for (const b of f.failed_builds.slice(0, f.streak)) if (runs.some((r) => r.build === b.build)) streak++;
+  return {
+    ...f,
+    status: newest ? f.status : "FLAKY",
+    failed_runs: Math.max(runs.length, Math.round((f.failed_runs * runs.length) / Math.max(1, read))),
+    streak,
+    first_failure_days_ago:
+      oldest === undefined ? f.first_failure_days_ago : Math.floor((now - oldest) / DAY),
+    failing_tests: tests,
+    harness_only: tests.length === 0,
+    failed_builds: runs.map((r) => ({ build: r.build, started: r.started })),
+  };
+}
+
+/** One cause of a job's failed runs. `result` is the cause judged on its own runs, as a job is; absent for a one-off
+ *  (a single run that is not the newest), which the card only lists. */
+export interface TgCause {
+  key: string;
+  label: string;
+  builds: string[];
+  result?: TgResult;
 }
 
 export type TgVerdict = "tracked" | "regression" | "maybe" | "untracked";
@@ -551,17 +743,24 @@ export function decideTg(r: TgResult): { action: TgAction; why: string; auto: bo
     case "untracked":
       if (f.status === "FAILING")
         return { action: "file", why: "failing, and no issue tracks it", auto: true };
-      return frequent(f)
-        ? {
-            action: "file",
-            why: `flaky in ${f.failed_runs} of ${f.runs} runs and no issue tracks it`,
-            auto: false,
-          }
-        : {
-            action: "keep",
-            why: `flaky in ${f.failed_runs} of ${f.runs} runs: not yet worth an issue`,
-            auto: true,
-          };
+      if (frequent(f))
+        return {
+          action: "file",
+          why: `flaky in ${f.failed_runs} of ${f.runs} runs and no issue tracks it`,
+          auto: false,
+        };
+      // An infra breakage hits other jobs too: one issue for it is worth offering however rarely it hits this one.
+      if (r.failure_kind?.choice === "infra")
+        return {
+          action: "file",
+          why: `infra failure in ${f.failed_runs} of ${f.runs} runs, and no issue reports it yet`,
+          auto: false,
+        };
+      return {
+        action: "keep",
+        why: `flaky in ${f.failed_runs} of ${f.runs} runs: not yet worth an issue`,
+        auto: true,
+      };
   }
 }
 
@@ -632,9 +831,18 @@ function title(r: TgResult): string {
   const f = r.facts;
   const what =
     f.harness_only || !f.failing_tests.length
-      ? f.job
+      ? // One cause of several: the job alone would read like every other cause's issue.
+        r.cause
+        ? `${f.job}: ${causeTitle(r.cause)}`
+        : f.job
       : `${f.failing_tests[0]!.name.replace(/^[\w.-]+ Suite\.?\s*/, "")}`;
   return `${f.status === "FAILING" ? "[Failing Test]" : "[Flaking Test]"} ${what}`.slice(0, 200);
+}
+
+/** A cause's error line for a title: its first clause saying what broke, at most 120 characters, cut at a word. */
+export function causeTitle(label: string): string {
+  const x = label.split(/[:;]\s+/).find((c) => INFRA_STRONG.test(c)) ?? label;
+  return x.length > 120 ? `${x.slice(0, 120).replace(/\s+\S*$/, "")}…` : x;
 }
 
 export function issueBody(r: TgResult): string {
@@ -717,6 +925,22 @@ export function tgSteps(r: TgResult, action: TgAction, target?: Track | null): T
       labels: [r.facts.status === "FAILING" ? "kind/failing-test" : "kind/flake", "sig/node"],
     },
   ];
+}
+
+/** Steps of several causes, one comment per issue: two causes on one issue join in its comment. */
+export function mergeSteps(steps: TgStep[]): TgStep[] {
+  const out: TgStep[] = [];
+  for (const s of steps) {
+    const same =
+      s.kind === "comment" &&
+      out.find(
+        (o): o is Extract<TgStep, { kind: "comment" }> =>
+          o.kind === "comment" && o.repo === s.repo && o.number === s.number,
+      );
+    if (same && s.kind === "comment") same.body += `\n\n${s.body.replace(`${TG_MARK}\n`, "")}`;
+    else out.push({ ...s });
+  }
+  return out;
 }
 
 export function isTgDraft(body: string): boolean {

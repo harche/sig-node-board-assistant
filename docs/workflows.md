@@ -301,7 +301,20 @@ On a SIG Node dashboard's summary page, **Tackle** judges every FAILING and FLAK
 - **Candidates** come from one batched GraphQL search per job:
   - the job, tab and test names in kubernetes/kubernetes;
   - the job in kubernetes/test-infra;
-  - SIG Node's failing-test and flake issues.
+  - SIG Node's failing-test and flake issues;
+  - when Jev reads the failure as infra, its error itself: each failed run's line saying what broke (a zone out of a
+    VM type, a node that never came up), with run-specific names left out, by hybrid and semantic search in
+    kubernetes/kubernetes and kubernetes/test-infra. An infra issue is filed under the jobs its reporter saw, so the
+    job's own name rarely finds it.
+
+- **Several causes:** when the newest 3 failed runs fail on different things (their failing tests, else their error
+  line), up to 10 are read and grouped that way; Jev reads the groups side by side and merges those that are one
+  cause, also through each other. Each cause (the
+  newest, and others with two runs or more) is judged on its own newest 3 runs, with its own tracking issues and its
+  own action, and the card shows one section per cause. A single older run is listed as a one-off. Only the
+  newest cause can be FAILING, and a cause's failed runs are its share of the runs read applied to the job's. The
+  badge shows the newest cause, with "+N" for the others. Accept takes each cause on its own and leaves the others
+  open for your pick; two causes on one issue make one comment.
 
 | Badge       | When                                                      | What Apply does                              |
 | ----------- | --------------------------------------------------------- | -------------------------------------------- |
@@ -310,7 +323,8 @@ On a SIG Node dashboard's summary page, **Tackle** judges every FAILING and FLAK
 | comment?    | a closed match, or 0.35–0.65 without the job named        | your call                                    |
 | file issue  | untracked and FAILING                                     | new issue from the k/k failing-test template |
 | file issue? | untracked and FLAKY, failing 5+ runs or 20%+ of them      | your call                                    |
-| watch       | untracked and FLAKY, below that                           | nothing                                      |
+| file issue? | untracked and FLAKY, infra however rarely                 | your call                                    |
+| watch       | untracked and FLAKY, below that and not infra             | nothing                                      |
 
 The card also names issues that may cause the failure, or group it ("may cause this: #N", "part of #N"). These are
 found by the failure's own words: its error text and Go identifiers verbatim, plus semantic and hybrid search on the

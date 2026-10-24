@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **TestGrid: an infra failure is looked up by its error.** A job that breaks around its tests (a GCE stockout, a
+  node image that never comes up) used to be searched only by its job, tab and test names, which an infra issue
+  filed under other jobs never contains, so the card showed unrelated test flakes and, for a rare flake, "Nothing
+  to do". When Jev reads the failure as infra, each failed run's line saying what broke is now searched too, with
+  run-specific names left out, by hybrid and semantic search in kubernetes/kubernetes and kubernetes/test-infra.
+  Those issues are read like the other candidates: one that reports the same breakage and already names the job
+  means nothing to do, one that does not name it gets a comment adding the job. If none reports it, the card
+  offers to file an issue (`file issue?`), however rarely the job fails.
+- **TestGrid: one verdict per cause.** A job whose failed runs fail for different reasons (a GCE stockout in two
+  runs, a node that never came up in two others) used to get one verdict, so the second cause was lost and the
+  first was judged on mixed runs. When the newest 3 failed runs fail on different things, up to 10 are now read and
+  grouped by their failing tests, else their error line, and Jev merges groups that are one cause. Each cause gets its own tracking issues, action and
+  section on the card, and Apply writes for each; the badge shows the newest cause and "+N" for the others.
+- **TestGrid: `kubetest2.*` rows are the harness.** A job failing only in `kubetest2.Test` was shown with that row
+  as its failing test; it is now "only the harness", as `kubetest.*` rows already were.
+
 ## 0.1.6
 
 - **Triage: a `/sig node` cannot make an item CI work.** On the CI/Test board, a human `/sig node` used to turn any

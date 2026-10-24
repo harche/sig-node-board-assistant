@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   decideTg,
   fragment,
+  infraError,
+  infraQueries,
   isTgDraft,
   namesWhole,
   jobFacts,
@@ -253,6 +255,7 @@ const track = (number: number, p: number, over: Partial<Track> = {}): Track => (
   names_job: true,
   ...over,
 });
+const infra = { type: "choice", choice: "infra", confidence: 1, probabilities: { infra: 1 } } as const;
 const result = (f: Partial<JobFacts>, tracks: Track[]): TgResult => ({
   kind: "tg",
   facts: facts(f),
@@ -276,6 +279,7 @@ describe("decideTg", () => {
     ["failing, untracked", result({ status: "FAILING" }, [track(1, 0.1)]), "file", true],
     ["flaky often, untracked", result({ failed_runs: 8 }, []), "file", false],
     ["flaky rarely, untracked", result({}, []), "keep", true],
+    ["flaky rarely, infra, untracked", { ...result({}, []), failure_kind: infra }, "file", false],
   ] as [string, TgResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
     expect(decideTg(r)).toMatchObject({ action, auto }),
   );
@@ -319,6 +323,57 @@ describe("decideTg", () => {
     }));
 });
 
+/** ci-node-crio-dra's build log on 2026-10-23 (a GCE stockout) and 2026-10-21 (a node that never came up). */
+const STOCKOUT = [
+  'unable to create gce instance with running docker daemon for image fedora-coreos-44-20260928-3-2-gcp-x86-64.  failed to create instance in project "k8s-infra-e2e-boskos-035": unable to run gcloud command',
+  "ERROR: (gcloud.compute.instances.create) Could not fetch resource:",
+  "code: ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS",
+  "    message: A e2-standard-2 VM instance is currently unavailable in the us-central1-b",
+  'E1023 14:41:28.707865      52 gce_runner.go:429] Error deleting instance "": unable to run gcloud command',
+  "Error: exit status 255",
+];
+const NOT_READY = [
+  "failed to run SSH command: out: ssh: connect to host 35.184.35.160 port 22: Connection refused",
+  'unable to create gce instance with running docker daemon for image fedora-coreos-44-20260928-3-1-gcp-x86-64.  instance "tmp-node-e2e-17d7c2b3-fedora-coreos-44-20260928-3-1-gcp-x86-64" did not become ready: context deadline exceeded; last observation: probe runtime on instance "tmp-node-e2e-17d7c2b3": instance "tmp-node-e2e-17d7c2b3" is not running containerd or CRI-O; output: ""',
+  "Failure: 1 errors encountered.",
+];
+
+describe("infraQueries", () => {
+  it("searches each run's last line saying what broke, without the run's own names", () => {
+    const q = infraQueries([
+      { log_signals: STOCKOUT },
+      { log_signals: STOCKOUT },
+      { log_signals: NOT_READY },
+    ]);
+    const stockout = "A e2-standard-2 VM instance is currently unavailable in the us-central1-b";
+    expect(q.map((x) => [x.repo, x.query.type])).toEqual([
+      ["kubernetes/kubernetes", "ISSUE_HYBRID"],
+      ["kubernetes/kubernetes", "ISSUE_SEMANTIC"],
+      ["kubernetes/test-infra", "ISSUE_HYBRID"],
+      ["kubernetes/kubernetes", "ISSUE_HYBRID"],
+      ["kubernetes/kubernetes", "ISSUE_SEMANTIC"],
+      ["kubernetes/test-infra", "ISSUE_HYBRID"],
+    ]);
+    expect(q[0]!.query.q).toBe(`repo:kubernetes/kubernetes is:issue ${stockout}`);
+    expect(q[3]!.query.q).toContain("did not become ready context deadline exceeded");
+    expect(q[3]!.query.q).not.toMatch(/tmp-node-e2e|20260928|35\.184/);
+  });
+  it("drops a klog header and quoted names", () =>
+    expect(infraError(STOCKOUT[4]!)).toBe("Error deleting instance : unable to run gcloud command"));
+  it("keeps brackets, qualifiers and a leading minus out of the search", () => {
+    const q = infraQueries([
+      {
+        log_signals: ["ERROR: (gcloud.compute.instances.create) -x Could not fetch resource: is:open quota"],
+      },
+    ]);
+    expect(q[0]!.query.q).toBe(
+      "repo:kubernetes/kubernetes is:issue gcloud.compute.instances.create Could not fetch resource quota",
+    );
+  });
+  it("has nothing to search in a run whose log says only that it failed", () =>
+    expect(infraQueries([{ log_signals: ["Error: exit status 255"] }, { log_signals: null }])).toEqual([]));
+});
+
 describe("tgSteps", () => {
   it("drafts a comment and an issue this extension recognises as its own", () => {
     const r = result({ status: "FAILING" }, [track(7, 0.9, { names_job: false })]);
@@ -340,7 +395,7 @@ describe("tgSteps", () => {
 import type { JevClient } from "../src/core/jev";
 import { fitRuns, judgeTg, relatedRuns, runEvidence, withIssue, type TgDeps } from "../src/core/tgjudge";
 import { MAX_STATE_CHARS, size } from "../src/core/fit";
-import type { ThreadIssue } from "../src/core/github";
+import type { SearchQuery, ThreadIssue } from "../src/core/github";
 import { POOL_MAX } from "../src/core/tgreview";
 
 describe("jobFacts without a GCS query", () => {
@@ -559,6 +614,77 @@ describe("judgeTg", () => {
     expect(seen).toContain("https://storage.googleapis.com/b/pr-logs/pull/9/j/1/build-log.txt");
     expect((await runEvidence(d(null), "b/pr-logs/directory/j", "2", NOW)).log_signals).toBeNull();
   });
+  it("for an infra failure, also reads the issues its error finds", async () => {
+    const searched: unknown[] = [];
+    const found = (number: number, over: object = {}) => ({
+      ...issue,
+      number,
+      title: `stockout ${number}`,
+      updated_at: "2026-09-20T00:00:00Z",
+      ...over,
+    });
+    const { asked, jev } = recorder((id, s) =>
+      id === "failure_kind"
+        ? infra
+        : id === "tracks"
+          ? noul((s.issue as { number: number }).number === 7 ? 0.9 : 0.1)
+          : noul(0.05),
+    );
+    const r = await judgeTg(
+      {
+        ...deps(""),
+        jev,
+        table: async () => ({
+          query: "kubernetes-ci-logs/logs/ci-node-crio-dra",
+          timestamps: [NOW - DAY],
+          column_ids: ["infra1"],
+          tests: [{ name: "ci-node-crio-dra.Overall", statuses: [{ count: 1, value: 12 }] }],
+        }),
+        search: async (qs) => {
+          searched.push(...qs);
+          return qs.map((q, i) =>
+            typeof q === "string"
+              ? i === 0
+                ? [issue]
+                : []
+              : q.type === "ISSUE_HYBRID" && q.q.startsWith("repo:kubernetes/kubernetes")
+                ? [found(7), found(5), found(8, { updated_at: "2025-01-01T00:00:00Z" })]
+                : [],
+          );
+        },
+        fetchFn: (async (u: string) =>
+          u.includes("/storage/v1/")
+            ? new Response('{"items":[]}')
+            : u.endsWith("finished.json")
+              ? new Response('{"result":"FAILURE"}')
+              : new Response(STOCKOUT.join("\n"))) as unknown as typeof fetch,
+      },
+      { dashboard: "d", tab: "ci-node-crio-dra" },
+      "FLAKY",
+      NOW,
+    );
+    expect(searched).toContainEqual({
+      q: "repo:kubernetes/kubernetes is:issue A e2-standard-2 VM instance is currently unavailable in the us-central1-b",
+      type: "ISSUE_HYBRID",
+    });
+    // #5 was a candidate already, #8 has been quiet for a year: only #7 is new, and Jev reads it as tracking.
+    expect(
+      asked.filter((a) => a.id === "tracks").map((a) => (a.s.issue as { number: number }).number),
+    ).toEqual([5, 7]);
+    expect(r.tracks[0]).toMatchObject({ number: 7, via: "infra error", names_job: false });
+    expect(decideTg(r)).toMatchObject({ action: "comment", auto: true });
+  });
+  it("does not search an error for a test failure", async () => {
+    const searched: unknown[] = [];
+    const d = deps("");
+    await judgeTg(
+      { ...d, search: async (qs, n) => (searched.push(...qs), d.search(qs, n)) },
+      { dashboard: "d", tab: "ci-node-e2e" },
+      "FAILING",
+      NOW,
+    );
+    expect(searched.every((q) => typeof q === "string")).toBe(true);
+  });
 });
 
 describe("writes with test mode off", () => {
@@ -709,5 +835,348 @@ describe("states that would outgrow Jev's context", () => {
     expect(r!.junit_failures[0]!.test).toBe("t0");
     expect(r!.junit_failures.at(-1)!.test).toMatch(/^\(\d+ more failures left out/);
     expect(r!.log_signals).toEqual(["[FAILED] x"]);
+  });
+});
+
+import {
+  causeFacts,
+  causeKey,
+  causeTitle,
+  groupRuns,
+  mergeSteps,
+  runHighlights,
+  type RunEvidence,
+} from "../src/core/tgreview";
+import { acceptTgSteps, badgeOf, chosenTgSteps, withPick } from "../src/testgrid/card";
+
+describe("causes", () => {
+  const run = (build: string, started: number, over: Partial<RunEvidence> = {}): RunEvidence => ({
+    build,
+    started,
+    url: `u/${build}`,
+    result: "FAILURE",
+    junit_failures: [],
+    log_signals: [],
+    ...over,
+  });
+  it("keys a run by its failing tests, else by its error line without the run's own names", () => {
+    expect(
+      causeKey(
+        run("1", 0, {
+          junit_failures: [
+            { test: "B", message: "" },
+            { test: "A", message: "" },
+          ],
+        }),
+      ),
+    ).toBe("tests:A|B");
+    expect(
+      causeKey(
+        run("1", 0, { junit_failures: [{ test: "kubetest2.Test", message: "" }], log_signals: STOCKOUT }),
+      ),
+    ).toBe("error:A e2-standard-2 VM instance is currently unavailable in the us-central1-b");
+    // Two not-ready runs on different image builds and instances are one cause.
+    const other = NOT_READY.map((l) =>
+      l.replace(/20260928-3-1/g, "20260913-3-2").replace(/17d7c2b3/g, "0fc3cf32"),
+    );
+    expect(causeKey(run("1", 0, { log_signals: NOT_READY }))).toBe(
+      causeKey(run("2", 0, { log_signals: other })),
+    );
+  });
+  it("groups runs newest cause first", () => {
+    const g = groupRuns([
+      run("4", 4, { log_signals: STOCKOUT }),
+      run("3", 3, { log_signals: STOCKOUT }),
+      run("2", 2, { log_signals: NOT_READY }),
+      run("1", 1, { log_signals: NOT_READY }),
+    ]);
+    expect(g.map((x) => x.runs.map((r) => r.build))).toEqual([
+      ["4", "3"],
+      ["2", "1"],
+    ]);
+  });
+  it("gives a cause its own runs, and FAILING and the streak only to the newest", () => {
+    const f = facts({
+      status: "FAILING",
+      failed_runs: 4,
+      streak: 2,
+      failed_builds: ["4", "3", "2", "1"].map((b) => ({ build: b, started: NOW })),
+    });
+    const runs = [run("4", NOW - DAY), run("3", NOW - 2 * DAY)];
+    expect(causeFacts(f, runs, true, 4, NOW)).toMatchObject({
+      status: "FAILING",
+      failed_runs: 2,
+      streak: 2,
+      first_failure_days_ago: 2,
+    });
+    expect(causeFacts(f, runs, false, 4, NOW)).toMatchObject({ status: "FLAKY", streak: 0 });
+  });
+  it("scales a cause's share of the runs read to all the job's failed runs", () =>
+    // 30 failed runs; this cause is 1 of the 10 read: about 3.
+    expect(causeFacts(facts({ failed_runs: 30 }), [run("1", NOW)], true, 10, NOW).failed_runs).toBe(3));
+  it("matches a cause's tests to TestGrid's rows by classname or suite prefix", () => {
+    const f = facts({
+      failing_tests: [
+        { name: "k8s.io/kubernetes/pkg/kubelet/cm.TestPods", failed: 2 },
+        { name: "E2eNode Suite.[It] MirrorPod restarts", failed: 1 },
+        { name: "Other", failed: 1 },
+      ],
+    });
+    const runs = [
+      run("1", NOW, {
+        junit_failures: [
+          { test: "TestPods", classname: "k8s.io/kubernetes/pkg/kubelet/cm", message: "" },
+          { test: "[It] MirrorPod restarts", message: "" },
+        ],
+      }),
+    ];
+    expect(causeFacts(f, runs, true, 1, NOW)).toMatchObject({
+      harness_only: false,
+      failing_tests: [{ failed: 2 }, { failed: 1 }],
+    });
+  });
+  it("joins two causes' comments on one issue into one", () => {
+    const c = (n: number, body: string) => ({
+      kind: "comment" as const,
+      repo: "r",
+      number: n,
+      body,
+      names: ["j"],
+    });
+    const out = mergeSteps([
+      c(1, "<!-- sig-node-board-assistant: testgrid -->\na"),
+      c(2, "x"),
+      c(1, "<!-- sig-node-board-assistant: testgrid -->\nb"),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ number: 1, body: "<!-- sig-node-board-assistant: testgrid -->\na\n\nb" });
+  });
+
+  const twoCauses = (): TgResult => {
+    const comment = result({}, [track(7, 0.9, { names_job: false })]);
+    const file = { ...result({}, []), failure_kind: infra };
+    return {
+      ...comment,
+      causes: [
+        { key: "error:a", label: "a", builds: ["4", "3"], result: comment },
+        { key: "error:b", label: "b", builds: ["2", "1"], result: file },
+        { key: "error:c", label: "c", builds: ["0"] },
+      ],
+    };
+  };
+  it("writes for each cause, and Accept takes only the causes it may decide alone", () => {
+    const r = twoCauses();
+    expect(chosenTgSteps(r, {}).map((s) => s.kind)).toEqual(["comment", "issue"]);
+    expect(acceptTgSteps(r, {}).map((s) => s.kind)).toEqual(["comment"]);
+    const picked = withPick(r, {}, "1:action", "keep");
+    expect(acceptTgSteps(r, picked).map((s) => s.kind)).toEqual(["comment"]);
+    expect(chosenTgSteps(r, picked).map((s) => s.kind)).toEqual(["comment"]);
+    expect(withPick(r, {}, "0:action", "comment").causes?.["0"]).toEqual({});
+  });
+  it("titles a cause's issue by the clause saying what broke", () => {
+    const label = causeKey(run("1", 0, { log_signals: NOT_READY })).slice(6);
+    expect(causeTitle(label)).toBe(
+      "unable to create gce instance with running docker daemon for image instance did not become ready",
+    );
+    const [i] = tgSteps(
+      { ...result({ harness_only: true, failing_tests: [] }, []), failure_kind: infra, cause: label },
+      "file",
+    );
+    expect(i?.kind === "issue" && i.title).toBe(
+      "[Flaking Test] ci-node-e2e: unable to create gce instance with running docker daemon for image instance did not become ready",
+    );
+  });
+  it("shows a harness-only run's lines saying what broke, not its first lines", () => {
+    const noise = [
+      "I1021 20:40:04.047752 51 gce_runner.go:575] Creating instance {image:fedora}",
+      "Running gcloud with parameters",
+    ];
+    expect(runHighlights(run("1", 0, { log_signals: [...noise, ...STOCKOUT] }), 2)).toEqual([
+      "code: ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS",
+      "    message: A e2-standard-2 VM instance is currently unavailable in the us-central1-b",
+    ]);
+    // A retried command's line shows once, whatever its address.
+    const retried = [...noise, NOT_READY[0]!.replace("35.184.35.160", "35.184.35.161"), ...NOT_READY];
+    expect(runHighlights(run("1", 0, { log_signals: retried }))).toEqual([
+      NOT_READY[0]!.replace("35.184.35.160", "35.184.35.161"),
+      NOT_READY[1],
+    ]);
+    // A run whose tests failed shows its first lines: its junit failures say the rest.
+    expect(
+      runHighlights(run("1", 0, { junit_failures: [{ test: "T", message: "m" }], log_signals: noise })),
+    ).toEqual(noise);
+  });
+  it("badges the newest cause and counts the other judged ones", () =>
+    expect(badgeOf(twoCauses(), {})).toMatchObject({ more: 1, r: { tracks: [{ number: 7 }] } }));
+});
+
+describe("judgeTg with two causes", () => {
+  it("judges each cause on its own runs, after Jev reads whether they share a cause", async () => {
+    const builds = ["s2", "s1", "n2", "n1"];
+    const table: TgTable = {
+      query: "kubernetes-ci-logs/logs/ci-two-causes",
+      timestamps: builds.map((_, i) => NOW - (i + 1) * DAY),
+      column_ids: builds,
+      tests: [{ name: "ci-two-causes.Overall", statuses: [{ count: 4, value: 12 }] }],
+    };
+    const asked: { id: string; s: Record<string, unknown> }[] = [];
+    const jev = {
+      ask: async (s: Record<string, unknown>, q: Record<string, unknown>) => {
+        const id = Object.keys(q)[0]!;
+        asked.push({ id, s });
+        const runs = JSON.stringify(s.runs ?? "");
+        const answer =
+          id === "failure_kind"
+            ? infra
+            : id === "same_cause"
+              ? { type: "noul", noul: 0.1 }
+              : id === "tracks"
+                ? { type: "noul", noul: runs.includes("e2-standard-2") ? 0.9 : 0.4 }
+                : { type: "noul", noul: 0.05 };
+        return { answers: { [id]: answer }, usage: { input_tokens: 1, cost: 0 } };
+      },
+    } as unknown as JevClient;
+    const r = await judgeTg(
+      {
+        table: async () => table,
+        search: async (qs) =>
+          qs.map((_, i) =>
+            i === 0
+              ? [{ number: 7, title: "stockout", state: "open" as const, html_url: "u", body: "b" }]
+              : [],
+          ),
+        issueText: async () => ["b"],
+        jev,
+        fetchFn: (async (u: string) =>
+          u.includes("/storage/v1/")
+            ? new Response('{"items":[]}')
+            : u.endsWith("finished.json")
+              ? new Response('{"result":"FAILURE"}')
+              : new Response(
+                  (/\/s\d\//.test(u) ? STOCKOUT : NOT_READY).join("\n"),
+                )) as unknown as typeof fetch,
+      },
+      { dashboard: "d", tab: "ci-two-causes" },
+      "FLAKY",
+      NOW,
+    );
+    expect(asked.filter((a) => a.id === "same_cause")).toHaveLength(1);
+    expect(r.causes?.map((c) => c.builds)).toEqual([
+      ["s2", "s1"],
+      ["n2", "n1"],
+    ]);
+    const stockout = r.causes![0]!.result!;
+    const notReady = r.causes![1]!.result!;
+    expect(stockout.facts).toMatchObject({ failed_runs: 2, streak: 2 });
+    expect(decideTg(stockout)).toMatchObject({ action: "comment" });
+    // The same issue only maybe tracks the other cause: the reader's call.
+    expect(decideTg(notReady)).toMatchObject({ action: "comment", auto: false });
+    // names_job is asked once for #7, though both causes read it.
+    expect(asked.filter((a) => a.id === "names_job")).toHaveLength(1);
+    expect(r.facts.failed_runs).toBe(4);
+    expect(r.usage.input_tokens).toBe(asked.length);
+  });
+});
+
+describe("judgeTg: reads and merges", () => {
+  /** judgeTg on a FLAKY job whose failed runs log `logs`, newest first; Jev answers by question id. */
+  const judge = async (
+    job: string,
+    logs: string[][],
+    answer: (id: string, s: Record<string, unknown>) => unknown,
+  ) => {
+    const builds = logs.map((_, i) => `b${i}`);
+    const asked: { id: string; s: Record<string, unknown> }[] = [];
+    const searched: SearchQuery[][] = [];
+    const fetched: string[] = [];
+    const r = await judgeTg(
+      {
+        table: async () => ({
+          query: `kubernetes-ci-logs/logs/${job}`,
+          timestamps: builds.map((_, i) => NOW - (i + 1) * DAY),
+          column_ids: builds,
+          tests: [{ name: `${job}.Overall`, statuses: [{ count: builds.length, value: 12 }] }],
+        }),
+        search: async (qs) => {
+          searched.push(qs);
+          return qs.map(() => []);
+        },
+        issueText: async () => ["b"],
+        jev: {
+          ask: async (s: Record<string, unknown>, q: Record<string, unknown>) => {
+            const id = Object.keys(q)[0]!;
+            asked.push({ id, s });
+            return { answers: { [id]: answer(id, s) }, usage: { input_tokens: 1, cost: 0 } };
+          },
+        } as unknown as JevClient,
+        fetchFn: (async (u: string) => {
+          if (u.includes("/storage/v1/")) return new Response('{"items":[]}');
+          if (u.endsWith("finished.json")) return new Response('{"result":"FAILURE"}');
+          fetched.push(u);
+          return new Response(logs[Number(/\/b(\d+)\//.exec(u)![1])]!.join("\n"));
+        }) as unknown as typeof fetch,
+      },
+      { dashboard: "d", tab: job },
+      "FLAKY",
+      NOW,
+    );
+    return { r, asked, searched, fetched };
+  };
+  const kind = { type: "choice", choice: "infra", confidence: 1, probabilities: { infra: 1 } };
+  const ZONE = (z: string) => [
+    `    message: A e2-standard-2 VM instance is currently unavailable in the ${z}`,
+  ];
+
+  it("reads only the newest runs while they show one cause", async () => {
+    const { r, fetched } = await judge(
+      "ci-one-cause",
+      Array.from({ length: 6 }, () => STOCKOUT),
+      (id) => (id === "failure_kind" ? kind : { type: "noul", noul: 0.1 }),
+    );
+    expect(fetched).toHaveLength(3);
+    expect(r.causes).toBeUndefined();
+  });
+  it("runs the job's shared searches once for all its causes", async () => {
+    const { r, searched } = await judge("ci-shared", [STOCKOUT, NOT_READY, STOCKOUT, NOT_READY], (id) =>
+      id === "failure_kind" ? kind : { type: "noul", noul: 0.1 },
+    );
+    expect(r.causes).toHaveLength(2);
+    const jobName = searched.flat().filter((q) => typeof q === "string" && q.includes('"ci-shared"'));
+    expect(jobName.filter((q) => (q as string).startsWith("repo:kubernetes/kubernetes"))).toHaveLength(1);
+  });
+  it("merges groups through each other, and keeps the readings when one cause is left", async () => {
+    // a ~ b and b ~ c, but a and c read apart: still one cause.
+    const { r, asked } = await judge(
+      "ci-merge",
+      [
+        ZONE("us-central1-a"),
+        ZONE("us-central1-a"),
+        ZONE("us-central1-b"),
+        ZONE("us-central1-b"),
+        ZONE("us-central1-c"),
+        ZONE("us-central1-c"),
+      ],
+      (id, s) => {
+        if (id === "failure_kind") return kind;
+        if (id !== "same_cause") return { type: "noul", noul: 0.1 };
+        const pair = JSON.stringify([s.runs_a, s.runs_b]);
+        return { type: "noul", noul: pair.includes("central1-a") && pair.includes("central1-c") ? 0.2 : 0.9 };
+      },
+    );
+    expect(asked.filter((a) => a.id === "same_cause")).toHaveLength(3);
+    expect(r.causes).toBeUndefined();
+    expect(r.readings?.filter((x) => x.label.startsWith("Same cause"))).toHaveLength(3);
+  });
+  it("names no cause in a title when no log line says what broke", async () => {
+    const { r } = await judge(
+      "ci-unknown",
+      [["Error: exit status 255"], ["Error: exit status 255"], STOCKOUT, STOCKOUT],
+      (id) => (id === "failure_kind" ? kind : { type: "noul", noul: 0.1 }),
+    );
+    const unknown = r.causes![0]!.result!;
+    expect(unknown.cause).toBeUndefined();
+    const [i] = tgSteps(unknown, "file");
+    expect(i?.kind === "issue" && i.title).toBe("[Flaking Test] ci-unknown");
+    expect(r.causes![1]!.result!.cause).toContain("e2-standard-2");
   });
 });

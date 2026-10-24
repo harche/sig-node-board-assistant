@@ -7,7 +7,17 @@ import { h } from "../content/ui";
 import { decideTg, TG_LABEL, TG_TINT, tgActions, verdict, type TgResult } from "../core/tgreview";
 import { feedbackLink, shownText } from "../content/feedback";
 import { send } from "../shared/messages";
-import { chosenTg, chosenTgSteps, renderTgHoverCard, type TgOverrides } from "./card";
+import {
+  acceptTgSteps,
+  badgeOf,
+  chosenTg,
+  chosenTgSteps,
+  renderTgHoverCard,
+  stepKey,
+  withPick,
+  type TgOverrides,
+} from "./card";
+import type { TgStep } from "../core/tgreview";
 
 type Slot = { state: "pending" } | { state: "error"; message: string } | { state: "done"; result: TgResult };
 
@@ -23,6 +33,8 @@ class TestGridReview {
   private slots = new Map<number, Slot>();
   private overrides = new Map<number, TgOverrides>();
   private applied = new Map<number, Applied>();
+  /** stepKey of each write made, by job: a job stays open while a cause Accept could not decide is unwritten. */
+  private written = new Map<number, Set<string>>();
   private skipped = new Set<number>();
   private applying = false;
   private configured = { github: false, jev: false };
@@ -141,6 +153,7 @@ class TestGridReview {
     this.slots.clear();
     this.overrides.clear();
     this.applied.clear();
+    this.written.clear();
     this.skipped.clear();
     this.hover.close();
     const queue = [...this.tabs];
@@ -172,12 +185,11 @@ class TestGridReview {
   }
 
   /** What Accept would apply: judged tabs whose action Accept may take (or the reviewer picked), with writes. */
-  private plan(): { id: number; result: TgResult }[] {
+  private plan(): { id: number; steps: TgStep[] }[] {
     return [...this.slots].flatMap(([id, s]) => {
       if (s.state !== "done" || this.skipped.has(id) || this.applied.get(id)?.state === "done") return [];
-      const o = this.overrides.get(id) ?? {};
-      if (!o.action && !decideTg(s.result).auto) return [];
-      return chosenTgSteps(s.result, o).length ? [{ id, result: s.result }] : [];
+      const steps = this.unwritten(id, acceptTgSteps(s.result, this.overrides.get(id) ?? {}));
+      return steps.length ? [{ id, steps }] : [];
     });
   }
 
@@ -187,15 +199,21 @@ class TestGridReview {
     this.applying = true;
     await this.readSettings();
     this.paintBar();
-    for (const p of plan) await this.apply(p.id);
+    for (const p of plan) await this.apply(p.id, p.steps);
     this.applying = false;
     this.paintBar();
   }
 
-  private async apply(id: number): Promise<void> {
+  private unwritten(id: number, steps: TgStep[]): TgStep[] {
+    const w = this.written.get(id);
+    return w ? steps.filter((st) => !w.has(stepKey(st))) : steps;
+  }
+
+  /** Writes `steps` (Accept's), or every chosen write not yet made (the card's Apply). */
+  private async apply(id: number, given?: TgStep[]): Promise<void> {
     const s = this.slots.get(id);
     if (s?.state !== "done" || this.applied.get(id)?.state === "pending") return;
-    const steps = chosenTgSteps(s.result, this.overrides.get(id) ?? {});
+    const steps = given ?? this.unwritten(id, chosenTgSteps(s.result, this.overrides.get(id) ?? {}));
     if (!steps.length) return;
     if (!this.applying) await this.readSettings();
     this.applied.set(id, { state: "pending" });
@@ -203,7 +221,13 @@ class TestGridReview {
     this.hover.refresh(id);
     try {
       const r = await send({ type: "tg.apply", steps });
-      this.applied.set(id, { state: "done" });
+      const w = this.written.get(id) ?? new Set<string>();
+      for (const st of steps) w.add(stepKey(st));
+      this.written.set(id, w);
+      // Done when every chosen write is made; a cause still to decide keeps the job open.
+      if (this.unwritten(id, chosenTgSteps(s.result, this.overrides.get(id) ?? {})).length)
+        this.applied.delete(id);
+      else this.applied.set(id, { state: "done" });
       this.status.textContent = `wrote ${r.wrote.join(", ")}`;
     } catch (e) {
       this.applied.set(id, { state: "error", message: e instanceof Error ? e.message : String(e) });
@@ -222,17 +246,19 @@ class TestGridReview {
     else if (s?.state === "error")
       [tint, text, title] = ["error", "error", `${s.message}. Click to try again.`];
     else if (s?.state === "done") {
-      const o = this.overrides.get(id) ?? {};
-      const a = chosenTg(s.result, o);
-      const unsure = !o.action && !decideTg(s.result).auto;
-      const v = verdict(s.result);
+      // A job with several causes shows its newest cause, and "+N" for the others.
+      const b = badgeOf(s.result, this.overrides.get(id) ?? {});
+      const a = chosenTg(b.r, b.o);
+      const unsure = !b.o.action && !decideTg(b.r).auto;
+      const v = verdict(b.r);
+      const more = b.more ? ` +${b.more}` : "";
       const word =
         a === "keep" && v.verdict !== "tracked"
           ? "watch"
           : a === "keep" && v.issue
             ? `#${v.issue.number}`
             : BADGE[a]!;
-      [tint, text, title] = [unsure ? "BORDERLINE" : TG_TINT[a], unsure ? `${word}?` : word, ""];
+      [tint, text, title] = [unsure ? "BORDERLINE" : TG_TINT[a], `${unsure ? `${word}?` : word}${more}`, ""];
     }
     const ap = this.applied.get(id);
     if (ap?.state === "pending") text = "applying";
@@ -267,6 +293,7 @@ class TestGridReview {
       s?.state,
       s?.state === "done" ? decideTg(s.result).action : "",
       this.applied.get(id)?.state,
+      this.written.get(id)?.size ?? 0,
       this.applying,
       JSON.stringify(this.overrides.get(id) ?? {}),
     ].join("|");
@@ -279,15 +306,13 @@ class TestGridReview {
       result: s.result,
       overrides: this.overrides.get(id) ?? {},
       setOverride: (k, v) => {
-        const o = { ...(this.overrides.get(id) ?? {}), [k]: v };
-        const d = decideTg(s.result);
-        if (k === "action" && v === d.action && d.auto) delete o.action;
-        this.overrides.set(id, o);
+        this.overrides.set(id, withPick(s.result, this.overrides.get(id) ?? {}, k, v));
         this.paint(id);
         this.paintBar();
         this.hover.refresh(id);
       },
       applied: this.applied.get(id),
+      written: this.written.get(id),
       canApply: !this.applying,
       testMode: this.testMode,
       scope: document,

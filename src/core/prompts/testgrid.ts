@@ -58,7 +58,7 @@ const tracks = {
     question:
       "Does `issue` track the failure these runs show, so the runs are more evidence for it rather than a new problem?",
     focus:
-      "Compare the failure itself: the failing test and the error, or the timeout or infra symptom. The same job or the same test with a different error is a different problem. An issue about the same failure on another job still tracks it.",
+      "Compare the failure itself: the failing test and the error, or the timeout or infra symptom. The same job or the same test with a different error is a different problem. An issue about the same failure on another job still tracks it. For an infra failure, an issue reporting the same breakage from the same cause on other jobs tracks it, such as the same zone out of the same VM type or the same node image never coming up; the same job failing for another infra reason does not.",
     note: `${RUN_NOTE} ${ISSUE_NOTE}`,
   },
   criteria: {
@@ -192,6 +192,26 @@ export function canonicalQuestion(issues: { key: string; repo: string; number: n
       },
     },
   };
+}
+
+/** Whether two groups of a job's failed runs, grouped by code (their failing tests, else their error line), fail for
+ *  one cause: two error lines that differ in a word can still be one breakage. */
+const sameCause = {
+  type: "noul",
+  instructions: {
+    question: "Do the runs in `runs_a` and the runs in `runs_b` fail for the same cause?",
+    focus:
+      "Compare what broke, not the wording: the same test failing the same way, or the same environment breakage (the same zone out of the same VM type, the same node image never coming up). Different tests, a different error in one test, or a different infra breakage are different causes, even on the same job.",
+    note: `\`runs_a\` and \`runs_b\` are two groups of failed runs of the CI job \`job\` (TestGrid tab \`tab\`), each in the shape below. ${RUN_NOTE}`,
+  },
+  criteria: {
+    true: { what: "Both groups fail for one cause: fixing it would stop the runs of both." },
+    false: { what: "They fail for different causes." },
+  },
+};
+
+export function sameCauseQuestion(): { same_cause: typeof sameCause } {
+  return { same_cause: sameCause };
 }
 
 export function relationQuestion(): { relation: typeof relation } {
