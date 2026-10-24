@@ -1,5 +1,7 @@
 dist
 release
 node_modules
+.pi
+.playwright-cli
 tests/fixtures/*.json
 package-lock.json
