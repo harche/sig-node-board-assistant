@@ -30,12 +30,12 @@
     "vitest": "^2.1.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "license": "Apache-2.0",
   "dependencies": {
     "@octokit/core": "^7.0.8",
     "@octokit/plugin-paginate-rest": "^15.0.0",
-    "@typesafe-ai/sdk": "^0.6.0"
+    "@typesafe-ai/sdk": "^0.7.0"
   }
 }

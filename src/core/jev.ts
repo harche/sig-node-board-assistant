@@ -43,6 +43,8 @@ export const JEV_DEFAULTS = { baseUrl: "https://api.typesafe.ai", model: "jev-la
 
 /** Per attempt. The old hand-rolled client had none; kubelet-sized states take a few seconds. */
 const TIMEOUT_MS = 20_000;
+/** Per long-context attempt: up to 262k tokens, which TypeSafe says answer slower. */
+const LONG_CONTEXT_TIMEOUT_MS = 60_000;
 
 export class JevError extends Error {
   constructor(
@@ -52,6 +54,8 @@ export class JevError extends Error {
     public retryable = false,
     /** For a 429: how long the server asked to wait (its Retry-After), when it said. */
     public retryAfterMs?: number,
+    /** A 400 for a request longer than the model's context (`max_tokens_exceeded`). */
+    public tooLong = false,
   ) {
     super(message);
     this.name = "JevError";
@@ -62,6 +66,7 @@ export class JevClient {
   private client: TypeSafeClient;
   /** The provider's name, for errors. */
   private name: string;
+  private provider: JevProvider;
   private usdPerMtok: number;
   private backoffMs: number;
   readonly ledger = { calls: 0, input_tokens: 0, cost: 0 };
@@ -69,7 +74,8 @@ export class JevClient {
   trace?: JevCall[];
 
   constructor(config: JevConfig, fetchFn: typeof fetch = (...a) => fetch(...a)) {
-    const provider = JEV_PROVIDERS[config.provider ?? "typesafe"];
+    this.provider = config.provider ?? "typesafe";
+    const provider = JEV_PROVIDERS[this.provider];
     this.name = provider.name;
     if (!config.apiKey) throw new JevError(`no ${provider.name} key: set it in the extension options`);
     this.usdPerMtok = config.usdPerMtok ?? JEV_DEFAULTS.usdPerMtok;
@@ -85,10 +91,13 @@ export class JevClient {
       // worker after ~30s idle.
       retry: { maxRetries: 0 },
       logLevel: "off",
+      // The SDK zstd-compresses bodies of 1 KiB or more where node:zlib exists (Node, so vitest; never Chrome).
+      // Plain JSON everywhere keeps the "/" escape below working and tests seeing what the extension sends.
+      compression: false,
       // "/" is sent as the equivalent JSON escape "\/": Cloudflare in front of TypeSafe's API answers 403 to any
       // body containing a path like /etc/hosts, which kubelet issues quote all the time. The server decodes it back.
       fetch:
-        (config.provider ?? "typesafe") === "typesafe"
+        this.provider === "typesafe"
           ? (url, init) =>
               fetchFn(
                 url,
@@ -98,14 +107,25 @@ export class JevClient {
     });
   }
 
-  /** One systemOne call, one HTTP attempt. */
-  async attempt<A>(state: unknown, questions: Record<string, unknown>): Promise<JevResponse<A>> {
-    let j: { answers?: A; usage?: { input_tokens: number; output_tokens?: number; cost?: number } };
+  /** One systemOne call, one HTTP attempt. `longContext` sends TypeSafe's opt-in header that raises both context
+   *  limits (64k per request, 32k per question) to 262k tokens; TypeSafe calls such requests slower and less
+   *  accurate, so ask sends it only after a request without it came back too long. */
+  async attempt<A>(
+    state: unknown,
+    questions: Record<string, unknown>,
+    longContext = false,
+  ): Promise<JevResponse<A>> {
+    let j: {
+      answers?: A;
+      usage?: { input_tokens: number | null; output_tokens?: number | null; cost?: number };
+    };
     try {
-      j = (await this.client.systemOne({
-        state: state as never,
-        questions: questions as Questions,
-      })) as unknown as typeof j;
+      j = (await this.client.systemOne(
+        { state: state as never, questions: questions as Questions },
+        longContext
+          ? { headers: { [LONG_CONTEXT_HEADER]: "true" }, timeout: LONG_CONTEXT_TIMEOUT_MS }
+          : undefined,
+      )) as unknown as typeof j;
     } catch (e) {
       if (e instanceof APIError) {
         // e.g. a Cloudflare challenge page: keep the start of the body so the user can see what answered
@@ -116,6 +136,8 @@ export class JevClient {
           s,
           s === 408 || s === 429 || s >= 500,
           retryAfter(e.headers?.get?.("retry-after") ?? null),
+          // the whole body, not the 200 characters kept for the message
+          s === 400 && body.includes('"max_tokens_exceeded"'),
         );
       }
       // APIConnectionError covers timeouts too; anything else is the SDK rejecting the request before sending it
@@ -131,10 +153,12 @@ export class JevClient {
         undefined,
         true,
       );
+    // Since SDK 0.7 a count the API did not report is null: count it as 0 rather than poison the ledger with NaN
+    const input_tokens = j.usage.input_tokens ?? 0;
     const usage: JevUsage = {
-      input_tokens: j.usage.input_tokens,
-      output_tokens: j.usage.output_tokens,
-      cost: typeof j.usage.cost === "number" ? j.usage.cost : (j.usage.input_tokens * this.usdPerMtok) / 1e6,
+      input_tokens,
+      output_tokens: j.usage.output_tokens ?? undefined,
+      cost: typeof j.usage.cost === "number" ? j.usage.cost : (input_tokens * this.usdPerMtok) / 1e6,
     };
     return { answers: j.answers, usage };
   }
@@ -142,21 +166,41 @@ export class JevClient {
   /** attempt() with exponential-backoff retries on retryable failures. Backoff is 0.5s, 1s, 2s between attempts,
    *  never after the last one. A rate limit (429) is waited out longer: the server's Retry-After, else 2s, 4s … up to
    *  30s with jitter, for up to RATE_LIMIT_ATTEMPTS: callers fan out freely (a page asks tens of questions at once),
-   *  and the service worker stays alive while a request is in flight (background keepalive). */
+   *  and the service worker stays alive while a request is in flight (background keepalive). A request over
+   *  TypeSafe's default context (64k per request, 32k per question) is sent again at once with long context on, and
+   *  from then on gets LONG_CONTEXT_ATTEMPTS in all, 429s included: each one is a large, slow request. */
   async ask<A>(state: unknown, questions: Record<string, unknown>, retries = 4): Promise<JevResponse<A>> {
     this.ledger.calls++;
-    for (let attempt = 1; ; attempt++) {
+    let longContext = false;
+    let attempt = 0;
+    for (;;) {
+      attempt++;
       try {
-        const out = await this.attempt<A>(state, questions);
+        const out = await this.attempt<A>(state, questions, longContext);
         this.ledger.input_tokens += out.usage.input_tokens;
         this.ledger.cost += out.usage.cost;
         this.trace?.push({ state, questions, answers: out.answers });
         return out;
       } catch (e) {
+        // Over TypeSafe's default context: send it again at once with long context on. OpenRouter needs no
+        // header (it serves 262k as is), so there the same answer is final.
+        if (e instanceof JevError && e.tooLong && this.provider === "typesafe" && !longContext) {
+          longContext = true;
+          attempt = 0; // the long-context request starts its own budget
+          continue;
+        }
         if (!(e instanceof JevError) || !e.retryable) throw e;
         const limited = e.status === 429;
-        if (attempt >= (limited ? Math.max(retries, RATE_LIMIT_ATTEMPTS) : retries))
-          throw new JevError(`Jev failed after ${attempt} attempts: ${e.message}`, e.status);
+        const budget = longContext
+          ? LONG_CONTEXT_ATTEMPTS
+          : limited
+            ? Math.max(retries, RATE_LIMIT_ATTEMPTS)
+            : retries;
+        if (attempt >= budget)
+          throw new JevError(
+            `Jev failed after ${attempt} ${longContext ? "long-context " : ""}attempts: ${e.message}`,
+            e.status,
+          );
         const wait = limited
           ? (e.retryAfterMs ?? Math.min(30_000, this.backoffMs * 4 * 2 ** (attempt - 1))) +
             Math.random() * this.backoffMs
@@ -167,8 +211,14 @@ export class JevClient {
   }
 }
 
+/** TypeSafe's opt-in for 262k-token context (docs.typesafe.ai/models#long-context), on Jev 1.13 and later. */
+export const LONG_CONTEXT_HEADER = "TypeSafe-Danger-Zone-Long-Context";
+
 /** Attempts for a rate-limited call. */
 export const RATE_LIMIT_ATTEMPTS = 8;
+
+/** Attempts for a long-context call, whatever the failure. */
+export const LONG_CONTEXT_ATTEMPTS = 2;
 
 /** A Retry-After header in ms (seconds, or an HTTP date), capped at a minute; undefined when absent or unreadable. */
 export function retryAfter(h: string | null): number | undefined {

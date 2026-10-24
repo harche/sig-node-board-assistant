@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          # the newest 22.x, not the runner image's cached one, so security releases apply at once
+          check-latest: true
           cache: npm
       - run: npm ci
       - run: npm test

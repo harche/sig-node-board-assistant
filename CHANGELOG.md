@@ -14,6 +14,11 @@
   and a **Comment** button: it posts one comment listing the ticked issues as possible duplicates or related, and
   asks the thread to take a look. On the CI/Test board, an issue's Triage hover card can run the same search
   (**Find**) and post the same comment.
+- **Jev: long context for large requests.** With the TypeSafe provider, a request over Jev's default context (64k
+  tokens per request, 32k per question) used to fail. It is now sent again with TypeSafe's long-context option,
+  which allows up to 262k tokens but is slower and less accurate, so it is used only for a request that needs it.
+  OpenRouter already accepts requests that long. Jev calls go through TypeSafe SDK 0.7.0, and building from source
+  needs Node 22 or later.
 
 ## 0.1.5
 

@@ -102,7 +102,7 @@ Install it from the
 [Chrome Web Store](https://chromewebstore.google.com/detail/sig-node-board-assistant/ngimkkgeokllcnfdjeijegalfgkaemdj),
 then click the extension's icon to open its settings.
 
-Or build it from source (Node 20 or later):
+Or build it from source (Node 22 or later):
 
 ```bash
 git clone https://github.com/harche/sig-node-board-assistant

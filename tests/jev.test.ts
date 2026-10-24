@@ -83,6 +83,52 @@ describe("JevClient", () => {
     expect(retryAfter(null)).toBeUndefined();
   });
 
+  it("sends a too-long request again with long context on, once, and only to TypeSafe", async () => {
+    const tooLong = () =>
+      // error_type past the 200 characters an error message keeps
+      new Response(
+        JSON.stringify({ detail: { message: "x".repeat(300), error_type: "max_tokens_exceeded" } }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    const sent: (string | null)[] = [];
+    const fetchFn = (async (_url: unknown, init?: RequestInit) => {
+      const long = new Headers(init?.headers).get("TypeSafe-Danger-Zone-Long-Context");
+      sent.push(long);
+      return long ? okResponse({ q: { type: "noul", noul: 0.5 } }) : tooLong();
+    }) as typeof fetch;
+    const jev = new JevClient({ apiKey: "k", backoffMs: 0 }, fetchFn);
+    await expect(jev.ask({}, { q: {} }, 1)).resolves.toMatchObject({ answers: { q: { noul: 0.5 } } });
+    expect(sent).toEqual([null, "true"]);
+
+    // Too long even with it: no third try
+    sent.length = 0;
+    const never = new JevClient({ apiKey: "k", backoffMs: 0 }, (async (_u: unknown, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers).get("TypeSafe-Danger-Zone-Long-Context"));
+      return tooLong();
+    }) as typeof fetch);
+    await expect(never.ask({}, { q: {} })).rejects.toThrow(/max_tokens_exceeded/);
+    expect(sent).toEqual([null, "true"]);
+
+    // Once long, any failure gets LONG_CONTEXT_ATTEMPTS in all
+    sent.length = 0;
+    const flaky = new JevClient({ apiKey: "k", backoffMs: 0 }, (async (_u: unknown, init?: RequestInit) => {
+      const long = new Headers(init?.headers).get("TypeSafe-Danger-Zone-Long-Context");
+      sent.push(long);
+      return long ? new Response("boom", { status: 502 }) : tooLong();
+    }) as typeof fetch);
+    await expect(flaky.ask({}, { q: {} })).rejects.toThrow(/after 2 long-context attempts/);
+    expect(sent).toEqual([null, "true", "true"]);
+
+    // OpenRouter serves 262k without the header
+    sent.length = 0;
+    const or = new JevClient({ apiKey: "k", provider: "openrouter", backoffMs: 0 }, fetchFn);
+    await expect(or.ask({}, { q: {} })).rejects.toThrow(/max_tokens_exceeded/);
+    expect(sent).toEqual([null]);
+  });
+
   it("keeps the body of a non-JSON error response", async () => {
     const fetchFn = (async () =>
       new Response("<html>Just a moment...</html>", { status: 403 })) as typeof fetch;
