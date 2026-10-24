@@ -32,7 +32,7 @@ TESTGRID
 On a SIG Node dashboard, Tackle reads every failing and flaky job. It works out what fails, whether an issue already tracks it, and whether to comment on that issue or file a new one from the kubernetes/kubernetes template.
 
 PULL REQUESTS AND ISSUES
-On a pull request with a failed Prow job, Check failures says for each job whether the PR broke it, and shows the /retest or /test command for the rest. On a SIG Node or DRA issue, Check says whether the failure it reports is still happening, and finds duplicates and related issues.
+On a pull request with a failed Prow job, Check failures says for each job whether the PR broke it, and shows the /retest or /test command for the rest. On a SIG Node or DRA issue, Check says whether the failure it reports is still happening, and finds duplicates and related issues: tick the ones to mention and Comment posts a list of them on the issue.
 
 HOW IT DECIDES
 Code gathers the facts: labels, review state, assignees, CI history. Jev, a decision model, answers calibrated questions about them, such as "is this resolved?". Fixed thresholds turn the answers into one action, and every suggestion shows how it was reached.
