@@ -50,13 +50,27 @@ const call = async (method, url, body) => {
 const api = "https://chromewebstore.googleapis.com";
 
 // Withdraw a submission that is still in review, so the next release can ship with a corrected listing instead.
+// Nothing in review is not an error: report the live state and stop.
 if (cancel) {
-  const before = await call("GET", `${api}/v2/${item}:fetchStatus`);
-  console.info(`before: ${JSON.stringify(before)}`);
-  const cancelled = await call("POST", `${api}/v2/${item}:cancelSubmission`);
-  console.info(`cancelled: ${JSON.stringify(cancelled)}`);
-  const after = await call("GET", `${api}/v2/${item}:fetchStatus`);
-  console.info(`after: ${JSON.stringify(after)}`);
+  const status = await call("GET", `${api}/v2/${item}:fetchStatus`);
+  const pending = status.submittedItemRevisionStatus?.state;
+  const live = status.publishedItemRevisionStatus;
+  const channel = live?.distributionChannels?.[0];
+  console.info(
+    `in review: ${pending ?? "nothing"}; live: ${live ? `${channel?.crxVersion} ${live.state} at ${channel?.deployPercentage}%` : "nothing"}`,
+  );
+  if (!pending) {
+    console.info("nothing to cancel");
+    process.exit(0);
+  }
+  try {
+    const cancelled = await call("POST", `${api}/v2/${item}:cancelSubmission`);
+    console.info(`cancelled: ${JSON.stringify(cancelled)}`);
+  } catch (e) {
+    // Approved between the status and the cancel: report it the same way as nothing pending.
+    if (!String(e).includes("NOT_CANCELLABLE")) throw e;
+    console.info("nothing to cancel: the submission was decided while cancelling");
+  }
   process.exit(0);
 }
 
