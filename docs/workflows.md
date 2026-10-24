@@ -34,7 +34,8 @@ Does the item belong on the board, and at which priority?
 - The policy keeps at P(in scope) ≥ 0.65 and removes at ≤ 0.35. In between, P(CI work) × P(SIG Node owns it) breaks
   the tie against the same thresholds.
 - Two guards hand the decision back to you:
-  - a removal where a person wrote `/sig node` becomes borderline;
+  - a removal where a person wrote `/sig node` becomes borderline, unless Jev reads the deliverable as non-CI
+    work; then it is archived, and the card says why the routing did not win;
   - a keep where Jev is at least 0.6 sure another SIG owns the code becomes borderline.
 - **Accept** comments `/triage accepted` with Jev's priority (editable on the card) and moves the card to its lane.
   **Archive** moves it to Archive-it.

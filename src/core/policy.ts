@@ -8,6 +8,11 @@ export const CI_WORK = new Set(["failing_or_flaking_test", "test_coverage", "ci_
 export const PRIORITIES = ["backlog", "important-longterm", "important-soon"]; // the priority Score's levels, in order
 export const PRIORITY_DEFAULT = "important-longterm";
 export const OWNER_OTHER_AT = 0.6; // a confident "another SIG owns it" turns a KEEP into BORDERLINE
+/** A human /sig node overrides the ownership half of a REMOVE, not the CI half. It says what the sig/node label on
+ *  every item on this board already says, the SIG owns it; it cannot say the deliverable is CI work. At or above this
+ *  P(CI work) Jev still reads the deliverable as CI work, so the human's routing wins and a reviewer decides; below it
+ *  the deliverable is a KEP, a product fix or another SIG's test, which no /sig node makes CI work, so it is removed. */
+export const HAND_ROUTED_CI_AT = 0.5;
 
 /** Two decimals the way Python's f"{x:.2f}" prints them: correctly rounded from the exact binary value, ties to
  *  even. JS toFixed rounds ties up and V8 mis-rounds some values (0.665 -> "0.66"), which would make the "why"
@@ -27,16 +32,27 @@ export function f2(n: number): string {
   return `${sign}${str.slice(0, -2)}.${str.slice(-2)}`;
 }
 
-/** Grey-zone score: P(the deliverable is CI work) x P(SIG Node owns it), from two independent questions. */
+/** P(the deliverable is CI work), and the grey-zone score m = P(CI work) x P(SIG Node owns it) built from two
+ *  independent questions. `ci` is also the half a human /sig node cannot speak to, so it gates that override.
+ *  Optional chaining: Jev's answers are not validated. A missing bucket reads as ci = 0 and a missing owner as
+ *  P(node) = 0 here; decide() checks for them first, so neither turns into a REMOVE. */
 export function tieBreak(a: TriageAnswers): { m: number; ci: number } {
-  const ci = Object.entries(a.bucket.probabilities)
+  const ci = Object.entries(a.bucket?.probabilities ?? {})
     .filter(([k]) => CI_WORK.has(k))
     .reduce((s, [, p]) => s + p, 0);
-  return { m: ci * (a.owner.probabilities.node ?? 0), ci };
+  return { m: ci * (a.owner?.probabilities?.node ?? 0), ci };
 }
 
 export function decide(a: TriageAnswers, sig: Signals): { verdict: Verdict; why: string } {
-  const p = a.in_scope.noul;
+  // Jev's answers are not validated. Without the decision itself there is nothing to apply, so a human decides.
+  const p = a.in_scope?.noul;
+  if (typeof p !== "number") return { verdict: "BORDERLINE", why: "Jev gave no P(in scope)" };
+  const { m, ci } = tieBreak(a);
+  // Without the kind of work, ci reads as 0, which would remove the item. Every rule that reads ci hands it to a human.
+  const noBucket = !a.bucket?.probabilities;
+  // Likewise a missing owner reads as P(node owns it) = 0, which only the grey-zone tie-break reads.
+  const noOwner = !a.owner?.probabilities;
+  const node = a.owner?.probabilities?.node ?? 0;
   let verdict: Verdict;
   let why: string;
   if (p >= KEEP_AT) {
@@ -45,23 +61,39 @@ export function decide(a: TriageAnswers, sig: Signals): { verdict: Verdict; why:
   } else if (p <= REMOVE_AT) {
     verdict = "REMOVE";
     why = `P(in scope)=${f2(p)}`;
+  } else if (noBucket) {
+    verdict = "BORDERLINE";
+    why = `P(in scope)=${f2(p)} is in the grey zone, and Jev gave no P(CI work) to break the tie`;
+  } else if (noOwner) {
+    verdict = "BORDERLINE";
+    why = `P(in scope)=${f2(p)} is in the grey zone, and Jev gave no P(node owns it) to break the tie`;
   } else {
-    const { m, ci } = tieBreak(a);
     verdict = m >= KEEP_AT ? "KEEP" : m <= REMOVE_AT ? "REMOVE" : "BORDERLINE";
     why =
       `P(in scope)=${f2(p)} is in the grey zone; tie-break P(CI work)=${f2(ci)} x ` +
-      `P(node owns it)=${f2(a.owner.probabilities.node ?? 0)} = ${f2(m)}`;
+      `P(node owns it)=${f2(node)} = ${f2(m)}`;
   }
   if (verdict === "REMOVE" && sig.manual_sig_node_routing_present) {
-    const who = [
-      ...new Set(sig.human_slash_routing_comments.filter((r) => r.cmd === "/sig node").map((r) => r.who)),
-    ]
-      .sort()
-      .join(", ");
-    verdict = "BORDERLINE";
-    why += `; but a human (${who}) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE`;
+    const who =
+      [...new Set(sig.human_slash_routing_comments.filter((r) => r.cmd === "/sig node").map((r) => r.who))]
+        .sort()
+        .join(", ") || "someone"; // the flag and an empty list cannot both happen today; name it if they do
+    if (noBucket) {
+      verdict = "BORDERLINE";
+      why += `; but a human (${who}) routed it with /sig node, and Jev gave no P(CI work) to say it is not CI work`;
+    } else if (ci >= HAND_ROUTED_CI_AT) {
+      verdict = "BORDERLINE";
+      why +=
+        `; but a human (${who}) routed it with /sig node, and P(CI work)=${f2(ci)} still says CI work, so the ` +
+        "routing overrides the ownership half of that REMOVE";
+    } else {
+      // Say why the human's routing did not win: the reviewer sees /sig node on the card and would ask.
+      why +=
+        `; the human (${who}) /sig node routing does not override it: P(CI work)=${f2(ci)} is below ` +
+        `${f2(HAND_ROUTED_CI_AT)}, so the deliverable is not CI work`;
+    }
   }
-  if (verdict === "KEEP" && a.owner.choice === "other" && a.owner.confidence >= OWNER_OTHER_AT) {
+  if (verdict === "KEEP" && a.owner?.choice === "other" && (a.owner.confidence ?? 0) >= OWNER_OTHER_AT) {
     // In scope by topic but Jev is confident another SIG owns the component: a human should look before it is accepted.
     verdict = "BORDERLINE";
     why += `; but Jev thinks another SIG owns it (conf ${f2(a.owner.confidence)})`;

@@ -96,8 +96,14 @@ describe("triageQuestions()", () => {
   const q = fixture.questions as Record<ItemKind, unknown>;
   // The CLI asks all four at once; here priority is a second call, made only when the item is not removed.
   const both = (k: ItemKind) => ({ ...triageQuestions(k), ...priorityQuestion(k) });
-  it("issue questions match the YAML prompts", () => expect(both("Issue")).toEqual(q.Issue));
-  it("pull request questions match the YAML prompts", () =>
+  // Deliberate differences, all in in_scope: the CLI lists "a human commented /sig node to route it to SIG Node" as
+  // grounds for true, and its focus only says to judge the primary deliverable. On the CI/Test board the routing reads
+  // SIG ownership as CI relevance, which a /sig node cannot speak to (every item there already carries the label), so
+  // the line is gone and the focus says a /sig comment answers ownership, not CI scope. The ownership evidence itself
+  // stays in the owner question's focus.
+  it("issue questions match the YAML prompts, minus the in_scope focus and /sig node line", () =>
+    expect(both("Issue")).toEqual(q.Issue));
+  it("pull request questions match the YAML prompts, minus the in_scope focus and /sig node line", () =>
     expect(both("PullRequest")).toEqual(q.PullRequest));
   it("question order is stable", () =>
     expect(Object.keys(triageQuestions("Issue"))).toEqual(["bucket", "in_scope", "owner"]));
@@ -112,8 +118,11 @@ describe("decide() and priority()", () => {
     priority: string;
     priority_why: string;
   }[];
-  it(`agrees with the reference on ${cases.length} decision-grid cases`, () => {
+  it(`${cases.length} decision-grid cases match, except the 84 that a human /sig node routed`, () => {
     for (const c of cases) {
+      // Deliberate difference: the reference lets any human /sig node turn a REMOVE into BORDERLINE; here it overrides
+      // only the ownership half (policy.HAND_ROUTED_CI_AT), so a non-CI deliverable is still removed. The fixture's
+      // verdicts and whys are this extension's, not the CLI's, for the 84 cases that write /sig node.
       expect(decide(c.answers, c.signals)).toEqual({ verdict: c.verdict, why: c.why });
       // Deliberate difference: the CLI always proposes important-longterm; this takes Jev's most likely level.
       // A priority label already set still wins, as in the CLI.

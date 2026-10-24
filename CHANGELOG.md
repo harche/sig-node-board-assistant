@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Triage: a `/sig node` cannot make an item CI work.** On the CI/Test board, a human `/sig node` used to turn any
+  "remove" into "borderline", so an item a human routed to SIG Node but Jev read as a KEP, a product fix or another
+  SIG's test stayed in Triage for a manual call. The routing now overrides only the ownership half of the decision:
+  it still rescues the item when Jev puts P(CI work) at 0.5 or more, and otherwise the item is removed to Archive-it,
+  with the card saying why the routing did not win; moving the card back from Archive-it undoes it. Jev's `in_scope`
+  question no longer lists a human `/sig node` as evidence the item belongs on the board, and now says that a `/sig`
+  comment answers ownership, not CI scope. If Jev's answer leaves out the kind of work, the owning SIG or P(in
+  scope), an item whose decision needs it goes to Borderline rather than being removed.
 - **Comment the duplicates and related issues.** On the issue page, "Duplicates and related" has a checkbox per match
   and a **Comment** button: it posts one comment listing the ticked issues as possible duplicates or related, and
   asks the thread to take a look. On the CI/Test board, an issue's Triage hover card can run the same search

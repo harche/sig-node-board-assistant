@@ -6809,7 +6809,7 @@
       ]
      },
      "question": "Does this item belong on the `board`?",
-     "focus": "Judge the primary deliverable, not everything the item touches.",
+     "focus": "Judge the primary deliverable, not everything the item touches; a human /sig comment in `human_comments` says which SIG owns the item, not that the deliverable is CI work.",
      "evidence": [
       "title",
       "description",
@@ -6823,8 +6823,7 @@
        "a PR that fixes a broken or flaky SIG Node test, even if it also changes a few lines of product code to do so",
        "a PR that fixes a kubelet bug whose only reported symptom is a flaking node e2e test",
        "an issue asking for integration or e2e coverage of a node feature",
-       "a test-infra change to a node e2e job: skip lists, images, timeouts, lane renames",
-       "a human commented /sig node to route it to SIG Node"
+       "a test-infra change to a node e2e job: skip lists, images, timeouts, lane renames"
       ],
       "examples": [
        "[Flaky test] node-e2e eviction test times out",
@@ -6978,7 +6977,7 @@
       ]
      },
      "question": "Does this item belong on the `board`?",
-     "focus": "Judge the primary deliverable, not everything the item touches.",
+     "focus": "Judge the primary deliverable, not everything the item touches; a human /sig comment in `human_comments` says which SIG owns the item, not that the deliverable is CI work.",
      "evidence": [
       "title",
       "description",
@@ -6993,8 +6992,7 @@
        "a PR that fixes a broken or flaky SIG Node test, even if it also changes a few lines of product code to do so",
        "a PR that fixes a kubelet bug whose only reported symptom is a flaking node e2e test",
        "an issue asking for integration or e2e coverage of a node feature",
-       "a test-infra change to a node e2e job: skip lists, images, timeouts, lane renames",
-       "a human commented /sig node to route it to SIG Node"
+       "a test-infra change to a node e2e job: skip lists, images, timeouts, lane renames"
       ],
       "examples": [
        "[Flaky test] node-e2e eviction test times out",
@@ -7262,8 +7260,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.00; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -7325,8 +7323,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.00; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -7488,8 +7486,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.00; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -7551,8 +7549,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.00; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -7714,8 +7712,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.00; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -7777,8 +7775,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.00; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -7941,7 +7939,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -8004,7 +8002,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -8167,7 +8165,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -8230,7 +8228,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -8393,7 +8391,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -8456,7 +8454,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -8619,7 +8617,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -8682,7 +8680,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -8845,7 +8843,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -8908,7 +8906,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -9071,7 +9069,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -9134,7 +9132,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.00; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -9296,8 +9294,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.34; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -9359,8 +9357,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.34; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -9522,8 +9520,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.34; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -9585,8 +9583,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.34; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -9748,8 +9746,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.34; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -9811,8 +9809,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.34; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -9975,7 +9973,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -10038,7 +10036,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -10201,7 +10199,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -10264,7 +10262,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -10427,7 +10425,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -10490,7 +10488,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -10653,7 +10651,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -10716,7 +10714,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -10879,7 +10877,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -10942,7 +10940,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -11105,7 +11103,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -11168,7 +11166,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.34; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -11330,8 +11328,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.35; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -11393,8 +11391,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.35; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -11556,8 +11554,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.35; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -11619,8 +11617,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.35; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -11782,8 +11780,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.35; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -11845,8 +11843,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.35; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -12009,7 +12007,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -12072,7 +12070,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -12235,7 +12233,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -12298,7 +12296,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -12461,7 +12459,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -12524,7 +12522,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -12687,7 +12685,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -12750,7 +12748,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -12913,7 +12911,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -12976,7 +12974,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -13139,7 +13137,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -13202,7 +13200,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.35; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -13364,8 +13362,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -13427,8 +13425,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -13590,8 +13588,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -13653,8 +13651,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -13816,8 +13814,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -13879,8 +13877,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -14043,7 +14041,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -14106,7 +14104,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -14721,7 +14719,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -14784,7 +14782,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.36 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -15398,8 +15396,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -15461,8 +15459,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -15624,8 +15622,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -15687,8 +15685,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -15850,8 +15848,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -15913,8 +15911,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -16077,7 +16075,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -16140,7 +16138,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -16755,7 +16753,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -16818,7 +16816,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.50 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -17432,8 +17430,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -17495,8 +17493,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.20 = 0.02; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -17658,8 +17656,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -17721,8 +17719,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.60 = 0.06; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -17884,8 +17882,8 @@
     "triage_accepted_already": false,
     "priority_label_already": null
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -17947,8 +17945,8 @@
     "triage_accepted_already": false,
     "priority_label_already": "priority/important-soon"
    },
-   "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "verdict": "REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.10 x P(node owns it)=0.95 = 0.10; the human (alice, bob) /sig node routing does not override it: P(CI work)=0.10 is below 0.50, so the deliverable is not CI work",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -18111,7 +18109,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -18174,7 +18172,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=0.70 x P(node owns it)=0.20 = 0.14; but a human (alice, bob) routed it with /sig node, and P(CI work)=0.70 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },
@@ -18789,7 +18787,7 @@
     "priority_label_already": null
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-longterm",
    "priority_why": "default; Jev leans important-longterm (conf 0.60)"
   },
@@ -18852,7 +18850,7 @@
     "priority_label_already": "priority/important-soon"
    },
    "verdict": "BORDERLINE",
-   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, which the rules say overrides a topic-ownership REMOVE",
+   "why": "P(in scope)=0.64 is in the grey zone; tie-break P(CI work)=1.00 x P(node owns it)=0.20 = 0.20; but a human (alice, bob) routed it with /sig node, and P(CI work)=1.00 still says CI work, so the routing overrides the ownership half of that REMOVE",
    "priority": "important-soon",
    "priority_why": "already labelled"
   },

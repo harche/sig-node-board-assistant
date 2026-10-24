@@ -88,14 +88,34 @@ JSON state. It does not generate text and it is not asked to. The split, inherit
 - **Code computes facts** that are cheap to get right: who commented `/sig node`, whether
   `triage/accepted` is already set, the review decision, the share of changed files under test paths.
   These are shown to the reviewer and some of them override Jev (a human `/sig node` turns a REMOVE into
-  BORDERLINE).
+  BORDERLINE, but only when Jev still reads the deliverable as CI work).
 - **Jev judges** what needs reading: is the primary deliverable CI work, which SIG owns it. The prompts in
-  `src/core/prompts/triage.ts` are the CLI's `prompts/triage/*.yaml`, and a test checks they still match.
+  `src/core/prompts/triage.ts` are the CLI's `prompts/triage/*.yaml` apart from the one `in_scope` change noted
+  below, which the test checks for explicitly.
 - **The policy is code** (`src/core/policy.ts`): P(in scope) at or above 0.65 keeps, at or below 0.35
   removes, otherwise P(CI work) × P(node owns it) breaks the tie against the same thresholds. Two guards
-  then hand the decision to a human: a REMOVE where someone wrote `/sig node` becomes BORDERLINE, and a
-  KEEP where Jev is at least 0.6 confident another SIG owns the component becomes BORDERLINE. The section
-  draws the band with a marker, so the reviewer sees the mechanism, not just the word.
+  then hand the decision to a human: a REMOVE where someone wrote `/sig node`, and Jev still reads the
+  deliverable as CI work, becomes BORDERLINE (below), and a KEEP where Jev is at least 0.6 confident another
+  SIG owns the component becomes BORDERLINE. The section draws the band with a marker, so the reviewer sees
+  the mechanism, not just the word.
+- **A `/sig node` overrides the ownership half of a REMOVE, not the CI half** (`HAND_ROUTED_CI_AT`). The
+  human's command says what the `sig/node` label on every item on this board already says, that the SIG owns
+  it; it cannot say the deliverable is CI work. So the routing only wins while Jev still puts P(CI work) at
+  0.5 or more; below that the deliverable is a KEP, a product fix or another SIG's test and the item is
+  removed (archived), with the `why` saying the routing was not overridden and why. On the 328-case decision
+  grid, 84 REMOVEs carried a human `/sig node`: 48 are still rescued, the 36 that read as non-CI work
+  (`P(CI work)=0.10`) are now removed. The prompt follows in both places: the CLI's `in_scope` listed a human
+  `/sig node` as grounds for true, that line is gone, and its focus now says a `/sig` comment answers
+  ownership, not CI scope. Ownership evidence stays in the `owner` question's focus. Jev's answers are not
+  validated, so a missing bucket would read as `P(CI work)=0` and remove the item: instead, a routed REMOVE or a
+  grey-zone tie-break without one, a grey-zone tie-break without an `owner` answer, and any answer without
+  `in_scope`, is BORDERLINE.
+
+  The routing was only one door. Any `/sig node` comment — including the author's own, which `signals` does
+  not distinguish — also lifts P(node) through the `owner` question, and that enters the grey-zone tie-break,
+  so a REMOVE at `P(CI work)` just under 0.5 can still become BORDERLINE that way. Closing it needs the
+  reporter's own routing discounted (as `bugs.ts` and `dra.ts` already mark the reporter), not another
+  threshold.
 
 ## Issues - To do
 
@@ -196,7 +216,8 @@ needs-information, 24 another SIG, 21 support, 19 feature or other kind, 2 dupli
   important-longterm (39%) and caught more backlog bugs; the card has a priority select.
 - Duplicates were 2 of 300 first decisions, so there is no duplicate pass yet.
 
-A human `/sig node` keeps a hand-over from being suggested over them, as in the CI board's Triage.
+A human `/sig node` keeps a hand-over from being suggested over them, as in the CI board's Triage (where it likewise
+overrides only the ownership half of a REMOVE, never the CI question).
 
 ## SIG Node Bugs: Needs Information
 
@@ -451,9 +472,13 @@ outputs, down to the "why" string. Two things had to be deliberate to make that 
 
 Where the port deliberately differs from the reference: the state carries every human routing comment as
 `human_routing` (the reference only sent the last 10 comments, so an early `/sig node` was invisible to the
-owner question), the description-trimming loop terminates when the description is exhausted, and the
-ownership guard above is restored. The Python CLI is the historical reference; this repository is where the
-policy lives now.
+owner question), the description-trimming loop terminates when the description is exhausted, the ownership
+guard above is restored, and a human `/sig node` overrides only the ownership half of a REMOVE
+(`HAND_ROUTED_CI_AT`) instead of any REMOVE. The last one is the only place the fixture itself was edited: its
+`questions` block carries the port's `in_scope` focus and no `/sig node` includes line, and the 84 decision
+cases that write `/sig node` carry the port's verdicts and `why` strings. Everything else in the file is still
+the CLI's, unchanged. The Python CLI is the historical reference; this repository is where the policy lives
+now.
 
 ## What the section shows and why (Triage)
 

@@ -1,6 +1,7 @@
-/** The Triage questions, one per key, as the reference implementation's prompts/triage/*.yaml define them.
- *  tests/prompts.test.ts checks this file against the JSON the Python loader produces, so a prompt change in
- *  either repo shows up as a failing test rather than a silent drift.
+/** The Triage questions, one per key, as the reference implementation's prompts/triage/*.yaml define them, apart
+ *  from the one deliberate difference in `in_scope` (focus and includes, noted there).
+ *  tests/parity.test.ts checks this file against the JSON the Python loader produced, so a prompt change in either
+ *  repo shows up as a failing test rather than a silent drift.
  *
  *  Shape follows docs.typesafe.ai/primitives/advanced: instructions, Noul criteria, Choice options and Score
  *  levels are objects, so the board definition, boundary cases and examples are labelled rather than buried in
@@ -50,13 +51,19 @@ const bucket = {
   },
 };
 
-/** The decision. Every other question is a grey-zone tie-breaker or shown to the reviewer. */
+/** The decision. Every other question is a grey-zone tie-breaker or shown to the reviewer. Deliberate difference
+ *  from the CLI's YAML, in two parts: its `true.includes` also listed "a human commented /sig node to route it to SIG
+ *  Node", and its focus said only "Judge the primary deliverable, not everything the item touches." On a CI board the
+ *  routing reads SIG ownership as CI relevance, which a /sig node cannot speak to (every item there already carries
+ *  the label), so the includes line is gone and the focus says so. Ownership evidence stays in `owner`'s focus. */
 const in_scope = {
   type: "noul",
   instructions: {
     board: BOARD,
     question: "Does this item belong on the `board`?",
-    focus: "Judge the primary deliverable, not everything the item touches.",
+    focus:
+      "Judge the primary deliverable, not everything the item touches; a human /sig comment in `human_comments` " +
+      "says which SIG owns the item, not that the deliverable is CI work.",
   },
   criteria: {
     true: {
@@ -68,7 +75,6 @@ const in_scope = {
         "a PR that fixes a kubelet bug whose only reported symptom is a flaking node e2e test",
         "an issue asking for integration or e2e coverage of a node feature",
         "a test-infra change to a node e2e job: skip lists, images, timeouts, lane renames",
-        "a human commented /sig node to route it to SIG Node",
       ],
       examples: [
         "[Flaky test] node-e2e eviction test times out",
