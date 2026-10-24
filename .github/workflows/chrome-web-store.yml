@@ -1,6 +1,7 @@
 name: Chrome Web Store
 # Uploads a GitHub release's zip to the Chrome Web Store and submits it for review. The release workflow calls it
-# after each release; run it by hand ("Run workflow", with the tag) to retry a release.
+# after each release; run it by hand ("Run workflow", with the tag) to retry a release or to withdraw a submission
+# that is still in review (action: cancel) so the next one ships with a corrected listing.
 on:
   workflow_call:
     inputs:
@@ -10,9 +11,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag, e.g. v0.1.5
+        description: Release tag, e.g. v0.1.6
         type: string
         required: true
+      action:
+        description: publish uploads the release's zip and submits it; cancel withdraws a submission still in review
+        type: choice
+        options: [publish, cancel]
+        default: publish
 permissions:
   contents: read
 jobs:
@@ -25,11 +31,19 @@ jobs:
           node-version: 22
           # the newest 22.x, not the runner image's cached one, so security releases apply at once
           check-latest: true
-      - run: gh release download "$TAG" --pattern 'sig-node-board-assistant-*.zip'
+      - if: inputs.action != 'cancel'
+        run: gh release download "$TAG" --pattern 'sig-node-board-assistant-*.zip'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-      - run: node scripts/publish-cws.mjs sig-node-board-assistant-*.zip
+      - if: inputs.action == 'cancel'
+        run: node scripts/publish-cws.mjs --cancel
+        env:
+          CWS_SERVICE_ACCOUNT_KEY: ${{ secrets.CWS_SERVICE_ACCOUNT_KEY }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ngimkkgeokllcnfdjeijegalfgkaemdj
+      - if: inputs.action != 'cancel'
+        run: node scripts/publish-cws.mjs sig-node-board-assistant-*.zip
         env:
           CWS_SERVICE_ACCOUNT_KEY: ${{ secrets.CWS_SERVICE_ACCOUNT_KEY }}
           CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}

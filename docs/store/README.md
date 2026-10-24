@@ -38,7 +38,7 @@ HOW IT DECIDES
 Code gathers the facts: labels, review state, assignees, CI history. Jev, a decision model, answers calibrated questions about them, such as "is this resolved?". Fixed thresholds turn the answers into one action, and every suggestion shows how it was reached.
 
 SAFE BY DEFAULT
-Nothing is written until you click, and you see the exact comment or move first. The PR and issue checks never write: they only show a command for you to post.
+Nothing is written until you click, and you see the exact comment or move first. The only writes are Apply and Accept, and the duplicate comment you tick on an issue. The PR check only shows a command for you to post.
 
 WHAT YOU NEED
 A GitHub personal access token, and a key for Jev from TypeSafe (typesafe.ai) or OpenRouter (openrouter.ai). Judging a card costs about $0.0002. Setup guide: https://github.com/harche/sig-node-board-assistant#configure
@@ -57,7 +57,7 @@ Open source (Apache-2.0): https://github.com/harche/sig-node-board-assistant
   fetched is stored.
 - **Host permissions:**
   - `api.github.com`: reads the issues, pull requests, boards and CI results being triaged, and, only when the user
-    clicks Apply or Accept, posts the comment or Status move shown to them.
+    clicks Apply, Accept or Comment, posts the comment or Status move shown to them.
   - `api.typesafe.ai`, `openrouter.ai`: the two providers of Jev, the decision model. The user picks one; the
     extension sends it the item's text and gets back the probabilities behind each suggestion.
   - `testgrid.k8s.io`, `storage.googleapis.com`: read the public Kubernetes CI results (TestGrid summaries, junit

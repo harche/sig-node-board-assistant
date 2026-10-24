@@ -145,9 +145,11 @@ The settings page needs two credentials:
 
 ## Safety
 
-- **Nothing is written until you click.** Apply writes one card's action, and Accept writes the actions in one
-  column. Both show the exact comment and move first. The PR and issue checks never write: they only show a command
-  for you to post. Feedback opens an issue on this extension's repo only when you click Submit.
+- **Nothing is written until you click.** Apply writes one card's action, Accept writes the actions in one
+  column, and on an issue page **Comment** posts the duplicate comment around the matches you ticked. Each shows the
+  exact comment and move first. The rest only read: the PR check and the issue check show their findings, and the PR
+  one gives you a Prow command to post yourself. Feedback opens an issue on this extension's repo only when you click
+  Submit.
 - **The settings page lists where writes go:** the boards Apply and Accept may write to, and the repos TestGrid's
   issues and comments go to.
 - **An allow-list guards every write.** The background worker accepts only a Status move of the one item, and only

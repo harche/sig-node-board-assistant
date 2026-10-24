@@ -1,6 +1,7 @@
 // Uploads a release zip to the Chrome Web Store and submits it for review, with the Chrome Web Store API v2.
-// `node scripts/publish-cws.mjs <zip>`. The chrome-web-store workflow runs it on each release's zip, which
-// `npm run zip` built and checked is not a test build.
+// `node scripts/publish-cws.mjs <zip>` uploads and publishes; `node scripts/publish-cws.mjs --cancel` withdraws a
+// submission that is still in review. The chrome-web-store workflow runs it on each release's zip, which `npm run zip`
+// built and checked is not a test build.
 // Env: CWS_SERVICE_ACCOUNT_KEY (the JSON key of the service account added to the publisher in the Developer
 // Dashboard), CWS_PUBLISHER_ID, CWS_EXTENSION_ID.
 import { createSign } from "node:crypto";
@@ -13,8 +14,10 @@ const env = (name) => {
 };
 const key = JSON.parse(env("CWS_SERVICE_ACCOUNT_KEY"));
 const item = `publishers/${env("CWS_PUBLISHER_ID")}/items/${env("CWS_EXTENSION_ID")}`;
-if (!process.argv[2]) throw new Error("usage: node scripts/publish-cws.mjs <zip>");
-const zip = readFileSync(process.argv[2]);
+const arg = process.argv[2];
+const cancel = arg === "--cancel";
+if (!arg) throw new Error("usage: node scripts/publish-cws.mjs <zip> | --cancel");
+const zip = cancel ? null : readFileSync(arg);
 
 // An access token from a JWT signed with the service account's key (OAuth 2.0 JWT bearer grant).
 const b64url = (data) => Buffer.from(data).toString("base64url");
@@ -45,6 +48,17 @@ const call = async (method, url, body) => {
   return JSON.parse(text);
 };
 const api = "https://chromewebstore.googleapis.com";
+
+// Withdraw a submission that is still in review, so the next release can ship with a corrected listing instead.
+if (cancel) {
+  const before = await call("GET", `${api}/v2/${item}:fetchStatus`);
+  console.info(`before: ${JSON.stringify(before)}`);
+  const cancelled = await call("POST", `${api}/v2/${item}:cancelSubmission`);
+  console.info(`cancelled: ${JSON.stringify(cancelled)}`);
+  const after = await call("GET", `${api}/v2/${item}:fetchStatus`);
+  console.info(`after: ${JSON.stringify(after)}`);
+  process.exit(0);
+}
 
 const upload = await call("POST", `${api}/upload/v2/${item}:upload`, zip);
 let state = upload.uploadState;
