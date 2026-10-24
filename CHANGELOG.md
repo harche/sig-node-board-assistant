@@ -1,10 +1,5 @@
 # Changelog
 
-## 0.1.7
-
-- No change to the extension. The listing's write claims, and [docs/privacy.md](docs/privacy.md), now say that the
-  issue page's **Comment** writes, which 0.1.6 added; 0.1.6's submission is withdrawn and 0.1.7 replaces it.
-
 ## 0.1.6
 
 - **Triage: a `/sig node` cannot make an item CI work.** On the CI/Test board, a human `/sig node` used to turn any
