@@ -14,7 +14,7 @@ on the GitHub and TestGrid pages you already use.**
 
 <br>
 
-![The CI/Test board's Triage column after Tackle: each card has a badge, and the hover card shows Jev's answers and the suggested action](docs/images/board.png)
+![The CI/Test board's Triage column after Tackle: each card has a badge, and the hover card shows Jev's answers and the suggested action](docs/store/board.png)
 
 <sub>Screenshots highlight what the extension adds; the dimmed parts are GitHub's or TestGrid's own page.</sub>
 
@@ -42,8 +42,6 @@ suggests and when.
 
 ### TestGrid
 
-![A TestGrid dashboard after Tackle: failing and flaky jobs carry a badge, and the hover card shows which issue tracks the failure](docs/images/testgrid.png)
-
 On a SIG Node dashboard at [testgrid.k8s.io](https://testgrid.k8s.io), **Tackle** reads every failing and flaky
 job. For each one it works out:
 
@@ -55,8 +53,6 @@ It also names issues that may be the cause, or an umbrella for the failure.
 
 ### Pull requests: Failing CI
 
-<img align="right" width="380" src="docs/images/pr-failing-ci.png" alt="The Failing CI section in a pull request's sidebar, with a verdict for each failed job and the Prow command to rerun the ones that are not the PR's">
-
 On a pull request with a failed Prow job, **Check failures** says for each job whether the PR broke it, or whether
 it is a flake or infrastructure. It reads:
 
@@ -67,11 +63,7 @@ it is a flake or infrastructure. It reads:
 A failure the PR caused links the file most likely behind it. The section ends with the `/test` or `/retest`
 command that reruns only what is not the PR's, ready to copy.
 
-<br clear="right">
-
 ### Issues: CI history and duplicates
-
-<img align="right" width="380" src="docs/images/issue-checks.png" alt="The issue sidebar with the board section, CI history saying the test is still failing, and the duplicates and related issues Jev found">
 
 On a SIG Node or DRA issue, **Check** answers two questions.
 
@@ -81,8 +73,6 @@ On a SIG Node or DRA issue, **Check** answers two questions.
   keyword, semantic and exact-error searches, and Jev reads each one against the issue.
 
 Nothing asks Jev on an issue or PR page until you click. The same button reads **Check again** afterwards.
-
-<br clear="right">
 
 ### Feedback
 
@@ -122,8 +112,6 @@ that folder the same way.
 
 ### Configure
 
-<img align="right" width="360" src="docs/images/settings.png" alt="The settings page: a GitHub token, the Jev provider and key, and where writes go">
-
 The settings page needs two credentials:
 
 - **A GitHub personal access token.** A classic token with the `repo` and `project` scopes works everywhere (add
@@ -137,8 +125,6 @@ The settings page needs two credentials:
   Judging a card costs about $0.0002. Every judgment reads GitHub and asks Jev fresh.
 
 **Save and test** checks both connections.
-
-<br clear="right">
 
 ## How it decides
 

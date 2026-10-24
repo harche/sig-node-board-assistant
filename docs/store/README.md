@@ -1,7 +1,12 @@
 # Chrome Web Store listing
 
 The text and images for the store listing, kept here so each release can paste them from one place. Each release's zip
-is uploaded and submitted for review by the release workflow (`.github/workflows/chrome-web-store.yml`).
+is uploaded and submitted for review by the release workflow (`.github/workflows/chrome-web-store.yml`). The listing
+itself is dashboard-only: the Web Store API uploads and publishes a package, and cannot change the description, the
+screenshots or the privacy justifications, so those are pasted by hand in the Developer Dashboard.
+
+The store requires at least one screenshot and allows five. There is one, `board.png`, the board's hover card: the
+surface that changes least. The README shows the same file, so a release that changes the UI re-shoots one image.
 
 ## Store listing
 
@@ -9,7 +14,7 @@ is uploaded and submitted for review by the release workflow (`.github/workflows
 - **Language:** English
 - **Summary** (from the manifest, 132 characters at most): Jev-judged suggestions for the SIG Node GitHub project boards
   and TestGrid dashboards, with the evidence behind each.
-- **Screenshots** (1280×800): `board.png`, `testgrid.png`, `pr-failing-ci.png`, `issue-checks.png`
+- **Screenshots** (1280×800): `board.png`, also the one image in the README
 - **Small promo tile** (440×280): `promo-small.png`
 - **Homepage:** https://github.com/harche/sig-node-board-assistant
 - **Support:** https://github.com/harche/sig-node-board-assistant/issues
