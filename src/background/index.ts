@@ -14,7 +14,7 @@ import {
 } from "../core/feedback";
 import { knownBoard, writesTo } from "../core/boards";
 import { findOnBoards } from "../core/lookup";
-import { DUPLICATE_QUESTIONS } from "../core/prompts/todo";
+import { duplicateQuestions } from "../core/prompts/todo";
 import { TestGridClient } from "../core/testgrid";
 import { judge } from "../core/triage";
 import { isDraftedComment } from "../core/comments";
@@ -37,8 +37,9 @@ import {
   TG_TEST_REPO,
   titleQuery,
 } from "../core/tgreview";
-import { judgeBacklog, shortlist } from "../core/backlog";
-import { BUG_DUPLICATE_QUESTIONS } from "../core/prompts/backlog";
+import { judgeBacklog } from "../core/backlog";
+import { dupIssue, duplicatePass } from "../core/duplicates";
+import { bugDuplicateQuestions } from "../core/prompts/backlog";
 import { noulReading } from "../core/readings";
 import {
   blend,
@@ -52,8 +53,8 @@ import {
 } from "../core/candidates";
 import { judgeProgress } from "../core/inprogress";
 import { decideReview, judgeReview, type Candidate, type ReviewResult } from "../core/reviewer";
-import { closeDuplicates, dupFacets, dupState, judgeTodo, type DuplicateOf } from "../core/todo";
-import type { BoardItem, BoardRef, ItemDetail, JevChoice, JevNoul } from "../core/types";
+import { judgeTodo, type DuplicateOf } from "../core/todo";
+import type { BoardItem, BoardRef, ItemDetail } from "../core/types";
 import type { Envelope, Request, ResponseMap } from "../shared/messages";
 import { BATCH_PORT, jevSettings, TRACED, type Settings } from "../shared/messages";
 import { dropOldCache, loadSettings, saveSettings, TraceStore } from "./storage";
@@ -101,8 +102,8 @@ async function pool<T>(n: number, jobs: (() => Promise<T>)[]): Promise<T[]> {
   return out;
 }
 
-/** The duplicate pass for To do: each target against every other open issue in To do and In progress; which
- *  cards close, and in favour of what, is core/todo.ts closeDuplicates. */
+/** The duplicate pass for To do: each target against the other open issues in To do and In progress, one Jev call
+ *  per target (core/duplicates.ts); which cards close, and in favour of what, is core/todo.ts closeDuplicates. */
 async function duplicates(
   gh: GitHubClient,
   jev: JevClient,
@@ -114,44 +115,20 @@ async function duplicates(
     ...(await gh.itemsIn(board, "Issues - To do")),
     ...(await gh.itemsIn(board, "Issues - In progress")),
   ].filter(open);
-  const facets = new Map<number, ReturnType<typeof dupFacets>>();
-  const facetOf = async (i: BoardItem) => {
-    if (!facets.has(i.restId))
-      facets.set(i.restId, dupFacets(i, await gh.itemDetail(i.repository, "Issue", i.number)));
-    return facets.get(i.restId)!;
-  };
-  const seen = new Set<string>();
-  const pairs: [BoardItem, BoardItem][] = [];
-  for (const t of targets.filter(open))
-    for (const o of pool0) {
-      const k = [t.restId, o.restId].sort().join("-");
-      if (o.restId === t.restId || seen.has(k)) continue;
-      seen.add(k);
-      pairs.push([t, o]);
-    }
-  const answers = await pool(
-    8,
-    pairs.map(([a, b]) => async () => {
-      const s = dupState(await facetOf(a), await facetOf(b));
-      return (await jev.ask<{ duplicate: JevNoul; survivor: JevChoice }>(s, DUPLICATE_QUESTIONS)).answers;
-    }),
+  const now = Date.now();
+  return duplicatePass(
+    jev,
+    targets,
+    pool0,
+    (i) => dupRead(gh, i, now, true),
+    duplicateQuestions,
+    undefined,
+    (jobs) => pool(8, jobs),
   );
-  const closing = closeDuplicates(
-    pairs.map(([a, b], k) => ({
-      a,
-      b,
-      p: answers[k]!.duplicate.noul,
-      survivor: answers[k]!.survivor.choice === "A" ? "A" : "B",
-    })),
-    new Set(targets.map((t) => t.restId)),
-  );
-  const out: Record<number, DuplicateOf | null> = {};
-  for (const t of targets) out[t.restId] = closing.get(t.restId) ?? null;
-  return out;
 }
 
 /** The duplicate pass for the SIG Node Bugs backlog: each target against the open cards in Triaged and High
- *  Priority, only for the pairs whose words overlap most (backlog.ts shortlist). */
+ *  Priority, one Jev call per target. */
 async function bugDuplicates(
   gh: GitHubClient,
   jev: JevClient,
@@ -161,47 +138,25 @@ async function bugDuplicates(
   const open = (i: BoardItem) => i.type === "Issue" && i.state === "open";
   const cols = ["Triaged", "High Priority"];
   const pool0 = (await Promise.all(cols.map((c) => gh.itemsIn(board, c)))).flat().filter(open);
-  const pairs = shortlist(targets.filter(open), pool0, (i) => i.title);
-  const facet = async (i: BoardItem) => {
-    const d = await gh.itemDetail(i.repository, "Issue", i.number);
-    return {
-      number: i.number,
-      repository: i.repository,
-      created: d.createdAt.slice(0, 10),
-      title: d.title,
-      author: d.author.login,
-      assignees: i.assignees,
-      body: d.body.slice(0, 3000),
-    };
-  };
-  const answers = await pool(
-    8,
-    pairs.map(([a, b]) => async () => {
-      const [fa, fb] = await Promise.all([facet(a), facet(b)]);
-      const s = {
-        issue_A: fa,
-        issue_B: fb,
-        "precomputed (use as given)": {
-          same_author: fa.author === fb.author,
-          shared_assignee: fa.assignees.some((x) => fb.assignees.includes(x)),
-        },
-      };
-      return (await jev.ask<{ duplicate: JevNoul; survivor: JevChoice }>(s, BUG_DUPLICATE_QUESTIONS)).answers;
-    }),
+  const now = Date.now();
+  return duplicatePass(
+    jev,
+    targets,
+    pool0,
+    (i) => dupRead(gh, i, now),
+    bugDuplicateQuestions,
+    { working: "", closable: cols, keep: "High Priority" },
+    (jobs) => pool(8, jobs),
   );
-  const closing = closeDuplicates(
-    pairs.map(([a, b], k) => ({
-      a,
-      b,
-      p: answers[k]!.duplicate.noul,
-      survivor: answers[k]!.survivor.choice === "A" ? "A" : "B",
-    })),
-    new Set(targets.map((t) => t.restId)),
-    { working: "", closable: cols },
-  );
-  const out: Record<number, DuplicateOf | null> = {};
-  for (const t of targets) out[t.restId] = closing.get(t.restId) ?? null;
-  return out;
+}
+
+/** One issue for a duplicate pass: its thread and linked PRs (one item read). */
+async function dupRead(gh: GitHubClient, i: BoardItem, now: number, ci = false) {
+  const [d, prs] = await Promise.all([
+    gh.itemDetail(i.repository, "Issue", i.number),
+    gh.linkedPrs(i.repository, i.number),
+  ]);
+  return dupIssue(i, d, prs, now, ci);
 }
 
 // The keys are for the worker and the settings page only: content scripts, which run inside web pages, cannot read
@@ -396,7 +351,7 @@ async function handleOne<R extends Request>(
           const pool = blend(ps.author, files.slice(0, 5), dirs, hist, owners, exclude, now);
           const pick = await pickReviewers(
             jev,
-            { repository: repo, title: detail.title, author: ps.author, changed_files: files.slice(0, 30) },
+            { repository: repo, title: detail.title, author: ps.author, changed_files: files },
             pool,
           );
           candidates = pick.picks;
@@ -593,6 +548,7 @@ async function handleOne<R extends Request>(
         resolvePresubmit: (job) => tg.resolvePresubmit(job),
         failedTable: (ref) => tg.failedTable(ref),
         search: (qs, n) => gh.searchIssues(qs, n),
+        threads: (repo, ns) => gh.issueThreads(repo, ns),
         jev,
       };
       return (await judgeCi(deps, req.repo, req.number, req.check)) as Out;

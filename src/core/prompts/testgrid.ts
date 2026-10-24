@@ -1,8 +1,12 @@
 /** TestGrid review questions (review on testgrid.k8s.io). Shape follows docs.typesafe.ai/primitives/advanced, like
- *  prompts/triage.ts. Code collects the evidence: each failed run's junit failures and the end of its build log. */
+ *  prompts/triage.ts. Code collects the evidence: the job's run history from TestGrid, and each failed run's junit
+ *  failures and the build log lines that say what failed. */
 
 const RUN_NOTE =
-  "`runs` are failed runs of one CI job, newest first. For each, `junit_failures` are the failed test cases from the run's junit files (empty when the run produced none) and `log_signals` are the lines of its build log that say what failed: Ginkgo's failure markers and summary, timeout and kill messages, or, when no test ran, the job's last lines before it exited. Both are computed by code: use them as given.";
+  "`runs` are failed runs of one CI job, newest first. For each: its `build` id, when it `started` and its `result`; `junit_failures`, every failed test case in the run's junit files, each once (empty when the run produced none), with `junit_total` counting them, and a line saying so where a very long list leaves some out; and `log_signals`, the lines of its build log that say what failed: Ginkgo's failure markers with the lines after them (the expected and actual values, where it failed), its failure summary and how the run ended, timeout and kill messages, or, when no test ran, the job's last lines before it exited. When present, `status` is TestGrid's word for the job now (FAILING: its newest runs fail; FLAKY: some runs fail among passes) and `history` its runs over TestGrid's window: how many ran and failed, how many of the newest failed in a row, days since the first failure and since the last pass, every test row that failed with its count of failed runs, and `harness_only` when only the harness's own rows failed (the job breaks around its tests, not in them). All computed by code: use them as given.";
+
+const ISSUE_NOTE =
+  "`issue` is a GitHub issue: its title, state, whole body and every comment, oldest first, with bots' comments left out and run links and build ids stripped.";
 
 /** What kind of failure a job's recent failed runs show. */
 const failureKind = {
@@ -55,7 +59,7 @@ const tracks = {
       "Does `issue` track the failure these runs show, so the runs are more evidence for it rather than a new problem?",
     focus:
       "Compare the failure itself: the failing test and the error, or the timeout or infra symptom. The same job or the same test with a different error is a different problem. An issue about the same failure on another job still tracks it.",
-    note: RUN_NOTE,
+    note: `${RUN_NOTE} ${ISSUE_NOTE}`,
   },
   criteria: {
     true: {
@@ -79,7 +83,7 @@ const namesJob = {
       "Does `issue` already report that the CI job `job` (TestGrid tab `tab`) fails, in its body or in any comment?",
     focus:
       "Look for this job among the jobs the issue says are failing, or a comment reporting it failing too, under its job or tab name, even shortened. A job with a similar name that is another job (another branch, release, runtime, OS or feature set) is not this one. A mention of this job only as passing, fixed or unaffected does not count.",
-    note: "`issue.thread` is the issue's body followed by its comments, oldest first; run links are stripped.",
+    note: "`issue.thread` is the issue's body followed by every comment, oldest first; bots' comments are left out and run links stripped.",
   },
   criteria: {
     true: { what: "The issue or a comment on it reports this job failing." },
@@ -100,7 +104,7 @@ const relation = {
     question: "How does `issue` relate to the failure these runs show?",
     focus:
       "Name a relation only when you can say what links them. The same job, component or feature alone is not a link.",
-    note: "`runs` are failed runs of one CI job: their junit failures and build log lines, computed by code.",
+    note: `${RUN_NOTE} ${ISSUE_NOTE}`,
   },
   criteria: {
     tracks: {
@@ -120,8 +124,7 @@ const relation = {
   },
 };
 
-const RELATED_NOTE =
-  "`runs` are failed runs of one CI job: their junit failures and build log lines, computed by code.";
+const RELATED_NOTE = `${RUN_NOTE} ${ISSUE_NOTE}`;
 
 /** For a root cause: would fixing it stop these failures? Dropped the same-area bugs with no path to this error. */
 const fixes = {
@@ -157,6 +160,39 @@ const covers = {
     false: { what: "Its scope is another area, other tests or jobs, or only loosely the same area." },
   },
 };
+
+/** Several open issues each read as tracking the failure: which one is the main one, where a report of this job
+ *  belongs. Replaces a code tie-break (the one already naming the job, else the latest activity) that could not tell
+ *  the issue people work on from a duplicate someone touched last. */
+export function canonicalQuestion(issues: { key: string; repo: string; number: number; title: string }[]): {
+  canonical: Record<string, unknown>;
+} {
+  return {
+    canonical: {
+      type: "choice",
+      instructions: {
+        question:
+          "Which of `issues` is the main tracking issue for the failure these runs show: the one a report that this job fails this way belongs on?",
+        focus:
+          "Read the threads, not only the titles. The main issue is where this failure is worked on: the others were closed or linked as its duplicates, it holds the investigation or the fix, or it already lists this job among those failing. Prefer the issue about this exact test and error over a broader one that also covers it. An issue whose thread points to another as the place to follow, or that went quiet once a newer one was filed, is not the main one. Choose none only when they are equally live and nothing in them sets one apart.",
+        note: `${RUN_NOTE} \`issues\` are the candidates, each with its \`key\`, repository, title, state, when it was last active, whole body and every comment, oldest first, with bots' comments left out and run links and build ids stripped.`,
+      },
+      criteria: {
+        ...Object.fromEntries(
+          issues.map((i) => [
+            i.key,
+            {
+              what: `${i.repo === "kubernetes/kubernetes" ? "" : i.repo}#${i.number}, "${i.title}", is the main tracking issue.`,
+            },
+          ]),
+        ),
+        none: {
+          what: "None of them stands out as the main one: they are equally live, or the same report filed twice with nothing to tell them apart.",
+        },
+      },
+    },
+  };
+}
 
 export function relationQuestion(): { relation: typeof relation } {
   return { relation };

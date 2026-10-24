@@ -1,9 +1,12 @@
 /** Judging one TestGrid tab: facts from TestGrid, evidence from GCS, candidate issues from GitHub search, Jev's
  *  readings. The pure parts are in tgreview.ts. */
+import { isBot } from "./boards";
+import { fitHead, fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { RawSearchIssue, SearchQuery, ThreadIssue } from "./github";
 import { forever } from "./reads";
 import type { JevClient } from "./jev";
 import {
+  canonicalQuestion,
   coversQuestion,
   failureKindQuestion,
   fixesQuestion,
@@ -15,23 +18,29 @@ import { distinctive } from "./related";
 import { choiceReading, noulReading, type Reading } from "./readings";
 import type { TgRef, TgTable } from "./testgrid";
 import {
+  CANONICAL_AT,
   fragment,
   GCS,
   jobFacts,
+  JUNIT_FILES,
   junitFailures,
   MAYBE_AT,
   NAMED_AT,
+  POOL_MAX,
   poolMatches,
   PROW,
   RELATED_AT,
   relatedEligible,
   relatedQueries,
+  TRACKED_AT,
   umbrellaPool,
+  uniqueFailures,
   VERIFY_AT,
   signalLines,
   stripRuns,
   type Candidate,
   type JobFacts,
+  type JunitFailure,
   type RunEvidence,
   type TgAnswers,
   type TgResult,
@@ -39,17 +48,18 @@ import {
   type Track,
   type TrackAnswer,
 } from "./tgreview";
-import type { JevUsage } from "./types";
+import type { JevChoice, JevUsage } from "./types";
 
 export interface TgDeps {
   table(ref: TgRef): Promise<TgTable>;
   /** Issues matching each query, in order (one batched request). */
   search(queries: SearchQuery[], n?: number): Promise<RawSearchIssue[][]>;
-  /** An issue's whole body and every comment, as one text (and, in test mode, its mirror's comments). */
-  issueText(repo: string, number: number): Promise<string>;
+  /** An issue's whole body, then every comment but bots', oldest first (and, in test mode, its mirror's comments). */
+  issueText(repo: string, number: number): Promise<string[]>;
   jev: JevClient;
   fetchFn?: typeof fetch;
-  /** Issues with their threads, for the related search; without it, no related issues are looked for. */
+  /** Issues with their whole threads: what Jev reads of each candidate. Without it, candidates are read by their
+   *  body alone and no related issues are looked for. */
   threads?(repo: string, numbers: number[]): Promise<Map<number, ThreadIssue | null>>;
 }
 
@@ -121,23 +131,162 @@ async function readRun(
   );
   const listed = json<{ items?: { name: string }[] }>(list);
   const names = listed?.items ?? [];
-  const files = await Promise.all(names.slice(0, 15).map((n) => text(f, `${GCS}/${bucket}/${n.name}`)));
+  const files = await Promise.all(
+    names.slice(0, JUNIT_FILES).map((n) => text(f, `${GCS}/${bucket}/${n.name}`)),
+  );
   const [log, finished] = await Promise.all([
     text(f, `${base}/build-log.txt`),
     text(f, `${base}/finished.json`),
   ]);
   const result = json<{ result?: string }>(finished)?.result ?? null;
+  const failures = uniqueFailures(files.flatMap((x) => (x ? junitFailures(x) : [])));
   return {
     evidence: {
       build,
       started,
       url: `${PROW}/${gcs}/${build}`,
       result,
-      junit_failures: files.flatMap((x) => (x ? junitFailures(x) : [])).slice(0, 8),
+      junit_failures: failures,
+      junit_total: failures.length,
       log_signals: log === null ? null : signalLines(log),
     },
     complete: result !== null && log !== null && listed !== null && files.every((x) => x !== null),
   };
+}
+
+// ---------------------------------------------------------------------------------------------------- Jev's states
+
+/** Characters of the runs in a state, at most: the rest of MAX_STATE_CHARS is the issue's. Three runs of a broken
+ *  build (hundreds of junit failures) are what reach it. */
+const RUNS_MAX = 200_000;
+/** Characters of the failing tests listed in `history`, at most (a suite timeout fails every row). */
+const TESTS_MAX = 40_000;
+
+/** A failed run as Jev reads it. */
+export function runState(e: RunEvidence) {
+  return {
+    build: e.build,
+    started: new Date(e.started).toISOString().slice(0, 16).replace("T", " ") + " UTC",
+    result: e.result ?? "unknown",
+    junit_total: e.junit_total ?? e.junit_failures.length,
+    junit_failures: e.junit_failures,
+    log_signals: e.log_signals ?? [],
+  };
+}
+
+/** Runs within `max` characters, an equal share each. Past its share, a run keeps its first junit failures (with a
+ *  line saying how many are left out; junit_total counts them all) and the start and end of its log lines. */
+export function fitRuns<
+  R extends { junit_failures: Pick<JunitFailure, "test" | "message">[]; log_signals: string[] },
+>(runs: R[], max = RUNS_MAX): R[] {
+  const share = Math.floor(max / Math.max(1, runs.length));
+  return runs.map((r) => {
+    if (size(r) <= share) return r;
+    const log_signals = fitMiddle(
+      r.log_signals,
+      size,
+      Math.min(size(r.log_signals), Math.floor(share / 2)),
+      (n) => `… ${n} log lines left out here`,
+    );
+    const junit_failures = fitHead(
+      r.junit_failures,
+      (k) => size({ ...r, log_signals, junit_failures: k }),
+      share,
+      (n) => ({ test: `(${n} more failures left out: junit_total counts them)`, message: "" }),
+    );
+    return { ...r, log_signals, junit_failures };
+  });
+}
+
+/** What the TestGrid review's questions read about the job: its status and history, and its failed runs. */
+export function jobState(f: JobFacts, evidence: RunEvidence[]) {
+  return {
+    job: f.job,
+    tab: f.tab,
+    status: f.status,
+    history: {
+      runs: f.runs,
+      failed_runs: f.failed_runs,
+      failed_in_a_row: f.streak,
+      first_failure_days_ago: f.first_failure_days_ago,
+      last_pass_days_ago: f.last_pass_days_ago,
+      failing_tests: fitHead(f.failing_tests, size, TESTS_MAX, (n) => ({
+        name: `(${n} more failing tests left out)`,
+        failed: 0,
+      })),
+      harness_only: f.harness_only,
+    },
+    runs: fitRuns(evidence.filter((e) => e.log_signals !== null || e.junit_failures.length).map(runState)),
+  };
+}
+
+type Thread = { author: string; created_at: string; body: string }[];
+
+/** A thread as Jev reads it: people's comments in full, bots' (stale and triage notices, Prow's replies) left out,
+ *  run links and build ids stripped. */
+export const humanThread = (cs: Thread = []): Thread =>
+  cs
+    .filter((c) => !isBot(c.author) && c.body.trim())
+    .map((c) => ({ author: c.author, created_at: c.created_at, body: stripRuns(c.body) }));
+
+/** An issue with its whole body and thread within `max` characters: past it, the oldest comments after the first
+ *  give way (a line says how many), and a body over half of it keeps its start and end. */
+export function fitIssue<I extends { body: string }>(
+  issue: I,
+  comments: Thread,
+  max: number,
+): I & { comments: Thread } {
+  const body =
+    size({ ...issue, comments: [] }) > max / 2 ? fitText(issue.body, Math.floor(max / 2)) : issue.body;
+  const it = { ...issue, body };
+  return {
+    ...it,
+    comments: fitMiddle(
+      comments,
+      (kept) => size({ ...it, comments: kept }),
+      max,
+      (n) => ({
+        author: "",
+        created_at: "",
+        body: `(${n} comments left out here: the thread is too long)`,
+      }),
+    ),
+  };
+}
+
+/** `st` with a candidate issue in full: its body and every person's comment, in what MAX_STATE_CHARS leaves. */
+export function withIssue<S extends object>(
+  st: S,
+  issue: { number: number; title: string; state: string; body: string },
+  comments: Thread | undefined,
+): S & { issue: object } {
+  return {
+    ...st,
+    issue: fitIssue(
+      { number: issue.number, title: issue.title, state: issue.state, body: stripRuns(issue.body) },
+      humanThread(comments),
+      MAX_STATE_CHARS - size(st),
+    ),
+  };
+}
+
+/** Each candidate's thread, by `repo#number`, read in one request per repository. A failed read leaves those
+ *  candidates out (read by their body alone). */
+export async function candidateThreads(
+  d: Pick<TgDeps, "threads">,
+  cands: { repo: string; number: number }[],
+): Promise<Map<string, ThreadIssue | null>> {
+  const threads = new Map<string, ThreadIssue | null>();
+  if (!d.threads) return threads;
+  const byRepo = new Map<string, number[]>();
+  for (const c of cands) byRepo.set(c.repo, [...(byRepo.get(c.repo) ?? []), c.number]);
+  await Promise.all(
+    [...byRepo].map(async ([repo, ns]) => {
+      const m = await d.threads!(repo, ns).catch(() => new Map<number, ThreadIssue | null>());
+      for (const [n, t] of m) threads.set(`${repo}#${n}`, t);
+    }),
+  );
+  return threads;
 }
 
 const brief = (x: RawSearchIssue, repo: string, via: string): Candidate => ({
@@ -201,7 +350,7 @@ const MAX_RELATED = 30;
 export async function relatedRuns(
   d: TgDeps,
   f: JobFacts,
-  st: { job: string; runs: unknown[] },
+  st: object,
   evidence: RunEvidence[],
   skip: Set<number>,
   /** Tracking candidates Jev did not read as tracking: read for a relation too. */
@@ -213,21 +362,17 @@ export async function relatedRuns(
   const repo = "kubernetes/kubernetes";
   const tests = f.failing_tests.map((t) => t.name);
   const queries = relatedQueries(repo, evidence, tests, f.job, distinctive);
-  const umbrellas = umbrellaPool(repo);
-  const found = await d.search([...queries, ...umbrellas], 20);
+  // The umbrella pool page by page: all of it, not the searches' first 20.
+  const [found, pool] = await Promise.all([d.search(queries, 20), d.search(umbrellaPool(repo), POOL_MAX)]);
   const searched: number[] = [];
   for (let i = 0; i < 20; i++)
-    for (const r of found.slice(0, queries.length)) {
+    for (const r of found) {
       const n = r[i]?.number;
       if (n !== undefined && !searched.includes(n)) searched.push(n);
     }
   // The searches' best, capped; the tracking search's other finds and the umbrella pool, whole.
   const nums = [
-    ...new Set([
-      ...searched.slice(0, MAX_RELATED),
-      ...also,
-      ...found.slice(queries.length).flatMap((r) => r.map((x) => x.number)),
-    ]),
+    ...new Set([...searched.slice(0, MAX_RELATED), ...also, ...pool.flatMap((r) => r.map((x) => x.number))]),
   ].filter((n) => !skip.has(n));
   const threads = await d.threads(repo, nums);
   const cands = [...threads.values()].filter(
@@ -238,10 +383,7 @@ export async function relatedRuns(
   const out = await Promise.all(
     cands
       .map(async (t): Promise<TgRelated | null> => {
-        const s = {
-          ...st,
-          issue: { number: t.number, title: t.title, state: t.state, body: stripRuns(t.body).slice(0, 2500) },
-        };
+        const s = withIssue(st, t, t.comments);
         const rel = await ask<{ relation?: { probabilities: Record<string, number> } }>(
           s,
           relationQuestion(),
@@ -271,6 +413,55 @@ export async function relatedRuns(
   return out.filter((x): x is TgRelated => x !== null).sort((a, b) => b.verify - a.verify);
 }
 
+/** When two or more open candidates track the failure: Jev reads them side by side, each with its whole thread, for
+ *  the main tracking issue. null when it names none at CANONICAL_AT, or could not answer; the reading either way. */
+async function mainTracker(
+  st: object,
+  tracking: Candidate[],
+  threads: Map<string, ThreadIssue | null>,
+  ask: <A>(state: unknown, q: Record<string, unknown>) => Promise<A>,
+): Promise<{ canonical: TgResult["canonical"]; reading: Reading[] }> {
+  const keyed = tracking.map((c, i) => ({ key: `c${i}`, c }));
+  const share = Math.floor((MAX_STATE_CHARS - size(st)) / keyed.length);
+  const issues = keyed.map(({ key, c }) =>
+    fitIssue(
+      {
+        key,
+        repo: c.repo,
+        number: c.number,
+        title: c.title,
+        state: c.state,
+        updated_at: c.updated_at,
+        body: stripRuns(c.body),
+      },
+      humanThread(threads.get(`${c.repo}#${c.number}`)?.comments),
+      share,
+    ),
+  );
+  const q = canonicalQuestion(
+    keyed.map(({ key, c }) => ({ key, repo: c.repo, number: c.number, title: c.title })),
+  );
+  const a = await ask<{ canonical?: JevChoice }>({ ...st, issues }, q).catch(
+    () => ({}) as { canonical?: JevChoice },
+  );
+  const pr = a.canonical?.probabilities ?? {};
+  const top = keyed.map((x) => ({ ...x, p: pr[x.key] ?? 0 })).sort((x, y) => y.p - x.p)[0]!;
+  const canonical =
+    top.p >= CANONICAL_AT && top.p > (pr.none ?? 0)
+      ? { repo: top.c.repo, number: top.c.number, p: top.p }
+      : null;
+  const reading = choiceReading("Main tracking issue", {
+    type: "choice",
+    choice: "",
+    confidence: 0,
+    probabilities: Object.fromEntries([
+      ...keyed.map(({ key, c }): [string, number] => [`#${c.number}`, pr[key] ?? 0]),
+      ["none clearly", pr.none ?? 0],
+    ]),
+  });
+  return { canonical, reading: a.canonical ? reading : [] };
+}
+
 export async function judgeTg(
   d: TgDeps,
   ref: TgRef,
@@ -288,70 +479,52 @@ export async function judgeTg(
     usage.cost += res.usage.cost;
     return res.answers;
   };
-  const runs = evidence
-    .filter((e) => e.log_signals !== null || e.junit_failures.length)
-    .map((e) => ({ junit_failures: e.junit_failures, log_signals: e.log_signals ?? [] }));
-  const st = { job: facts.job, runs };
+  const st = jobState(facts, evidence);
+  const runs = st.runs;
   const cands = await candidates(d, facts, now);
-  // Jev reads each candidate's recent comments with its body: that is where jobs get added and where a thread says
+  // Jev reads each candidate's whole thread with its body: that is where jobs get added and where a thread says
   // the failure changed. Without threads (or if the read fails), the body alone.
-  const threads = new Map<string, ThreadIssue | null>();
-  if (d.threads) {
-    const byRepo = new Map<string, number[]>();
-    for (const c of cands) byRepo.set(c.repo, [...(byRepo.get(c.repo) ?? []), c.number]);
-    await Promise.all(
-      [...byRepo].map(async ([repo, ns]) => {
-        const m = await d.threads!(repo, ns).catch(() => new Map<number, ThreadIssue | null>());
-        for (const [n, t] of m) threads.set(`${repo}#${n}`, t);
-      }),
-    );
-  }
+  const threads = await candidateThreads(d, cands);
   const [kind, answers] = await Promise.all([
     runs.length ? ask<TgAnswers>(st, failureKindQuestion()) : Promise.resolve(null),
     Promise.all(
       cands.map((c) =>
-        ask<TrackAnswer>(
-          {
-            ...st,
-            issue: {
-              number: c.number,
-              title: c.title,
-              state: c.state,
-              body: stripRuns(c.body).slice(0, 2500),
-              comments: (threads.get(`${c.repo}#${c.number}`)?.comments ?? []).map((x) => ({
-                author: x.author,
-                created_at: x.created_at,
-                body: stripRuns(x.body).slice(0, 1000),
-              })),
-            },
-          },
-          tracksQuestion(),
-        ),
+        ask<TrackAnswer>(withIssue(st, c, threads.get(`${c.repo}#${c.number}`)?.comments), tracksQuestion()),
       ),
     ),
   ]);
   const names = [facts.job, facts.tab].filter(Boolean);
   const scored = cands.map((c, i) => ({ c, p: answers[i]?.tracks?.noul ?? 0 }));
   // Only issues that could be the tracking one are read in full, and Jev says whether the thread already reports
-  // this job: that decides comment or not. The rest only show on the card, by the name in their body.
-  const named = await Promise.all(
-    scored.map(async ({ c, p }) => {
-      if (p < MAYBE_AT) return { named: names.some((n) => c.body.includes(n)), p: null };
-      const all = stripRuns(await d.issueText(c.repo, c.number).catch(() => c.body));
-      // The body and the newest comments, where a job added later is.
-      const thread = all.length > 16000 ? `${all.slice(0, 4000)}\n…\n${all.slice(-12000)}` : all;
-      const a = await ask<{ names_job?: { noul: number } }>(
-        {
-          job: facts.job,
-          tab: facts.tab,
-          issue: { number: c.number, title: c.title, state: c.state, thread },
-        },
-        namesJobQuestion(),
-      );
-      const q = a.names_job?.noul ?? 0;
-      return { named: q >= NAMED_AT, p: q };
-    }),
-  );
+  // this job: that decides comment or not. The rest only show on the card, by the name in their body. With two or
+  // more open tracking issues, Jev also says which is the main one: the one to comment on.
+  const tracking = scored.filter(({ c, p }) => c.state === "open" && p >= TRACKED_AT).map(({ c }) => c);
+  const [named, main] = await Promise.all([
+    Promise.all(
+      scored.map(async ({ c, p }) => {
+        if (p < MAYBE_AT) return { named: names.some((n) => c.body.includes(n)), p: null };
+        const [body, ...comments] = (await d.issueText(c.repo, c.number).catch(() => [c.body])).map(
+          stripRuns,
+        );
+        const issue = { number: c.number, title: c.title, state: c.state };
+        const base = { job: facts.job, tab: facts.tab, issue: { ...issue, thread: "" } };
+        // The whole thread; one too long for a state loses its oldest comments after the first.
+        const kept = fitMiddle(
+          comments,
+          (k) => size(base) + size([body ?? "", ...k].join("\n")),
+          MAX_STATE_CHARS,
+          (n) => `(${n} comments left out here: the thread is too long)`,
+        );
+        const a = await ask<{ names_job?: { noul: number } }>(
+          { ...base, issue: { ...issue, thread: [body ?? "", ...kept].join("\n") } },
+          namesJobQuestion(),
+        );
+        const q = a.names_job?.noul ?? 0;
+        return { named: q >= NAMED_AT, p: q };
+      }),
+    ),
+    tracking.length > 1 ? mainTracker(st, tracking, threads, ask) : Promise.resolve(null),
+  ]);
   const tracks: Track[] = scored
     .map(({ c, p }, i) => ({
       repo: c.repo,
@@ -393,6 +566,7 @@ export async function judgeTg(
           noul: t.p,
         }),
       ),
+    ...(main?.reading ?? []),
     ...scored.flatMap(({ c }, i) =>
       named[i]!.p === null
         ? []
@@ -413,6 +587,7 @@ export async function judgeTg(
     evidence,
     failure_kind: kind?.failure_kind ?? null,
     tracks,
+    ...(main ? { canonical: main.canonical } : {}),
     related,
     readings,
     usage,

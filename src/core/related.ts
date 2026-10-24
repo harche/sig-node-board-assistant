@@ -10,7 +10,8 @@
  *  Jev then reads each candidate against the issue, both with their threads (prompts/related.ts): the relation, and
  *  for a duplicate or same-root-cause match, whether one could be closed in favour of the other and what links them.
  *  Nothing here writes. */
-import { isBot } from "./boards";
+import { isBot, isProwOnly } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { SearchQuery, ThreadIssue } from "./github";
 import type { JevClient } from "./jev";
 import { RELATION_QUESTION, VERIFY_QUESTIONS } from "./prompts/related";
@@ -114,8 +115,9 @@ export function xrefs(text: string, repo: string): number[] {
   return [...new Set([...text.matchAll(re)].map((m) => Number(m[1])))];
 }
 
+/** No bots and no comment that is only Prow commands; a command followed by words keeps its words. */
 const humanComments = (cs: { author: string; body: string }[]) =>
-  cs.filter((c) => !isBot(c.author) && c.body.trim() && !/^\s*\/[a-z-]+/.test(c.body.trim()));
+  cs.filter((c) => !isBot(c.author) && c.body.trim() && !isProwOnly(c.body));
 
 /** Every search, tagged with its source (for tracing; the sources are merged). */
 export function candidateQueries(
@@ -178,8 +180,10 @@ export function mergeCandidates(results: number[][], linked: number[], self: num
 
 // ---------------------------------------------------------------------------------------------------- judging
 
-/** What Jev reads of one issue: no bots, no comment that is only a Prow command, the last 10 comments. */
-function facet(x: {
+/** What Jev reads of one issue: the whole body without its HTML comments (the template's hints), and every human
+ *  comment in full (humanComments). Two go in each state, so each keeps to half the guard: past it the comments go
+ *  from the middle, oldest first, then the body's middle. */
+export function facet(x: {
   number: number;
   created: string;
   title: string;
@@ -187,16 +191,24 @@ function facet(x: {
   body: string;
   comments: { author: string; body: string }[];
 }) {
-  return {
+  const max = MAX_STATE_CHARS / 2;
+  const f = {
     number: x.number,
     created: x.created.slice(0, 10),
     title: x.title,
     labels: x.labels.filter((l) => /^(kind|area|sig)\//.test(l)),
-    body: x.body.replace(/<!--[\s\S]*?-->/g, "").slice(0, 4000),
-    comments: humanComments(x.comments)
-      .slice(-10)
-      .map((c) => ({ author: c.author, text: c.body.slice(0, 800) })),
+    body: x.body.replace(/<!--[\s\S]*?-->/g, "").trim(),
+    comments: humanComments(x.comments).map((c) => ({ author: c.author, text: c.body })),
   };
+  f.comments = fitMiddle(
+    f.comments,
+    (kept) => size({ ...f, comments: kept }),
+    max,
+    (n) => ({ author: "", text: `(${n} comments left out here: the thread is too long)` }),
+  );
+  const over = size(f) - max;
+  if (over > 0) f.body = fitText(f.body, Math.max(0, f.body.length - over));
+  return f;
 }
 
 /** Which bucket a candidate falls in, from its relation and (for a duplicate) its verification. */

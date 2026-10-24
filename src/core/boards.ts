@@ -127,3 +127,13 @@ export const BOTS = new Set([
 export function isBot(login: string): boolean {
   return login.endsWith("[bot]") || BOTS.has(login);
 }
+
+const PROW_LINE = /^\s*\/[a-z-]+(?:\s.*)?$/i;
+
+/** A comment that is only Prow commands (`/retest`, `/sig node`, `/triage accepted` …), one per line, blank lines
+ *  allowed: it carries no evidence (a /sig or /area among them reaches Jev as `human_routing`). Checked line by line:
+ *  a single pattern over the whole body backtracks exponentially on a run of command lines followed by a word. */
+export function isProwOnly(body: string): boolean {
+  const lines = body.split(/\r?\n/).filter((l) => l.trim());
+  return lines.length > 0 && lines.every((l) => PROW_LINE.test(l));
+}

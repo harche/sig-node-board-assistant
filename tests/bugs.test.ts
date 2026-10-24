@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bugLabels,
+  bugState,
   bugSteps,
   decideBug,
   isBugComment,
@@ -198,6 +199,30 @@ describe("judgeBug", () => {
     expect(bugSteps(item, r, "accept").map((s) => s.kind)).toEqual(["comment", "move"]);
   });
 
+  it("asks the reading, the SIG and the priority in one call, and what is missing only for a needs-info card", async () => {
+    const calls: string[][] = [];
+    const client = {
+      ask: async (_s: unknown, q: Record<string, unknown>) => {
+        calls.push(Object.keys(q));
+        return {
+          answers: {
+            ...answers({ info: 0.2 }),
+            sig: choice({ storage: 1 }),
+            priority: { type: "score", score: 0, confidence: 0, probabilities: { "1": 1 } },
+          },
+          usage: { input_tokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as JevClient;
+    const r = await judgeBug(item, detail([]), client);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(
+      expect.arrayContaining(["report", "owner", "dra", "enough_information", "sig", "priority"]),
+    );
+    expect(calls[1]!.every((k) => k.startsWith("missing_"))).toBe(true);
+    expect(r).toMatchObject({ sig: "storage", priority: "important-longterm" });
+  });
+
   it("falls back to important-longterm when the score has no levels", async () => {
     const r = await judgeBug(item, detail([]), jev({}).client);
     expect(r).toMatchObject({ priority: "important-longterm", priority_why: "default; Jev gave no level" });
@@ -249,5 +274,46 @@ describe("readings", () => {
       label: "Priority",
       probabilities: { "critical-urgent": 0, "important-soon": 0, "important-longterm": 0.9, backlog: 0.1 },
     });
+  });
+});
+
+describe("bugState", () => {
+  const d = (body: string, comments: [string, string][]): ItemDetail => ({
+    title: "t",
+    body,
+    labels: [],
+    state: "OPEN",
+    author: { login: "rep" },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: "u",
+    comments: comments.map(([login, b]) => ({
+      author: { login },
+      createdAt: "2026-09-02T00:00:00Z",
+      body: b,
+    })),
+  });
+
+  it("keeps the bug form's tail (version, OS, runtime) and every human comment in full", () => {
+    const body = `### What happened?\n${"log line\n".repeat(2000)}### Kubernetes version\nv1.36.2\n### OS\nUbuntu 24.04\n### Container runtime\ncontainerd 2.1.6`;
+    const comments = Array.from({ length: 12 }, (_, k): [string, string] => [
+      `u${k}`,
+      `${k} ${"y".repeat(1500)}`,
+    ]);
+    const st = bugState(item, d(body, comments));
+    expect(st.description).toBe(body);
+    expect(st.human_comments).toHaveLength(12);
+    expect(st.human_comments[0]!.text).toHaveLength(1502);
+  });
+
+  it("leaves out comments that are only Prow commands, and lists the routing ones", () => {
+    const st = bugState(
+      item,
+      d("b", [
+        ["maint", "/sig node\n/triage accepted"],
+        ["rep", "it still happens on 1.36"],
+      ]),
+    );
+    expect(st.human_comments.map((c) => c.author)).toEqual(["rep (reporter)"]);
+    expect(st.human_routing).toEqual([{ author: "maint", command: "/sig node" }]);
   });
 });

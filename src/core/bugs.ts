@@ -12,7 +12,8 @@
  *  information) and 140/195 (accept, the base rate); feature requests, other SIGs and the less sure calls agreed
  *  far less often, so they wait for the reviewer. */
 import { choiceReading, noulReading, type Reading } from "./readings";
-import { isBot } from "./boards";
+import { isBot, isProwOnly } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { JevClient } from "./jev";
 import { f2 } from "./policy";
 import {
@@ -323,17 +324,17 @@ export function isBugComment(body: string): boolean {
 // ---------------------------------------------------------------------------------------------------- judging
 
 const SIG_NODE = /^\s*\/sig\s+node\b/im;
-
-/** What Jev reads: the report and the human thread, never labels (bot- and reporter-set, unreliable). */
+/** What Jev reads: the whole report (a bug form ends with the version, OS and runtime) and every human comment in
+ *  full, never labels (bot- and reporter-set, unreliable). Past the guard (fit.ts), comments go from the middle,
+ *  then the description's middle. */
 export function bugState(item: BoardItem, d: ItemDetail) {
   const reporter = d.author.login;
   const human = d.comments
-    .filter((c) => !isBot(c.author.login) && c.body.trim())
+    .filter((c) => !isBot(c.author.login) && c.body.trim() && !isProwOnly(c.body))
     .map((c) => ({
       author: c.author.login === reporter ? `${c.author.login} (reporter)` : c.author.login,
-      text: c.body.slice(0, 1000),
-    }))
-    .slice(-10);
+      text: c.body,
+    }));
   const routing = d.comments
     .filter((c) => !isBot(c.author.login))
     .flatMap((c) =>
@@ -342,14 +343,23 @@ export function bugState(item: BoardItem, d: ItemDetail) {
         command: `/${m[1] ?? ""}${m[2]!.toLowerCase()} ${m[3]!.toLowerCase()}`,
       })),
     );
-  return {
+  const st = {
     type: "issue",
     repository: item.repository,
     title: d.title,
-    description: (d.body ?? "").slice(0, 8000),
+    description: d.body ?? "",
     human_comments: human,
     ...(routing.length ? { human_routing: routing } : {}),
   };
+  st.human_comments = fitMiddle(
+    human,
+    (kept) => size({ ...st, human_comments: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({ author: "", text: `(${n} comments left out here: the thread is too long)` }),
+  );
+  const over = size(st) - MAX_STATE_CHARS;
+  if (over > 0) st.description = fitText(st.description, st.description.length - over);
+  return st;
 }
 
 function scorePriority(s: JevScore | undefined): { priority: string; why: string } {
@@ -416,34 +426,30 @@ export async function judgeBug(item: BoardItem, d: ItemDetail, jev: JevClient): 
     if (!labels.priority) setPriority(r, await ask<{ priority: JevScore }>(priorityQuestion()));
     return r;
   }
+  // One call for the reading, which SIG would own it (asked every time, so the reviewer can hand any card over) and
+  // the priority (asked for any open card without one, since the reviewer may still pick Accept): the same questions
+  // on the same state, each answered on its own.
+  const prioQ = labels.priority ? {} : priorityQuestion();
   if (!labels.triage_accepted) {
-    // Which SIG would own it is asked every time (Jev calls are near free), so the reviewer can hand any card over.
-    const [answers, sig] = await Promise.all([
-      ask<BugAnswers>(bugQuestions()),
-      ask<{ sig: JevChoice }>(sigQuestion()),
-    ]);
-    r.answers = answers;
-    r.sig = OTHER_SIGS.includes(sig.sig.choice as never) ? sig.sig.choice : null;
+    const a = await ask<BugAnswers & { sig: JevChoice; priority?: JevScore }>({
+      ...bugQuestions(),
+      ...sigQuestion(),
+      ...prioQ,
+    });
+    r.answers = { report: a.report, owner: a.owner, dra: a.dra, enough_information: a.enough_information };
+    r.sig = OTHER_SIGS.includes(a.sig.choice as never) ? a.sig.choice : null;
     r.readings = [
-      ...choiceReading("Kind of report", answers.report),
-      ...choiceReading("Owner", answers.owner),
-      ...choiceReading("Which SIG owns the code", sig.sig),
-      ...noulReading(
-        "Enough information",
-        answers.enough_information,
-        answers.enough_information.noul < INFO_ASK_AT,
-      ),
-      ...noulReading("About DRA", answers.dra),
+      ...choiceReading("Kind of report", a.report),
+      ...choiceReading("Owner", a.owner),
+      ...choiceReading("Which SIG owns the code", a.sig),
+      ...noulReading("Enough information", a.enough_information, a.enough_information.noul < INFO_ASK_AT),
+      ...noulReading("About DRA", a.dra),
     ];
-  }
-  const first = decideBug(r);
-  // The follow-up questions only for the actions that use them. The priority is asked for any open card without
-  // one, since the reviewer may still pick Accept.
-  const [prio, missing] = await Promise.all([
-    labels.priority ? null : ask<{ priority: JevScore }>(priorityQuestion()),
-    first.action === "needs_info" ? ask<Record<string, JevNoul>>(missingQuestions()) : null,
-  ]);
-  if (prio) setPriority(r, prio);
+    if (!labels.priority) setPriority(r, { priority: a.priority! });
+  } else if (!labels.priority) setPriority(r, await ask<{ priority: JevScore }>(prioQ));
+  // What to ask the reporter for, only when that is the action.
+  const missing =
+    decideBug(r).action === "needs_info" ? await ask<Record<string, JevNoul>>(missingQuestions()) : null;
   if (missing)
     r.readings = [
       ...(r.readings ?? []),

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { decideIssueCi, type IssueCiResult } from "../src/core/issuecheck";
+import { decideIssueCi, judgeIssueCi, type IssueCiResult } from "../src/core/issuecheck";
+import type { JevClient } from "../src/core/jev";
+import type { TestGridClient } from "../src/core/testgrid";
+import type { ItemDetail } from "../src/core/types";
 import type { RelatedMatch } from "../src/core/related";
 import { newestFailure, type JobSignal, type TgTable } from "../src/core/testgrid";
 
@@ -136,5 +139,72 @@ describe("newestFailure", () => {
       started: 20,
     });
     expect(newestFailure(tbl, { name: "t", statuses: [{ count: 3, value: 1 }] })).toBeNull();
+  });
+});
+
+describe("judgeIssueCi", () => {
+  it("asks whether the newest failure is the issue's with its whole body and people's comments", async () => {
+    const asked: { id: string; s: Record<string, unknown> }[] = [];
+    const jev = {
+      ask: async (s: Record<string, unknown>, q: Record<string, unknown>) => {
+        asked.push({ id: Object.keys(q)[0]!, s });
+        return {
+          answers: {
+            resolved: { type: "noul", noul: 0.1 },
+            resolution: { type: "choice", choice: "still_open", confidence: 1, probabilities: {} },
+            tracks: { type: "noul", noul: 0.8 },
+          },
+          usage: { input_tokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as JevClient;
+    const tbl: TgTable = {
+      query: "kubernetes-ci-logs/logs/ci-node-e2e",
+      timestamps: [2_000_000],
+      column_ids: ["b1"],
+      tests: [{ name: "ci-node-e2e.Overall", statuses: [{ count: 1, value: 12 }] }],
+    };
+    const tg = {
+      ciSignal: async () => [job({ named_in_title: true })],
+      table: async () => tbl,
+    } as unknown as TestGridClient;
+    const body = `ci-node-e2e fails. ${"details ".repeat(600)}`;
+    const detail: ItemDetail = {
+      title: "[Failing Test] ci-node-e2e",
+      body,
+      labels: [{ name: "sig/node" }],
+      state: "OPEN",
+      author: { login: "a" },
+      createdAt: "2026-01-01T00:00:00Z",
+      url: "u",
+      comments: [
+        { author: { login: "k8s-triage-robot" }, body: "stale", createdAt: "2026-01-02T00:00:00Z" },
+        {
+          author: { login: "erin" },
+          body: "It now fails in the eviction step instead.",
+          createdAt: "2026-01-03T00:00:00Z",
+        },
+      ],
+    };
+    const fetchFn = (async (u: string) =>
+      u.includes("/storage/v1/")
+        ? new Response('{"items":[]}')
+        : u.endsWith("finished.json")
+          ? new Response('{"result":"FAILURE"}')
+          : new Response("[FAILED] eviction timed out\nRan 1 of 2 Specs")) as unknown as typeof fetch;
+    const r = await judgeIssueCi({ tg, jev, fetchFn }, "kubernetes/kubernetes", 1, detail, [], 3_000_000);
+    expect(r?.newest?.tracks).toBe(0.8);
+    const issue = asked.find((a) => a.id === "tracks")!.s.issue as {
+      body: string;
+      comments: { author: string; body: string }[];
+    };
+    expect(issue.body).toBe(body);
+    expect(issue.comments).toEqual([
+      {
+        author: "erin",
+        created_at: "2026-01-03T00:00:00Z",
+        body: "It now fails in the eviction step instead.",
+      },
+    ]);
   });
 });

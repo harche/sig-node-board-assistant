@@ -4,10 +4,11 @@
  *
  *  Code computes the facts: the run history from TestGrid's table, and from each failed run's artifacts in GCS the
  *  failed junit test cases (by their real name, not the suite's classname) and the build log's signal lines
- *  (Ginkgo's failure markers and summary, timeouts and kills, or the job's last lines when no test ran). A build
- *  log's tail is the kubetest wrapper's traceback on every failed run, so it says nothing. Jev judges from those
- *  facts: what kind of failure it is, and whether each candidate issue tracks it. Evaluated on 2026-06..09 issues
- *  (docs/design.md): kind 24/26, the tracking issue found 25/28 at P ≥ 0.65. */
+ *  (Ginkgo's failure markers with the diff after them, its summary, timeouts and kills, or the job's last lines when
+ *  no test ran). A build log's tail is the kubetest wrapper's traceback on every failed run, so it says nothing. Jev
+ *  judges from those facts: what kind of failure it is, whether each candidate issue tracks it, and when several
+ *  do, which one is the main one. Evaluated on 2026-06..09 issues (docs/design.md): kind 24/26, the tracking issue
+ *  found 25/28 at P ≥ 0.65. */
 import type { JevChoice, JevNoul, JevUsage } from "./types";
 import type { Reading } from "./readings";
 import type { TgTable } from "./testgrid";
@@ -16,6 +17,8 @@ export const TRACKED_AT = 0.65;
 export const MAYBE_AT = 0.35;
 /** Jev's P(the thread already reports this job) at which a comment adding it would repeat it. */
 export const NAMED_AT = 0.5;
+/** Jev's P that one of several tracking issues is the main one, at which it is the one to comment on. */
+export const CANONICAL_AT = 0.5;
 /** A FLAKY job worth an issue: this many failed runs, or this share of runs (the CLI's "frequent"). */
 export const FREQUENT_RUNS = 5;
 export const FREQUENT_SHARE = 0.2;
@@ -44,7 +47,7 @@ export interface JobFacts {
   streak: number;
   first_failure_days_ago: number | null;
   last_pass_days_ago: number | null;
-  /** Test rows that failed in the window, most failures first; harness rows (Overall, kubetest.*) left out. */
+  /** Every test row that failed in the window, most failures first; harness rows (Overall, kubetest.*) left out. */
   failing_tests: { name: string; failed: number }[];
   /** Only harness rows fail: the job breaks around its tests, not in them. */
   harness_only: boolean;
@@ -96,7 +99,7 @@ export function jobFacts(
     streak,
     first_failure_days_ago: failed.length ? ago(failed.at(-1)!) : null,
     last_pass_days_ago: ago(lastPass),
-    failing_tests: tests.slice(0, 12),
+    failing_tests: tests,
     harness_only: failed.length > 0 && tests.length === 0,
     failed_builds: failed
       .slice(0, keep)
@@ -120,10 +123,16 @@ export interface RunEvidence {
   /** Prow's page for the run. */
   url: string;
   result: string | null;
+  /** Every failed test case in the run's junit files (at most JUNIT_FILES of them), each once. */
   junit_failures: JunitFailure[];
+  /** How many there are: Jev's state may leave some out to fit (fit.ts). Absent in older results. */
+  junit_total?: number;
   /** Null when the build log could not be read. */
   log_signals: string[] | null;
 }
+
+/** Junit files read per run, at most: a node e2e run writes one per parallel node and per serial suite. */
+export const JUNIT_FILES = 50;
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 const unescape = (s: string) =>
@@ -141,35 +150,77 @@ const attr = (a: string, k: string) => new RegExp(`(?:^|\\s)${k}="([^"]*)"`).exe
 
 /** A failure message that says nothing ("Failed", "see stderr for details"): the case's output says what failed. */
 const GENERIC = /^(?:failed|failure|error|see stderr for details|)$/i;
-const cdata = (s: string) =>
-  unescape(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"))
-    .replace(/\s+/g, " ")
-    .trim();
+/** A failure's text line by line (Go's output and Gomega's diffs are read by line), blank lines dropped and runs of
+ *  spaces inside a line squeezed. */
+const squeeze = (s: string) =>
+  s
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, "").replace(/(\S)\s+/g, "$1 "))
+    .filter((l) => l.trim())
+    .join("\n");
+const cdata = (s: string) => squeeze(unescape(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"))).trim();
+
+/** A junit failure's message is cut at this many characters. */
+const MSG = 3000;
+/** Lines of a Go test's output kept before each `--- FAIL:` line: the assertion that ended the test, testify's
+ *  Error Trace / Error / Messages, a diff. */
+const BEFORE_FAIL = 10;
+
+/** A failure's text within MSG. A long Go test's output is mostly `=== RUN` and its logs (whose `x_test.go:N:` lines
+ *  look like assertions); what failed is just above each `--- FAIL:`, so those lines are kept, with a panic and the
+ *  lines after it, "…" where lines go. */
+function failureText(s: string): string {
+  if (s.length <= MSG) return s;
+  const lines = s.split("\n");
+  if (lines.some((l) => /^\s*--- FAIL:/.test(l))) {
+    const keep = new Set<number>();
+    lines.forEach((l, i) => {
+      if (/^\s*--- FAIL:/.test(l)) for (let k = Math.max(0, i - BEFORE_FAIL); k <= i; k++) keep.add(k);
+      if (/^panic:/.test(l)) for (let k = i; k < Math.min(lines.length, i + 10); k++) keep.add(k);
+    });
+    const out: string[] = [];
+    let prev = -1;
+    for (const i of [...keep].sort((a, b) => a - b)) {
+      if (i > prev + 1) out.push("…");
+      out.push(lines[i]!);
+      prev = i;
+    }
+    s = out.join("\n");
+  }
+  return s.length <= MSG ? s : `${s.slice(0, MSG - 1)}…`;
+}
 
 /** Failed test cases of one junit file, by the test's `name` (not the suite's `classname`, which comes first in
  *  Ginkgo's output and names every case "E2eNode Suite"). A generic message is replaced by the failure's text, else
- *  the case's stderr (a verify script's reason is only there). */
+ *  the end of the case's stderr (a verify script's reason is only there). */
 export function junitFailures(xml: string): JunitFailure[] {
   const out: JunitFailure[] = [];
   for (const m of xml.matchAll(/<testcase\b([^>]*)>([\s\S]*?)<\/testcase>/g)) {
     const f = /<failure\b([^>]*)>([\s\S]*?)<\/failure>|<failure\b([^>]*)\/>/.exec(m[2]!);
     if (!f) continue;
-    let msg = unescape(attr(f[1] ?? f[3] ?? "", "message"))
-      .replace(/\s+/g, " ")
-      .trim();
+    let msg = squeeze(unescape(attr(f[1] ?? f[3] ?? "", "message"))).trim();
     if (GENERIC.test(msg)) msg = cdata(f[2] ?? "");
     if (GENERIC.test(msg)) {
       const err = cdata(/<system-err>([\s\S]*?)<\/system-err>/.exec(m[2]!)?.[1] ?? "");
-      if (err) msg = err.slice(-400);
+      if (err) msg = err.length > MSG ? `…${err.slice(-(MSG - 1))}` : err;
     }
     const classname = unescape(attr(m[1]!, "classname"));
     out.push({
       test: unescape(attr(m[1]!, "name")).slice(0, 250),
       ...(classname && !/suite$/i.test(classname) ? { classname: classname.slice(0, 150) } : {}),
-      message: msg.slice(0, 400),
+      message: failureText(msg),
     });
   }
   return out;
+}
+
+/** A run's failures from all its junit files, each once: a case reported in two files is one failure. */
+export function uniqueFailures(fs: JunitFailure[]): JunitFailure[] {
+  const seen = new Set<string>();
+  return fs.filter((f) => {
+    const k = `${f.classname ?? ""}\u0000${f.test}\u0000${f.message}`;
+    return !seen.has(k) && (seen.add(k), true);
+  });
 }
 
 const SIGNAL =
@@ -178,35 +229,73 @@ const NOISE =
   /^\s*File "|^\s*raise |^\+ |check_call|CalledProcessError|^\s*$|ENTRYPOINT_OPTIONS|JOB_SPEC|^Run: /;
 const TEST_OUTPUT = /\[FAILED\]|\[TIMEDOUT\]|Ran \d+ of \d+ Specs|--- FAIL/;
 const END = /^\+ atexit|EXIT_VALUE=|Cleaning up after docker|CalledProcessError/;
+/** How the run ended: kept however many failures came before. */
+const ENDING =
+  /Ran \d+ of \d+ Specs|Test Suite Failed|A suite timeout occurred|kubetest --timeout|did not finish before|Entrypoint received interrupt|signal: killed|^\s*FAIL! -- /;
+/** Lines taken after a [FAILED] or [TIMEDOUT] marker: Gomega's "Expected … to equal …" and where it failed. */
+const AFTER = 6;
+/** A log line is cut at this many characters. */
+const LINE = 1000;
 
-/** The lines of a build log that say what failed, deduplicated, about `cap` characters in all. */
-export function signalLines(log: string, cap = 5000): string[] {
+/** The lines of a build log that say what failed, about `cap` characters in all. The whole log is read: each signal
+ *  line once (by its text with numbers and ids masked), a [FAILED] or [TIMEDOUT] marker with the AFTER lines after
+ *  it, and Ginkgo's failure summary through "Ran N of M Specs". The summary and how the run ended are always kept;
+ *  when the rest is over `cap`, the earliest of it is kept and a line says how many groups were left out. */
+export function signalLines(log: string, cap = 30_000): string[] {
   const lines = log.split("\n");
   const seen = new Set<string>();
-  const out: string[] = [];
-  let n = 0;
-  const add = (line: string) => {
-    const key = line
+  const key = (l: string) =>
+    l
       .trim()
       .replace(/[0-9a-f]{6,}|\d+/g, "#")
       .slice(0, 160);
-    if (seen.has(key) || NOISE.test(line)) return;
-    seen.add(key);
-    const s = line.trim().slice(0, 300);
-    out.push(s);
-    n += s.length;
-  };
-  for (let i = 0; i < lines.length && n <= cap; i++) {
+  const clean = (l: string) => l.trim().slice(0, LINE);
+  // In log order: a signal line with the lines after it, or the summary. `end` groups are always kept.
+  const groups: { lines: string[]; end: boolean }[] = [];
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    if (/Summarizing \d+ Failure/.test(line)) lines.slice(i, i + 25).forEach(add);
-    else if (SIGNAL.test(line)) add(line);
+    const sum = /Summarizing (\d+) Failure/.exec(line);
+    if (sum) {
+      // Two or three lines a failure (Ginkgo's own), through "Ran N of M Specs".
+      const g: string[] = [];
+      const stop = Math.min(lines.length, i + 3 * Number(sum[1]) + 10) - 1;
+      for (; ; i++) {
+        if (!NOISE.test(lines[i]!)) g.push(clean(lines[i]!));
+        if (i >= stop || /Ran \d+ of \d+ Specs/.test(lines[i]!)) break;
+      }
+      g.forEach((l) => seen.add(key(l)));
+      groups.push({ lines: g, end: true });
+      continue;
+    }
+    if (!SIGNAL.test(line) || NOISE.test(line) || seen.has(key(line))) continue;
+    seen.add(key(line));
+    const g = [clean(line)];
+    if (/\[FAILED\]|\[TIMEDOUT\]/.test(line))
+      for (const l of lines.slice(i + 1, i + 1 + AFTER)) {
+        if (SIGNAL.test(l)) break;
+        if (!NOISE.test(l)) g.push(clean(l));
+      }
+    groups.push({ lines: g, end: ENDING.test(line) });
   }
+  const len = (g: { lines: string[] }) => g.lines.reduce((n, l) => n + l.length, 0);
+  let room = cap - groups.filter((g) => g.end).reduce((n, g) => n + len(g), 0);
+  let [left, at] = [0, -1];
+  const out: string[] = [];
+  for (const g of groups) {
+    if (!g.end && (left || len(g) > room)) {
+      if (!left++) at = out.push("") - 1;
+      continue;
+    }
+    if (!g.end) room -= len(g);
+    out.push(...g.lines);
+  }
+  if (left) out[at] = `… ${left} more signal lines, with the lines after them, left out here`;
   if (!out.some((l) => TEST_OUTPUT.test(l))) {
     // No test output: the job died before or around its tests. Its last words before cleanup say why.
     let end = lines.findIndex((l) => END.test(l));
     if (end < 0) end = lines.length;
-    for (const l of lines.slice(Math.max(0, end - 25), end))
-      if (l.trim() && !/^\s*File "|^\s*raise /.test(l)) out.push(l.trim().slice(0, 300));
+    for (const l of lines.slice(Math.max(0, end - 50), end))
+      if (l.trim() && !/^\s*File "|^\s*raise /.test(l)) out.push(clean(l));
   }
   return out;
 }
@@ -293,6 +382,9 @@ export interface TgResult {
   failure_kind: JevChoice | null;
   /** Candidates with Jev's P(tracks), highest first. */
   tracks: Track[];
+  /** When two or more open candidates track it: the one Jev reads as the main tracking issue, with its P, or null
+   *  when it names none at CANONICAL_AT (or could not answer). Absent with fewer, and in older results. */
+  canonical?: { repo: string; number: number; p: number } | null;
   /** Issues the failure's own words found that cause it or group it (relatedRuns); absent in older results. */
   related?: TgRelated[];
   readings?: Reading[];
@@ -313,8 +405,9 @@ export interface TgRelated {
 }
 
 /** Umbrella candidates: SIG Node's open flake and failing-test issues. Their titles are broad ("Probe tests are
- *  flaking often on some jobs"), so neither a test's words nor its meaning find them; Jev reads the whole open pool,
- *  outside the searches' cap. */
+ *  flaking often on some jobs"), so neither a test's words nor its meaning find them; Jev reads the whole open pool
+ *  (searched page by page, up to POOL_MAX), outside the searches' cap. */
+export const POOL_MAX = 500;
 export function umbrellaPool(repo: string): string[] {
   return ["kind/flake", "kind/failing-test"].map(
     (l) => `repo:${repo} is:issue is:open label:sig/node label:${l}`,
@@ -372,17 +465,25 @@ export function relatedQueries(
 
 export type TgVerdict = "tracked" | "regression" | "maybe" | "untracked";
 
-export function verdict(r: TgResult): { verdict: TgVerdict; issue: Track | null } {
+/** `unsure`: several open issues track it and Jev named none of them the main one, so `issue` is only the one it
+ *  scores highest. */
+export function verdict(r: TgResult): { verdict: TgVerdict; issue: Track | null; unsure?: boolean } {
   const top = r.tracks[0] ?? null;
   if (!top || top.p < MAYBE_AT) return { verdict: "untracked", issue: null };
   if (top.p < TRACKED_AT) return { verdict: "maybe", issue: top };
-  // Several open issues track it. One that already reports the job wins (highest score first): commenting on another
-  // would report it twice. Otherwise the one with the most recent activity, the one people follow.
   const tracking = r.tracks.filter((t) => t.state === "open" && t.p >= TRACKED_AT);
-  const open =
-    tracking.find((t) => t.names_job) ??
-    [...tracking].sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))[0];
-  if (open) return { verdict: "tracked", issue: open };
+  if (tracking.length === 1) return { verdict: "tracked", issue: tracking[0]! };
+  if (tracking.length) {
+    // Several open issues track it: the one Jev read as the main one, from their threads (canonicalQuestion). But
+    // one that already names the job wins over a pick that does not: commenting on another would report it twice.
+    const c = r.canonical;
+    const pick = c && tracking.find((t) => t.repo === c.repo && t.number === c.number);
+    const naming = tracking.filter((t) => t.names_job);
+    if (naming.length) return { verdict: "tracked", issue: pick?.names_job ? pick : naming[0]! };
+    return pick
+      ? { verdict: "tracked", issue: pick }
+      : { verdict: "tracked", issue: tracking[0]!, unsure: true };
+  }
   return { verdict: "regression", issue: top };
 }
 
@@ -413,14 +514,22 @@ export function decideTg(r: TgResult): { action: TgAction; why: string; auto: bo
   const f = r.facts;
   const ref = (t: Track) => `${t.repo === "kubernetes/kubernetes" ? "" : t.repo}#${t.number}`;
   switch (v.verdict) {
-    case "tracked":
+    case "tracked": {
+      const several = v.unsure
+        ? `; ${r.tracks.filter((t) => t.state === "open" && t.p >= TRACKED_AT).length} open issues track it and none is clearly the main one`
+        : "";
       return v.issue!.names_job
-        ? { action: "keep", why: `tracked by ${ref(v.issue!)} (${pct(v.issue!.p)})`, auto: true }
+        ? {
+            action: "keep",
+            why: `tracked by ${ref(v.issue!)} (${pct(v.issue!.p)})${several}`,
+            auto: !v.unsure,
+          }
         : {
             action: "comment",
-            why: `tracked by ${ref(v.issue!)} (${pct(v.issue!.p)}), which does not name ${f.job} yet`,
-            auto: true,
+            why: `tracked by ${ref(v.issue!)} (${pct(v.issue!.p)}), which does not name ${f.job} yet${several}`,
+            auto: !v.unsure,
           };
+    }
     case "regression":
       return {
         action: "file",

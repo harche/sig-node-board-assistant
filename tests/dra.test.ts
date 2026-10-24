@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   decideDra,
   draActions,
+  draIssueState,
   draLabel,
   draSteps,
+  judgeDra,
   releaseCycle,
   type DraColumn,
   type DraResult,
 } from "../src/core/dra";
-import type { BoardItem, JevChoice } from "../src/core/types";
+import type { JevClient } from "../src/core/jev";
+import type { BoardItem, ItemDetail, JevChoice, LinkedPr } from "../src/core/types";
 
 const lane = (choice: string, p: number): JevChoice => ({
   type: "choice",
@@ -169,4 +172,97 @@ describe("releaseCycle", () => {
     // Past the table, one release every 17 weeks.
     ["2026-12-20", "1.38", "1.39"],
   ])("%s", (d, latest, development) => expect(releaseCycle(Date.parse(d))).toEqual({ latest, development }));
+});
+
+describe("draIssueState", () => {
+  const NOW = Date.parse("2026-10-24T00:00:00Z"); // 1.38 in development
+  const issue = {
+    id: "PVTI",
+    restId: 7,
+    repository: "kubernetes/kubernetes",
+    number: 1,
+    assignees: [],
+  } as unknown as BoardItem;
+  const d = (milestone: string | null): ItemDetail => ({
+    title: "DRA: device taints follow-up",
+    body: "b",
+    labels: [{ name: "wg/device-management" }, { name: "kind/feature" }],
+    state: "OPEN",
+    author: { login: "rep" },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: "u",
+    milestone,
+    comments: [
+      {
+        author: { login: "maint" },
+        createdAt: "2026-09-02T00:00:00Z",
+        body: "/assign\n/priority important-soon",
+      },
+      { author: { login: "k8s-ci-robot" }, createdAt: "2026-09-02T00:00:00Z", body: "Thanks for your PR" },
+      {
+        author: { login: "maint" },
+        createdAt: "2026-09-03T00:00:00Z",
+        body: `I'll take it. ${"z".repeat(2000)}`,
+      },
+    ],
+  });
+  const prs: LinkedPr[] = Array.from({ length: 7 }, (_, k) => ({
+    repository: "kubernetes/kubernetes",
+    number: 100 + k,
+    title: `part ${k}`,
+    author: "a",
+    state: "open",
+    createdAt: "2026-09-10T00:00:00Z",
+    mergedAt: null,
+    body: `<!-- Thanks for sending a pull request! ${"t".repeat(1500)} -->\n#### What this PR does\npart ${k} of the follow-up`,
+  }));
+
+  it("sends every linked PR with its whole description, template comments stripped", () => {
+    const st = draIssueState(issue, d(null), prs, NOW);
+    expect(st.linked_prs.map((p) => p.pr)).toContain("kubernetes/kubernetes#106");
+    expect(st.linked_prs).toHaveLength(7);
+    expect(st.linked_prs[6]!.description).toBe("#### What this PR does\npart 6 of the follow-up");
+  });
+
+  it("sends human comments in full, without bots or command-only ones", () => {
+    const st = draIssueState(issue, d(null), prs, NOW);
+    expect(st.human_comments).toHaveLength(1);
+    expect(st.human_comments[0]!.text).toHaveLength(2014);
+  });
+
+  it("sends the milestone, and whether it is the release in development", () => {
+    expect(draIssueState(issue, d("v1.38"), prs, NOW)).toMatchObject({
+      milestone: "v1.38",
+      milestone_is_development_cycle: true,
+      development_cycle: "1.38",
+    });
+    expect(draIssueState(issue, d("v1.39"), prs, NOW)).toMatchObject({
+      milestone: "v1.39",
+      milestone_is_development_cycle: false,
+    });
+  });
+
+  it("keeps every linked PR on the result, the 7th included", async () => {
+    const jev = {
+      ask: async () => ({ answers: { lane: lane("ready", 0.8) }, usage: { input_tokens: 0, cost: 0 } }),
+    } as unknown as JevClient;
+    const open = {
+      ...issue,
+      type: "Issue",
+      state: "OPEN",
+      merged: false,
+      draft: false,
+      title: "t",
+      url: "u",
+    } as BoardItem;
+    const r = await judgeDra(
+      "new",
+      open,
+      jev,
+      { detail: async () => d("v1.38"), linkedPrs: async () => prs },
+      NOW,
+    );
+    expect(r.linked_prs.map((p) => p.number)).toEqual([100, 101, 102, 103, 104, 105, 106]);
+    expect(r.milestone).toBe("v1.38");
+  });
 });

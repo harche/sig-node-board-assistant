@@ -9,9 +9,14 @@ import {
   holder,
   lastPing,
   prEvents,
+  references,
   repingBody,
+  reviewFacts,
+  reviewQuestions,
+  sinceAuthor,
   type ReviewResult,
 } from "../src/core/reviewer";
+import type { BoardItem } from "../src/core/types";
 import type { ItemDetail } from "../src/core/types";
 
 const NOW = Date.parse("2026-09-25T00:00:00Z");
@@ -162,7 +167,11 @@ describe("facts", () => {
       [],
       NOW,
     );
-    expect(e[0]).toMatchObject({ kind: "review", who: "rev", text: "(inline review comments, not shown)" });
+    expect(e[0]).toMatchObject({
+      kind: "review",
+      who: "rev",
+      text: "(inline review comments only: see the comments at the same time)",
+    });
   });
 
   it("finds the latest ping to someone by someone else", () => {
@@ -177,6 +186,96 @@ describe("facts", () => {
     );
     expect(lastPing(e, "sam")).toBe(9);
     expect(lastPing(e, "zed")).toBeNull();
+  });
+});
+
+describe("the whole thread", () => {
+  const item = { id: "i", restId: 1, repository: "o/r", number: 1 } as BoardItem;
+  const pad = "Some review discussion. ".repeat(40); // ~960 characters
+
+  it("finds a /cc and a ping past the 600th character of a comment", () => {
+    const d = detail([
+      ["tri", 4, `${pad}\n/cc @late`],
+      ["tri", 2, `${pad} @pinged could you look?`],
+    ]);
+    const e = prEvents(d, ps(), [], NOW);
+    expect(Object.fromEntries(asks(e, [], NOW))).toEqual({ late: { by: "tri", days_ago: 4 } });
+    expect(lastPing(e, "pinged")).toBe(2);
+    expect(e[0]!.text).toBe(`${pad}\n/cc @late`);
+  });
+
+  it("collapses a run of pushes into one event with its commit count, dated by the last", () => {
+    const tl: TimelineEvent[] = [
+      { event: "committed", committer: { date: ago(10) } },
+      { event: "committed", committer: { date: ago(9) } },
+      { event: "head_ref_force_pushed", created_at: ago(8) },
+      { event: "committed", committer: { date: ago(3) } },
+    ] as TimelineEvent[];
+    const e = prEvents(detail([["rev", 5, "please add a test"]]), ps(), tl, NOW);
+    expect(e.map((x) => [x.kind, x.days_ago, x.commits, x.force_pushes])).toEqual([
+      ["push", 8, 2, 1],
+      ["comment", 5, undefined, undefined],
+      ["push", 3, 1, undefined],
+    ]);
+  });
+
+  it("questions every participant, with everything each wrote", () => {
+    const comments: [string, number, string][] = Array.from({ length: 10 }, (_, i) => [
+      `r${i}`,
+      30 - i,
+      `r${i} first`,
+    ]);
+    comments.push(["r0", 5, "r0 second"], ["r0", 4, "r0 third"], ["r0", 3, "r0 fourth"]);
+    const f = reviewFacts(item, detail(comments), ps(), [], [], NOW);
+    expect(f.participants).toHaveLength(10);
+    const q = reviewQuestions(f) as Record<string, { instructions: { what_they_wrote: { text: string }[] } }>;
+    for (let i = 0; i < 10; i++) expect(q[`engaged_${i}`]).toBeDefined();
+    const r0 = f.participants.indexOf("r0");
+    expect(q[`engaged_${r0}`]!.instructions.what_they_wrote.map((w) => w.text)).toEqual([
+      "r0 first",
+      "r0 second",
+      "r0 third",
+      "r0 fourth",
+    ]);
+  });
+
+  it("asks about every mention and every comment since the author last acted", () => {
+    const comments: [string, number, string][] = Array.from({ length: 12 }, (_, i) => [
+      "tri",
+      20 - i,
+      `@p${i} thoughts?`,
+    ]);
+    const f = reviewFacts(item, detail(comments), ps(), [], [], NOW);
+    expect(f.mentions.map((m) => m.login)).toEqual(Array.from({ length: 12 }, (_, i) => `p${i}`));
+    expect(sinceAuthor(f, "auth")).toHaveLength(12);
+  });
+
+  it("sends the whole description without HTML comments, every file and every failing check", () => {
+    const body = `<!-- template hint -->\n${"why this change. ".repeat(200)}`;
+    const files = Array.from({ length: 50 }, (_, i) => ({
+      path: `pkg/f${i}.go`,
+      additions: 1,
+      deletions: 1,
+    }));
+    const failing = Array.from({ length: 15 }, (_, i) => `pull-job-${i}`);
+    const f = reviewFacts(item, { ...detail([], body), files }, ps({ failing }), [], [], NOW);
+    const st = f.state as {
+      pr: { description: string; changed_files: string[] };
+      prow: { failing_checks: string[] };
+    };
+    expect(st.pr.description).toBe("why this change. ".repeat(200).trim());
+    expect(st.pr.changed_files).toHaveLength(50);
+    expect(st.prow.failing_checks).toHaveLength(15);
+  });
+
+  it("lists every reference, with the paragraph around it", () => {
+    const text = Array.from(
+      { length: 8 },
+      (_, i) => `Item ${i}: this needs #${100 + i} to merge first.`,
+    ).join("\n\n");
+    const r = references("o/r", 1, [text]);
+    expect(r).toHaveLength(8);
+    expect(r[7]).toEqual({ repo: "o/r", number: 107, text: "Item 7: this needs #107 to merge first." });
   });
 });
 

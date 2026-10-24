@@ -8,6 +8,7 @@
 import { choiceReading, noulReading, type Reading } from "./readings";
 import type { ProwFix } from "./prowcmds";
 import { isBot } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { PullState, TimelineEvent } from "./github";
 import type { JevClient } from "./jev";
 import type { ActionStep, BoardItem, ItemDetail, JevChoice, JevNoul, JevUsage } from "./types";
@@ -32,9 +33,13 @@ export interface PrEvent {
   at: string;
   review?: string;
   text?: string;
+  /** On a push: the commits and force pushes in it (a run of pushes with nothing between them is one push). */
+  commits?: number;
+  force_pushes?: number;
 }
 
-/** Everything that happened on the PR, oldest first: comments, reviews, pushes and human review requests. */
+/** Everything that happened on the PR, oldest first: comments (each in full: the parsers below read /cc, /assign
+ *  and @-mentions anywhere in them), reviews, pushes and human review requests. */
 export function prEvents(d: ItemDetail, ps: PullState, tl: TimelineEvent[], now: number): PrEvent[] {
   const a = lower(ps.author);
   const ev: PrEvent[] = [];
@@ -46,7 +51,7 @@ export function prEvents(d: ItemDetail, ps: PullState, tl: TimelineEvent[], now:
         by_author: lower(c.author.login) === a,
         days_ago: daysAgo(c.createdAt, now),
         at: c.createdAt,
-        text: c.body.slice(0, 600),
+        text: c.body,
       });
   for (const r of ps.reviews)
     if (!isBot(r.author))
@@ -57,14 +62,21 @@ export function prEvents(d: ItemDetail, ps: PullState, tl: TimelineEvent[], now:
         days_ago: daysAgo(r.at, now),
         at: r.at,
         review: r.state.toLowerCase(),
-        // A review with no summary still carries inline comments, which the timeline does not include.
-        text: r.body || "(inline review comments, not shown)",
+        // A review with no summary still carries inline comments: on a PR read as one they are comment events too.
+        text: r.body || "(inline review comments only: see the comments at the same time)",
       });
   for (const e of tl) {
     const at = e.created_at ?? e.committer?.date;
     if (!at) continue;
     if (e.event === "committed" || e.event === "head_ref_force_pushed")
-      ev.push({ kind: "push", who: ps.author, by_author: true, days_ago: daysAgo(at, now), at });
+      ev.push({
+        kind: "push",
+        who: ps.author,
+        by_author: true,
+        days_ago: daysAgo(at, now),
+        at,
+        ...(e.event === "committed" ? { commits: 1 } : { force_pushes: 1 }),
+      });
     else if (e.event === "review_requested" && e.requested_reviewer && !isBot(e.actor?.login ?? ""))
       ev.push({
         kind: "review_request",
@@ -75,7 +87,23 @@ export function prEvents(d: ItemDetail, ps: PullState, tl: TimelineEvent[], now:
         text: `requested a review from ${e.requested_reviewer.login}`,
       });
   }
-  return ev.sort((x, y) => x.at.localeCompare(y.at));
+  ev.sort((x, y) => x.at.localeCompare(y.at));
+  // Pushes one after another are one move by the author, dated by the last: 40 commits are not 40 events.
+  const out: PrEvent[] = [];
+  for (const e of ev) {
+    const prev = out.at(-1);
+    if (e.kind !== "push" || prev?.kind !== "push") out.push(e);
+    else {
+      const commits = (prev.commits ?? 0) + (e.commits ?? 0);
+      const force = (prev.force_pushes ?? 0) + (e.force_pushes ?? 0);
+      out[out.length - 1] = {
+        ...e,
+        ...(commits ? { commits } : {}),
+        ...(force ? { force_pushes: force } : {}),
+      };
+    }
+  }
+  return out;
 }
 
 /** Who holds the PR: the author of the latest /hold not cancelled since (in a comment, a review or the
@@ -133,7 +161,11 @@ export function lastPing(events: PrEvent[], who: string): number | null {
   return pings.at(-1)?.days_ago ?? null;
 }
 
-/** Other issues and PRs the description and comments point at, for Jev to judge whether one must land first. */
+/** Text either side of a reference that shows what it is to the PR ("depends on", "fixes", "after"). */
+const REF_CONTEXT = 300;
+
+/** Other issues and PRs the description and comments point at, for Jev to judge whether one must land first: every
+ *  one, with the paragraph around each place it is named (up to REF_CONTEXT either side), oldest first. */
 export function references(
   repo: string,
   num: number,
@@ -146,13 +178,15 @@ export function references(
       const n = Number(m[3]);
       if (r === repo && n === num) continue;
       const at = m.index ?? 0;
-      out.set(`${r}#${n}`, {
-        repo: r,
-        number: n,
-        text: t.slice(Math.max(0, at - 60), at + 40).replace(/\s+/g, " "),
-      });
+      const from = Math.max(at - REF_CONTEXT, t.lastIndexOf("\n\n", at) + 1);
+      const para = t.indexOf("\n\n", at + m[0].length);
+      const to = Math.min(at + m[0].length + REF_CONTEXT, para < 0 ? t.length : para);
+      const text = t.slice(from, to).replace(/\s+/g, " ").trim();
+      const prev = out.get(`${r}#${n}`);
+      if (prev?.text.includes(text)) continue;
+      out.set(`${r}#${n}`, { repo: r, number: n, text: prev ? `${prev.text} … ${text}` : text });
     }
-  return [...out.values()].slice(0, 6);
+  return [...out.values()];
 }
 
 export interface ReviewFacts {
@@ -161,7 +195,7 @@ export interface ReviewFacts {
   /** The latest comment @-mentioning each person who was not asked otherwise: Jev says whether it is an ask. */
   mentions: { login: string; by: string; days_ago: number; text: string }[];
   events: PrEvent[];
-  /** Non-author humans who commented or reviewed, most recent last. */
+  /** Every non-author human who commented or reviewed, most recent last. */
   participants: string[];
   holder: string | null;
 }
@@ -185,47 +219,48 @@ export function reviewFacts(
   const h = holder(ps, d);
   const asked = asks(events, tl, now);
   const mentions = new Map<string, { login: string; by: string; days_ago: number; text: string }>();
-  for (const e of events.filter((x) => x.kind === "comment" && x.text).slice(-10))
+  for (const e of events.filter((x) => x.kind === "comment" && x.text))
     for (const m of e.text!.matchAll(/(?:^|[^\w`/])@([A-Za-z0-9][\w-]*)/g)) {
       const who = m[1]!;
       if (lower(who) === lower(e.who) || lower(who) === lower(ps.author) || isBot(who) || asked.has(who))
         continue;
-      mentions.set(lower(who), {
-        login: who,
-        by: e.who,
-        days_ago: e.days_ago ?? 0,
-        text: e.text!.slice(0, 600),
-      });
+      mentions.delete(lower(who)); // most recent last
+      mentions.set(lower(who), { login: who, by: e.who, days_ago: e.days_ago ?? 0, text: e.text! });
     }
-  return {
-    asks: asked,
-    mentions: [...mentions.values()].slice(-5),
-    events,
-    participants: participants.slice(-6),
-    holder: h,
-    state: {
-      today_note: "Every days_ago is counted back from today.",
-      pr: {
-        repository: item.repository,
-        number: item.number,
-        title: d.title,
-        author: ps.author,
-        opened_days_ago: daysAgo(ps.created_at, now),
-        description_start: d.body.slice(0, 1500),
-        changed_files: (d.files ?? []).map((f) => f.path).slice(0, 30),
-      },
-      prow: {
-        state_labels: ps.labels.filter((l) =>
-          /^(lgtm|approved|do-not-merge\/|needs-rebase|lifecycle\/)/.test(l),
-        ),
-        tide: ps.tide?.description ?? null,
-        failing_checks: ps.failing.slice(0, 10),
-        hold_by: h,
-      },
-      references: refs,
-      events: events.slice(-25).map(({ at: _at, ...e }) => e),
-    },
+  const pr = {
+    repository: item.repository,
+    number: item.number,
+    title: d.title,
+    author: ps.author,
+    opened_days_ago: daysAgo(ps.created_at, now),
+    description: d.body.replace(/<!--[\s\S]*?-->/g, "").trim(),
+    changed_files: (d.files ?? []).map((f) => f.path),
   };
+  const state = {
+    today_note: "Every days_ago is counted back from today.",
+    pr,
+    prow: {
+      state_labels: ps.labels.filter((l) =>
+        /^(lgtm|approved|do-not-merge\/|needs-rebase|lifecycle\/)/.test(l),
+      ),
+      tide: ps.tide?.description ?? null,
+      failing_checks: ps.failing,
+      hold_by: h,
+    },
+    references: refs,
+    events: events.map(({ at: _at, ...e }): Record<string, unknown> => e),
+  };
+  // Every event, unless the thread is too long even for Jev's context: then the oldest middle ones go, then the
+  // description's middle.
+  state.events = fitMiddle(
+    state.events,
+    (kept) => size({ ...state, events: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({ left_out: n, note: "events left out here: the thread is too long" }),
+  );
+  const over = size(state) - MAX_STATE_CHARS;
+  if (over > 0) pr.description = fitText(pr.description, pr.description.length - over);
+  return { asks: asked, mentions: [...mentions.values()], events, participants, holder: h, state };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -237,13 +272,41 @@ export interface ReviewAnswers {
   [k: string]: JevChoice | JevNoul | undefined;
 }
 
-/** Comments by others since the PR author's own last activity (push, comment or review), newest last: the ones
- *  that could be an unanswered check-in to the author. */
+/** Every comment by others since the PR author's own last activity (push, comment or review), newest last: the
+ *  ones that could be an unanswered check-in to the author. */
 export function sinceAuthor(f: ReviewFacts, author: string): PrEvent[] {
   const last = f.events.filter((e) => e.by_author && e.kind !== "review_request").at(-1)?.at ?? "";
-  return f.events
-    .filter((e) => e.kind === "comment" && !e.by_author && e.at > last && e.who !== author)
-    .slice(-4);
+  return f.events.filter((e) => e.kind === "comment" && !e.by_author && e.at > last && e.who !== author);
+}
+
+/** Everything each participant wrote, for their engaged and declined questions. Each person's words go in twice, so
+ *  together they get SAID_MAX: past it the most prolific are cut from the middle first, each taking no more than an
+ *  even share of what the others left. */
+/** Characters of what the participants wrote, repeated in the questions: the questions ride with a state of up to
+ *  MAX_STATE_CHARS, and together they must stay within MAX_REQUEST_CHARS (fit.ts). */
+const SAID_MAX = 40_000;
+/** Characters of one comment quoted in a mention or check-in question; the whole comment is in the state's events. */
+const QUOTE_MAX = 4_000;
+
+export function saidBy(f: ReviewFacts): Map<string, PrEvent[]> {
+  const all = f.participants.map((who) => ({ who, said: f.events.filter((e) => e.who === who && e.text) }));
+  let budget = SAID_MAX;
+  const out = new Map<string, PrEvent[]>();
+  [...all]
+    .sort((a, b) => size(a.said) - size(b.said))
+    .forEach((p, i, arr) => {
+      const kept = fitMiddle(p.said, size, budget / (arr.length - i), (n): PrEvent => ({
+        kind: "comment",
+        who: p.who,
+        by_author: false,
+        days_ago: null,
+        at: "",
+        text: `(${n} more left out here: they wrote too much to repeat)`,
+      }));
+      budget -= size(kept);
+      out.set(p.who, kept);
+    });
+  return out;
 }
 
 export function reviewQuestions(f: ReviewFacts, author?: string): Record<string, unknown> {
@@ -283,8 +346,9 @@ export function reviewQuestions(f: ReviewFacts, author?: string): Record<string,
       },
     },
   };
+  const words = saidBy(f);
   f.participants.forEach((who, i) => {
-    const said = f.events.filter((e) => e.who === who && e.text).slice(-3);
+    const said = words.get(who) ?? [];
     q[`engaged_${i}`] = {
       type: "noul",
       instructions: {
@@ -313,7 +377,7 @@ export function reviewQuestions(f: ReviewFacts, author?: string): Record<string,
     q[`mention_${j}`] = {
       type: "noul",
       instructions: {
-        comment: { by: m.by, days_ago: m.days_ago, text: m.text },
+        comment: { by: m.by, days_ago: m.days_ago, text: fitText(m.text, QUOTE_MAX) },
         question: `Does this comment ask ${m.login} to review or approve this pull request (or to take another look at it)?`,
       },
       criteria: {
@@ -338,7 +402,7 @@ export function reviewQuestions(f: ReviewFacts, author?: string): Record<string,
       q[`author_checkin_${k}`] = {
         type: "noul",
         instructions: {
-          comment: { author: c.who, days_ago: c.days_ago, text: c.text },
+          comment: { author: c.who, days_ago: c.days_ago, text: fitText(c.text ?? "", QUOTE_MAX) },
           question: `Is \`comment\` a check-in to ${author}, the PR's author: does it ask whether they are still working on this PR, or for an update?`,
         },
         criteria: {

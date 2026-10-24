@@ -1,14 +1,15 @@
 /** The JSON object Jev reads. Each question's `evidence` list names the fields it should weigh (advisory text for
- *  the model, not addressing the client enforces). Only what the
- *  questions need: bot comments and labels are noise. */
-import { isBot } from "./boards";
+ *  the model, not addressing the client enforces). Only what the questions need: bot comments, comments that are
+ *  only Prow commands, and labels are noise. Everything else goes in whole: the description, every human comment
+ *  (a PR's review-thread comments among them, in time order) and every changed file, with fit.ts's guard for a
+ *  thread too long even for Jev's context. */
+import { isBot, isProwOnly } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import { signals, TEST_PATH } from "./signals";
 import type { BoardItem, ItemDetail, ItemKind, TriageState } from "./types";
 
-export const MAX_STATE_CHARS = 40_000;
-
-/** Byte-comparable size measure. Python's json.dumps uses ", " and ": " separators and escapes non-ASCII; this
- *  reproduces that so the truncation thresholds match the reference implementation. */
+/** Python's json.dumps length (", " and ": " separators, non-ASCII escaped), the measure the reference reported
+ *  as `state_chars`. */
 export function pyJsonLength(v: unknown): number {
   return pyDumps(v).length;
 }
@@ -36,17 +37,16 @@ function pyString(s: string): string {
 
 export function buildState(item: BoardItem, d: ItemDetail, kind: ItemKind): TriageState {
   const human = d.comments
-    .filter((c) => !isBot(c.author.login) && c.body.trim())
-    .map((c) => ({ author: c.author.login, text: c.body.slice(0, 1000) }))
-    .slice(-10);
+    .filter((c) => !isBot(c.author.login) && c.body.trim() && !isProwOnly(c.body))
+    .map((c) => ({ author: c.author.login, text: c.body }));
   const st: TriageState = {
     type: kind === "PullRequest" ? "pull request" : "issue",
     repository: item.repository,
     title: d.title,
-    description: (d.body ?? "").slice(0, 8000),
+    description: d.body ?? "",
     human_comments: human,
   };
-  // Every human /sig or /area routing comment, however old: the last-10 window below would drop early ones, and
+  // Every human /sig or /area routing comment: the comments above leave out the ones that are only commands, and
   // the owner question is told a human /sig comment is strong evidence.
   const routing = signals(d, kind).human_slash_routing_comments.map((r) => ({
     author: r.who,
@@ -56,16 +56,27 @@ export function buildState(item: BoardItem, d: ItemDetail, kind: ItemKind): Tria
   if (kind === "PullRequest") {
     const files = (d.files ?? []).map((f) => f.path);
     st.changed_files = {
-      test_or_ci: files.filter((f) => TEST_PATH.test(f)).slice(0, 40),
-      other: files.filter((f) => !TEST_PATH.test(f)).slice(0, 40),
+      test_or_ci: files.filter((f) => TEST_PATH.test(f)),
+      other: files.filter((f) => !TEST_PATH.test(f)),
     };
   }
-  if (pyJsonLength(st) > MAX_STATE_CHARS) st.human_comments = human.slice(-3); // 1) keep only the last 3 comments
-  while (pyJsonLength(st) > MAX_STATE_CHARS && st.description) {
-    // 2) trim the description from the tail; stop once it is gone (the rest is bounded: 3 comments x 1000, 80 paths)
-    const cut = Math.max(0, st.description.length - (pyJsonLength(st) - MAX_STATE_CHARS) - 200);
-    st.description = cut > 0 ? st.description.slice(0, cut) + "\n(truncated)" : "(truncated)";
-    if (cut === 0) break;
+  // 1) past the guard, comments go from the middle, oldest first: the first reply and the latest stay
+  st.human_comments = fitMiddle(
+    human,
+    (kept) => size({ ...st, human_comments: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({ author: "", text: `(${n} comments left out here: the thread is too long)` }),
+  );
+  // 2) then the bigger of the description (a pasted log: its middle) and the file lists (a vendor bump: halved)
+  const files = st.changed_files ?? { test_or_ci: [], other: [] };
+  for (let over = size(st) - MAX_STATE_CHARS; over > 0; over = size(st) - MAX_STATE_CHARS) {
+    if (st.description.length > size(files) && st.description.length > over)
+      st.description = fitText(st.description, st.description.length - over);
+    else if (files.test_or_ci.length + files.other.length) {
+      const k = files.other.length >= files.test_or_ci.length ? "other" : "test_or_ci";
+      files[k] = files[k].slice(0, Math.floor(files[k].length / 2));
+    } else if (st.description) st.description = "";
+    else break;
   }
   return st;
 }

@@ -2,6 +2,8 @@
  *  same bug as another card. The To-do questions (prompts/todo.ts) are about a failing test or CI job; these are
  *  about product behaviour, where the evidence is a merged fix, a reporter or maintainer confirming it no longer
  *  happens, or the code involved having changed. Shape as in prompts/triage.ts. */
+import { candidateQuestions } from "./todo";
+
 export const BACKLOG_EVIDENCE = ["title", "description", "human_comments", "linked_prs"];
 
 const NOTE =
@@ -55,25 +57,17 @@ export function backlogQuestions(): { resolved: typeof resolved; resolution: typ
   return { resolved, resolution };
 }
 
-/** Pairwise: the same bug? Asked only for pairs whose titles or components overlap (backlog.ts). */
-export const BUG_DUPLICATE_QUESTIONS = {
-  duplicate: {
-    type: "noul",
-    instructions:
-      "Do issue_A and issue_B report the same bug? Same area or similar words alone are not proof.",
+/** The backlog's duplicates (duplicates.ts), per candidate: the same bug, and which stays open. */
+export function bugDuplicateQuestions(keys: string[]): Record<string, unknown> {
+  return candidateQuestions(keys, {
+    duplicate: (c) =>
+      `Do \`issue\` and \`candidates.${c}\` report the same bug? Same area or similar words alone are not proof.`,
     criteria: {
       true: "The same misbehaviour in the same component with the same cause or trigger; closing one in favour of the other loses nothing.",
       false:
         "Different symptoms, different components, or the same symptom from clearly different causes or configurations.",
     },
-  },
-  survivor: {
-    type: "choice",
-    instructions:
-      "If they are the same bug, which issue should stay open? Prefer the one with the fix in progress, the better reproduction, or more discussion.",
-    criteria: {
-      A: "issue_A should stay open; close issue_B.",
-      B: "issue_B should stay open; close issue_A.",
-    },
-  },
-};
+    survivor: (c) =>
+      `If \`issue\` and \`candidates.${c}\` report the same bug, which should stay open? Prefer the one with the fix in progress (an open or merged PR in \`linked_prs\`), the better reproduction (steps, versions, logs in the description or \`human_comments\`), or more discussion.`,
+  });
+}

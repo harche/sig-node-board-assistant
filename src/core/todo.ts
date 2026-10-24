@@ -2,14 +2,15 @@
  *  of what it tracks, all computed by code. `asOf` lets an offline evaluation see a closed issue as it stood
  *  before it was closed; on the board it is now. */
 import type { ProwFix } from "./prowcmds";
-import { isBot } from "./boards";
+import { isBot, isProwOnly } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { JevClient } from "./jev";
 import { f2, PRIORITIES, priority } from "./policy";
 import { choiceReading, noulReading, type Reading } from "./readings";
 import { todoQuestions } from "./prompts/todo";
 import { priorityQuestion } from "./prompts/triage";
 import { buildState } from "./state";
-import { refsFrom, testsFrom, type JobSignal, type TestGridClient } from "./testgrid";
+import type { JobSignal, TestGridClient } from "./testgrid";
 import type {
   ActionStep,
   BoardItem,
@@ -24,8 +25,6 @@ import type {
 } from "./types";
 
 const DAY_MS = 86_400_000;
-/** Comments that are only Prow commands carry no evidence; the labels they set are listed separately. */
-const PROW_ONLY = /^(\s*\/[a-z-]+( [^\n]*)?\s*)+$/i;
 /** Email replies quoting GitHub notifications (`***@***`) are almost always spam on k/k. */
 const EMAIL_REPLY = /\*\*\*@\*\*\*/;
 
@@ -45,11 +44,15 @@ export interface TodoState {
     state: LinkedPr["state"];
     merged_days_ago?: number;
     opened_days_ago?: number;
-    description_start: string;
+    /** The whole description, template comments stripped. */
+    description: string;
   }[];
   ci_signal: JobSignal[];
 }
 
+/** Every human comment in full (no command-only or email-reply comments), every linked PR with its whole
+ *  description, and the whole issue description. Past the guard (fit.ts), comments go from the middle, then the
+ *  description's middle. */
 export async function buildTodoState(
   repo: string,
   d: ItemDetail,
@@ -64,7 +67,7 @@ export async function buildTodoState(
       before(c.createdAt) &&
       !isBot(c.author.login) &&
       c.body.trim() &&
-      !PROW_ONLY.test(c.body) &&
+      !isProwOnly(c.body) &&
       !EMAIL_REPLY.test(c.body),
   );
   const linked = prs
@@ -78,13 +81,9 @@ export async function buildTodoState(
         author: p.author,
         state: merged ? ("merged" as const) : p.state === "merged" ? ("open" as const) : p.state,
         ...(merged ? { merged_days_ago: days(p.mergedAt!) } : { opened_days_ago: days(p.createdAt) }),
-        description_start: p.body
-          .replace(/<!--[\s\S]*?-->/g, "")
-          .trim()
-          .slice(0, 600),
+        description: p.body.replace(/<!--[\s\S]*?-->/g, "").trim(),
       };
-    })
-    .slice(-10);
+    });
   const merges = prs.filter((p) => p.mergedAt && before(p.mergedAt)).map((p) => Date.parse(p.mergedAt!));
   const ci = await tg.ciSignal(
     d.title,
@@ -93,19 +92,34 @@ export async function buildTodoState(
     asOf,
     merges.length ? Math.max(...merges) : undefined,
   );
-  return {
+  const st: TodoState = {
     type: "issue",
     repository: repo,
     title: d.title,
-    description: d.body.slice(0, 8000),
+    description: d.body,
     opened_days_ago: days(d.createdAt),
     labels: d.labels.map((l) => l.name).filter((l) => /^(kind|priority|triage|lifecycle)\//.test(l)),
-    human_comments: comments
-      .slice(-10)
-      .map((c) => ({ author: c.author.login, days_ago: days(c.createdAt), text: c.body.slice(0, 1000) })),
+    human_comments: comments.map((c) => ({
+      author: c.author.login,
+      days_ago: days(c.createdAt),
+      text: c.body,
+    })),
     linked_prs: linked,
     ci_signal: ci,
   };
+  st.human_comments = fitMiddle(
+    st.human_comments,
+    (kept) => size({ ...st, human_comments: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({
+      author: "",
+      days_ago: st.human_comments[n]!.days_ago,
+      text: `(${n} comments left out here: the thread is too long)`,
+    }),
+  );
+  const over = size(st) - MAX_STATE_CHARS;
+  if (over > 0) st.description = fitText(st.description, st.description.length - over);
+  return st;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -418,48 +432,10 @@ export async function judgeTodo(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Duplicates: pairwise, as the CLI's sweep. Validated on 2,145 pairs of kubernetes/151 issues: the four pairs
-// humans closed as duplicates scored 0.69 to 0.90; one other pair scored above 0.65 (a follow-up split out of a
-// closed issue, which the board never pairs since closed issues leave To do).
-
-export interface DupFacets {
-  number: number;
-  repository: string;
-  created: string;
-  title: string;
-  author: string;
-  assignees: string[];
-  tests: string[];
-  jobs: string[];
-  body: string;
-}
-
-export function dupFacets(item: BoardItem, d: ItemDetail): DupFacets {
-  const r = refsFrom(d.body);
-  return {
-    number: item.number,
-    repository: item.repository,
-    created: d.createdAt.slice(0, 10),
-    title: d.title,
-    author: d.author.login,
-    assignees: item.assignees,
-    tests: testsFrom(d.title, d.body),
-    jobs: [...r.jobs, ...r.tabs.map((t) => t.tab)].slice(0, 8),
-    body: d.body.slice(0, 5000),
-  };
-}
-
-export function dupState(a: DupFacets, b: DupFacets) {
-  return {
-    issue_A: a,
-    issue_B: b,
-    "precomputed (use as given)": {
-      same_author: a.author === b.author,
-      shared_assignee: a.assignees.some((x) => b.assignees.includes(x)),
-      shared_job: a.jobs.some((j) => b.jobs.includes(j)),
-    },
-  };
-}
+// Duplicates: the column's pass (duplicates.ts) asks Jev, per pair of issues, whether they are the same and which
+// stays open; here those answers become the cards to close. The pairwise question was validated on 2,145 pairs of
+// kubernetes/151 issues: the four pairs humans closed as duplicates scored 0.69 to 0.90; one other pair scored above
+// 0.65 (a follow-up split out of a closed issue, which the board never pairs since closed issues leave To do).
 
 export interface DupPair {
   a: BoardItem;
@@ -471,17 +447,21 @@ export interface DupPair {
 
 /** Which To-do cards to close as duplicates, and of what. Pairs at or above DUPLICATE_AT are grouped (A~B and
  *  B~C put all three together), and each group keeps exactly one issue, so pairwise picks that go round in a
- *  circle (B over A, C over B, A over C) or chain (A into B, B into C) can never close them all:
- *  - an In-progress card, else an assigned one (someone is on it), else the one Jev picked to survive most
- *    strongly (sum of P over the pairs it won; ties go to the newer issue);
+ *  circle (B over A, C over B, A over C) or chain (A into B, B into C) can never close them all. A pair asked from
+ *  both sides (two targets) is two pairs here, and both picks count:
+ *  - an In-progress card, else one in `cols.keep`, else an assigned one (someone is on it), else the one Jev picked
+ *    to survive most strongly (sum of P over the pairs it won; ties go to the newer issue);
  *  - every other member that is an unassigned To-do card among `targets` closes in favour of it. In-progress and
  *    assigned members are never closed: two held duplicates are a human's call. */
 export function closeDuplicates(
   pairs: DupPair[],
   targets: Set<number>,
   /** The column whose cards count as being worked on, and the columns a card may be closed from. The SIG Node Bugs
-   *  backlog has no In-progress column: there an assignee alone holds a card. */
-  cols: { working: string; closable: string[] } = {
+   *  backlog has no In-progress column: there an assignee alone holds a card. `keep`: a column whose cards stay over
+   *  the others'. On the Bugs backlog that is High Priority: each column's pass asks from its own cards' side, so a
+   *  pair across the two is read once in each pass and the two picks can differ; keeping the High Priority card makes
+   *  both passes agree, and never closes the higher priority in favour of the lower. */
+  cols: { working: string; closable: string[]; keep?: string } = {
     working: "Issues - In progress",
     closable: ["Issues - To do"],
   },
@@ -508,7 +488,13 @@ export function closeDuplicates(
   for (const members of groups.values()) {
     const score = (i: BoardItem) =>
       edges.filter((e) => (e.survivor === "A" ? e.a : e.b).restId === i.restId).reduce((s, e) => s + e.p, 0);
-    const rank = (i: BoardItem) => [i.status === cols.working ? 1 : 0, held(i) ? 1 : 0, score(i), i.number];
+    const rank = (i: BoardItem) => [
+      i.status === cols.working ? 1 : 0,
+      cols.keep && i.status === cols.keep ? 1 : 0,
+      held(i) ? 1 : 0,
+      score(i),
+      i.number,
+    ];
     const keeper = members.reduce((best, i) => {
       const [x, y] = [rank(i), rank(best)];
       for (let k = 0; k < x.length; k++) if (x[k] !== y[k]) return x[k]! > y[k]! ? i : best;

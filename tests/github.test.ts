@@ -150,7 +150,7 @@ describe("GitHubClient", () => {
 });
 
 describe("slim", () => {
-  it("keeps only the events and fields the extension reads, with bodies cut", () => {
+  it("keeps only the events and fields the extension reads, with bodies whole", () => {
     const raw = [
       { event: "subscribed", created_at: "t", actor: { login: "a", id: 1, avatar_url: "x" } },
       {
@@ -164,7 +164,8 @@ describe("slim", () => {
             state: "closed",
             html_url: "https://github.com/o/r/pull/5",
             created_at: "c",
-            body: "b".repeat(5000),
+            // A PR template opens with a long HTML comment: a cut body can be nothing but its start.
+            body: `<!-- ${"t".repeat(1200)} -->\nFixes the kubelet restart loop`,
             user: { login: "u", id: 2 },
             pull_request: { merged_at: "m", url: "x" },
             labels: [{ name: "big" }],
@@ -175,10 +176,10 @@ describe("slim", () => {
     ];
     const s = slim(raw as never);
     expect(s.map((e) => e.event)).toEqual(["cross-referenced", "commented"]);
-    expect(s[0]!.source!.issue!.body).toHaveLength(1000);
+    expect(s[0]!.source!.issue!.body).toMatch(/-->\nFixes the kubelet restart loop$/);
     expect(s[0]!.source!.issue).not.toHaveProperty("labels");
     expect(s[0]!.actor).toEqual({ login: "a" });
-    expect(s[1]!.body).toHaveLength(300);
+    expect(s[1]!.body).toHaveLength(900);
   });
 });
 
@@ -559,6 +560,116 @@ describe("what an item read gives each reader", () => {
     expect(await new GitHubClient("tok", routes("s1")).pullDiff("o/r", 77, "s1")).toHaveLength(1);
     expect(await new GitHubClient("tok", routes("s1")).pullDiff("o/r", 77, "s1")).toHaveLength(1);
     expect(reads).toBe(2);
+  });
+});
+
+describe("what the TestGrid review reads of candidate issues", () => {
+  it("pages a search past 100 results, bodies whole", async () => {
+    const vars: Record<string, unknown>[] = [];
+    const queries: string[] = [];
+    const node = (n: number) => ({
+      number: n,
+      title: "t",
+      state: "OPEN",
+      closedAt: null,
+      createdAt: "c",
+      updatedAt: "u",
+      url: "url",
+      body: "b".repeat(5000),
+      author: { login: "a" },
+      assignees: { nodes: [] },
+    });
+    const f = fakeFetch({
+      "/graphql": (_u: URL, b?: { query: string; variables: Record<string, unknown> }) => {
+        queries.push(b!.query);
+        vars.push(b!.variables);
+        const first = b!.variables.a0 === null;
+        return {
+          data: {
+            s0: {
+              pageInfo: { hasNextPage: first, endCursor: first ? "p2" : "" },
+              nodes: Array.from({ length: first ? 100 : 50 }, (_, i) => node(first ? i + 1 : 101 + i)),
+            },
+          },
+        };
+      },
+    });
+    const [got] = await new GitHubClient("tok", f).searchIssues(["repo:o/r is:issue label:kind/flake"], 500);
+    expect(got).toHaveLength(150);
+    expect(got![149]!.number).toBe(150);
+    expect(got![0]!.body).toHaveLength(5000);
+    expect(queries[0]).toContain("first: 100");
+    expect(vars[1]).toMatchObject({ a0: "p2" });
+    expect(queries).toHaveLength(2);
+  });
+
+  it("reads every comment of a long thread, in full, oldest first", async () => {
+    const c = (i: number) => ({
+      author: { login: "a" },
+      body: `${i} ${"c".repeat(3000)}`,
+      createdAt: `${i}`,
+    });
+    const f = fakeFetch({
+      "/graphql": (_u: URL, b?: { query: string; variables: Record<string, unknown> }) =>
+        b!.query.includes("node(id:")
+          ? {
+              data: {
+                c0: {
+                  comments: { pageInfo: { hasNextPage: false, endCursor: "" }, nodes: [c(100), c(101)] },
+                },
+              },
+            }
+          : {
+              data: {
+                repository: {
+                  i7: {
+                    __typename: "Issue",
+                    id: "I_7",
+                    number: 7,
+                    title: "t",
+                    body: "d".repeat(10000),
+                    state: "OPEN",
+                    createdAt: "c",
+                    closedAt: null,
+                    url: "u",
+                    author: { login: "a" },
+                    labels: { nodes: [] },
+                    comments: {
+                      pageInfo: { hasNextPage: true, endCursor: "k" },
+                      nodes: Array.from({ length: 100 }, (_, i) => c(i)),
+                    },
+                  },
+                },
+              },
+            },
+    });
+    const t = (await new GitHubClient("tok", f).issueThreads("o/r", [7])).get(7)!;
+    expect(t.body).toHaveLength(10000);
+    expect(t.comments).toHaveLength(102);
+    expect(t.comments[0]!.body).toBe(c(0).body);
+    expect(t.comments.at(-1)!.body).toBe(c(101).body);
+  });
+
+  it("gives names_job an issue's body and people's comments, not bots'", async () => {
+    const gh = new GitHubClient(
+      "tok",
+      fakeFetch({
+        "/graphql": {
+          data: {
+            repository: {
+              issueOrPullRequest: issue({
+                body: "the body",
+                timelineItems: page([
+                  comment("also on ci-node-e2e"),
+                  { ...comment("This issue has been marked stale"), author: { login: "k8s-triage-robot" } },
+                ]),
+              }),
+            },
+          },
+        },
+      }),
+    );
+    expect(await gh.issueText("o/r", 1)).toEqual(["the body", "also on ci-node-e2e"]);
   });
 });
 

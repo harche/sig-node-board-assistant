@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { decideCi, failedChecks, failName, rerunCommand, suspectFile, type CiJob } from "../src/core/prci";
 import { tally, type TgTable } from "../src/core/testgrid";
 import { junitFailures } from "../src/core/tgreview";
+import type { JevClient } from "../src/core/jev";
+import { judgeCi, type CiDeps } from "../src/core/prcijudge";
 
 const prow = (job: string, build = "1") =>
   `https://prow.k8s.io/view/gs/kubernetes-ci-logs/pr-logs/pull/142200/${job}/${build}`;
@@ -190,5 +192,94 @@ describe("decideCi", () => {
     expect(rerunCommand([flake, flake], 3)).toBe(
       "/test pull-kubernetes-node-e2e-containerd\n/test pull-kubernetes-node-e2e-containerd",
     );
+  });
+});
+
+describe("judgeCi", () => {
+  it("sends the cause question every changed path and every suspect's hunks, and tracks the candidate's thread", async () => {
+    const asked: { id: string; s: Record<string, unknown> }[] = [];
+    const jev = {
+      ask: async (s: Record<string, unknown>, q: Record<string, unknown>) => {
+        const id = Object.keys(q)[0]!;
+        asked.push({ id, s });
+        const a =
+          id === "cause"
+            ? { type: "choice", choice: "flake", confidence: 0.9, probabilities: { flake: 0.9 } }
+            : { type: "noul", noul: 0.4 };
+        return { answers: { [id]: a }, usage: { input_tokens: 0, cost: 0 } };
+      },
+    } as unknown as JevClient;
+    const paths = Array.from({ length: 200 }, (_, i) => `pkg/f${i}.go`);
+    const deps: CiDeps = {
+      pull: async () => ({
+        sha: "s1",
+        title: "t",
+        state: "open",
+        files: paths,
+        files_total: 200,
+        statuses: [],
+      }),
+      diff: async () =>
+        paths.slice(0, 8).map((file) => ({ file, status: "modified", patch: `@@ ${"+x\n".repeat(5000)}` })),
+      resolvePresubmit: async () => null,
+      failedTable: async () => ({ timestamps: [], tests: [] }),
+      search: async (qs) =>
+        qs.map((_, i) =>
+          i === 0
+            ? [{ number: 9, title: "probe flakes", state: "open" as const, html_url: "u", body: "b" }]
+            : [],
+        ),
+      threads: async (_r, ns) =>
+        new Map(
+          ns.map((n) => [
+            n,
+            {
+              number: n,
+              title: "probe flakes",
+              body: "b",
+              state: "open" as const,
+              created_at: "t",
+              closed_at: null,
+              url: "u",
+              author: "a",
+              labels: [],
+              comments: [
+                { author: "k8s-ci-robot", body: "Labels applied", created_at: "t" },
+                { author: "dana", body: `Root cause found: ${"r".repeat(3000)}`, created_at: "t" },
+              ],
+            },
+          ]),
+        ),
+      fetchFn: (async (u: string) =>
+        u.includes("/storage/v1/")
+          ? new Response(
+              u.includes("delimiter") ? '{"prefixes":["pr-logs/pull/1/pull-x/7/"]}' : '{"items":[]}',
+            )
+          : u.endsWith("finished.json")
+            ? new Response('{"result":"FAILURE","revision":"s1"}')
+            : new Response("[FAILED] probe timed out\nRan 1 of 2 Specs")) as unknown as typeof fetch,
+      jev,
+    };
+    const check = {
+      job: "pull-x",
+      state: "failure" as const,
+      description: "",
+      url: "u",
+      gcs: "b/pr-logs/pull/1/pull-x",
+      build: "7",
+    };
+    await judgeCi(deps, "kubernetes/kubernetes", 1, check, 0);
+    const cause = asked.find((a) => a.id === "cause")!.s as {
+      pr: { files: string[] };
+      suspect_changes: { file: string; hunks?: string }[];
+    };
+    expect(cause.pr.files).toHaveLength(200);
+    expect(cause.suspect_changes).toHaveLength(8);
+    expect(cause.suspect_changes.every((x) => x.hunks?.length === 15_003)).toBe(true);
+    const tracks = asked.find((a) => a.id === "tracks")!.s as {
+      issue: { comments: { author: string; body: string }[] };
+    };
+    expect(tracks.issue.comments.map((c) => c.author)).toEqual(["dana"]);
+    expect(tracks.issue.comments[0]!.body).toHaveLength(3018);
   });
 });

@@ -361,8 +361,9 @@ export function selfAssigned(assignees: string[], tl: TimelineEvent[]): string[]
   });
 }
 
-/** Which of the merged linked PRs fixed the bug, or none of them. */
-export function fixPrQuestion(merged: { number: number; title: string; description_start?: string }[]) {
+/** Which of the merged linked PRs fixed the bug, or none of them. Every one is a choice: the original fix is often
+ *  the oldest, behind a run of cherry-picks to release branches. */
+export function fixPrQuestion(merged: { number: number; title: string; description?: string }[]) {
   return {
     fix_pr: {
       type: "choice",
@@ -374,74 +375,10 @@ export function fixPrQuestion(merged: { number: number; title: string; descripti
       },
       criteria: {
         ...Object.fromEntries(
-          merged
-            .slice(-6)
-            .map((p) => [`pr_${p.number}`, { title: p.title, description: p.description_start ?? "" }]),
+          merged.map((p) => [`pr_${p.number}`, { title: p.title, description: p.description ?? "" }]),
         ),
         none: "None of these is the fix: it came some other way, or it has not landed.",
       },
     },
   };
-}
-
-// ---------------------------------------------------------------------------------------------------- duplicates
-
-const WORD = /[a-z0-9][a-z0-9_.-]{2,}/g;
-const STOP = new Set([
-  "the",
-  "and",
-  "for",
-  "when",
-  "with",
-  "not",
-  "are",
-  "that",
-  "this",
-  "from",
-  "pod",
-  "pods",
-  "kubelet",
-]);
-
-function words(s: string): Set<string> {
-  return new Set((s.toLowerCase().match(WORD) ?? []).filter((w) => !STOP.has(w)));
-}
-
-/** Pairs worth asking Jev about: for each target, the `k` cards whose title and description share the most words
- *  (Jaccard at least `min`). Asking about every pair of a 170-card column would be 15,000 questions. */
-export function shortlist<T extends { restId: number }>(
-  // Each pair is ordered by restId (see below).
-  targets: T[],
-  pool: T[],
-  text: (x: T) => string,
-  k = 3,
-  min = 0.12,
-): [T, T][] {
-  const w = new Map(pool.map((x) => [x.restId, words(text(x))]));
-  for (const t of targets) if (!w.has(t.restId)) w.set(t.restId, words(text(t)));
-  const seen = new Set<string>();
-  const out: [T, T][] = [];
-  for (const t of targets) {
-    const a = w.get(t.restId)!;
-    const scored = pool
-      .filter((o) => o.restId !== t.restId)
-      .map((o) => {
-        const b = w.get(o.restId)!;
-        const inter = [...a].filter((x) => b.has(x)).length;
-        return { o, j: inter / (a.size + b.size - inter || 1) };
-      })
-      .filter((x) => x.j >= min)
-      .sort((x, y) => y.j - x.j)
-      .slice(0, k);
-    for (const { o } of scored) {
-      const key = [t.restId, o.restId].sort().join("-");
-      if (!seen.has(key)) {
-        seen.add(key);
-        // Lower restId first, always: the Triaged and High Priority passes then ask Jev the same question about a
-        // pair across the two columns, and agree on which card stays open.
-        out.push(t.restId < o.restId ? [t, o] : [o, t]);
-      }
-    }
-  }
-  return out;
 }

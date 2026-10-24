@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { boardFromUrl, isBot, knownBoard, writesTo } from "../src/core/boards";
+import { boardFromUrl, isBot, isProwOnly, knownBoard, writesTo } from "../src/core/boards";
+
+describe("isProwOnly", () => {
+  it.each([
+    ["/retest", true],
+    ["/sig node\r\n/triage accepted\n\n/priority important-soon", true],
+    ["/lgtm\nthanks, looks good", false],
+    ["the fix is in /var/lib/kubelet", false],
+    ["", false],
+  ])("%j", (body, want) => expect(isProwOnly(body)).toBe(want));
+  it("is quick on a long run of command lines followed by a word", () => {
+    const t = Date.now();
+    expect(isProwOnly("/retest\r\n".repeat(5000) + "ugh")).toBe(false);
+    expect(Date.now() - t).toBeLessThan(200);
+  });
+});
 
 describe("boardFromUrl", () => {
   it.each([

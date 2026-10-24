@@ -3,6 +3,7 @@ import {
   candidateQueries,
   classify,
   distinctive,
+  facet,
   isPostedRelated,
   isRelatedComment,
   MAX_REFS,
@@ -71,6 +72,25 @@ describe("candidates", () => {
         7,
       ),
     ).toEqual([9, 1, 4, 2, 3, 5]));
+});
+
+describe("facet", () => {
+  it("carries the whole body without HTML comments and every human comment in full", () => {
+    const early = `The root cause is the cgroup driver mismatch. ${"Trace line. ".repeat(100)}`;
+    const comments = [
+      { author: "k8s-ci-robot", body: "bot noise" },
+      { author: "a", body: early },
+      { author: "b", body: "/retest" },
+      { author: "c", body: "/kind bug\nSame failure on my cluster." },
+      ...Array.from({ length: 20 }, (_, i) => ({ author: `h${i}`, body: `+1 (${i})` })),
+    ];
+    const body = `<!-- Please describe -->\n${"Body text. ".repeat(600)}`;
+    const f = facet({ number: 1, created: "2026-01-01T00:00:00Z", title: "t", labels: [], body, comments });
+    expect(f.body).toBe("Body text. ".repeat(600).trim());
+    expect(f.comments).toHaveLength(22);
+    expect(f.comments[0]).toEqual({ author: "a", text: early });
+    expect(f.comments[1]).toEqual({ author: "c", text: "/kind bug\nSame failure on my cluster." });
+  });
 });
 
 describe("classify", () => {

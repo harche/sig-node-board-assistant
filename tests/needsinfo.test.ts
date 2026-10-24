@@ -9,8 +9,10 @@ import {
   judgeInfo,
   nudgeInfoBody,
   reminderCandidates,
+  sentInfoState,
   type InfoResult,
 } from "../src/core/needsinfo";
+import { MAX_STATE_CHARS } from "../src/core/fit";
 import type { JevClient } from "../src/core/jev";
 import type { BoardItem, ItemDetail, JevChoice } from "../src/core/types";
 
@@ -160,6 +162,21 @@ describe("facts", () => {
     expect(st.replies.map((c) => c.author)).toEqual(["other"]);
   });
 
+  it("takes the last three of others' comments when none before a bare command says anything", () => {
+    const st = infoState(
+      detail([
+        ["a", 60, "+1"],
+        ["b", 50, "/cc @x"],
+        ["c", 40, "same"],
+        ["d", 35, "+1"],
+        ["maint", 30, "/triage needs-information"],
+      ]),
+      ago(30),
+      NOW,
+    );
+    expect(st.request.map((c) => c.author)).toEqual(["c", "d", "maint"]);
+  });
+
   it("looks for reminders only after the reporter's last reply", () => {
     const st = infoState(
       detail([
@@ -174,9 +191,110 @@ describe("facts", () => {
     expect(st.request).toHaveLength(1);
     expect(reminderCandidates(st.replies).map((c) => c.days_ago)).toEqual([5]);
   });
+
+  it("offers every reminder since the reporter's last word, not only the last four", () => {
+    const st = infoState(
+      detail([
+        ["maint", 60, "/triage needs-information\nplease share the kubelet logs from the node"],
+        ...[50, 45, 40, 35, 30, 25].map((d): [string, number, string] => ["maint", d, `@rep ping ${d}`]),
+      ]),
+      ago(60),
+      NOW,
+    );
+    expect(reminderCandidates(st.replies).map((c) => c.days_ago)).toEqual([50, 45, 40, 35, 30, 25]);
+  });
+
+  it("takes the whole maintainers' exchange before a bare command, and what the reporter said before the ask", () => {
+    const st = infoState(
+      detail([
+        ["rep", 40, "it also happens with cgroup v1, if that helps narrow it down"],
+        ["maint", 35, "which container runtime and version do you use on these nodes?"],
+        ["maint2", 34, "and the exact kubelet version, please, from kubelet --version on the node"],
+        ["maint3", 33, "agreed, both of those would help us reproduce this"],
+        ["rep", 32, "containerd 2.1.6"],
+        ["maint", 30, "/triage needs-information"],
+      ]),
+      ago(30),
+      NOW,
+    );
+    expect(st.request.map((c) => c.author)).toEqual(["maint", "maint2", "maint3", "maint"]);
+    expect(st.reporter_before_ask.map((c) => c.days_ago)).toEqual([40, 32]);
+  });
+
+  it("sends a thread too long for Jev's context with replies cut from the middle, facts still from all of them", () => {
+    const many = Array.from({ length: 600 }, (_, k): [string, number, string] => [
+      k === 0 ? "rep" : "user",
+      29 - k / 100,
+      `${k} ${"x".repeat(1000)}`,
+    ]);
+    const st = infoState(detail(many), ago(30), NOW);
+    const sent = sentInfoState(st);
+    expect(st.replies).toHaveLength(600);
+    expect(JSON.stringify(sent).length).toBeLessThanOrEqual(MAX_STATE_CHARS);
+    expect(sent.replies[0]!.text).toMatch(/^0 /);
+    expect(sent.replies[1]!.text).toMatch(/replies left out here/);
+    expect(sent.replies.at(-1)!.text).toMatch(/^599 /);
+  });
+
+  it("keeps the whole description and every reply in full", () => {
+    const body = `${"what happened ".repeat(400)}\n### Kubernetes version\nv1.36.2`;
+    const d = { ...detail([["rep", 5, "x".repeat(5000)]]), body };
+    const st = infoState(d, ago(30), NOW);
+    expect(st.description).toBe(body);
+    expect(st.replies[0]!.text).toHaveLength(5000);
+  });
 });
 
 describe("judgeInfo", () => {
+  it("reads an answer 11+ replies back as answered, and dates the reporter's reply from it", async () => {
+    const seen: unknown[] = [];
+    const jev = {
+      ask: async (s: unknown, q: Record<string, unknown>) => {
+        seen.push(s);
+        const replies = (s as { replies: { is_reporter: boolean; text: string }[] }).replies ?? [];
+        const answered = replies.some((c) => c.is_reporter && c.text.includes("kubelet.log"));
+        return {
+          answers: {
+            answered: { type: "noul", noul: "answered" in q && answered ? 0.9 : 0.1 },
+            report: choice({ bug: 1 }),
+            owner: choice({ node: 1 }),
+            dra: { type: "noul", noul: 0 },
+            enough_information: { type: "noul", noul: 0.9 },
+            priority: { type: "score", score: 1, confidence: 1, probabilities: { "1": 1 } },
+          },
+          usage: { input_tokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as JevClient;
+    const d: ItemDetail = {
+      title: "t",
+      body: "b",
+      labels: [{ name: "triage/needs-information" }, { name: "kind/bug" }, { name: "sig/node" }],
+      state: "OPEN",
+      author: { login: "rep" },
+      createdAt: ago(90),
+      url: "u",
+      comments: [
+        {
+          author: { login: "maint" },
+          createdAt: ago(60),
+          body: "/triage needs-information\nplease attach the kubelet log",
+        },
+        { author: { login: "rep" }, createdAt: ago(50), body: "here it is: kubelet.log attached" },
+        ...Array.from({ length: 11 }, (_, k) => ({
+          author: { login: `user${k}` },
+          createdAt: ago(40 - k),
+          body: "+1 seeing this too",
+        })),
+      ],
+    };
+    const tl = [{ event: "labeled", created_at: ago(60), label: { name: "triage/needs-information" } }];
+    const r = await judgeInfo(item, d, tl, jev, NOW);
+    expect(r.p_answered).toBe(0.9);
+    expect(r.reporter_replied_days_ago).toBe(50);
+    expect(decideInfo(r).action).toBe("accept");
+  });
+
   it("asks the priority even when the request looks unanswered, so a hand-picked Accept has one", async () => {
     const jev = {
       ask: async (_s: unknown, q: Record<string, unknown>) => ({

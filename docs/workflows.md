@@ -64,7 +64,7 @@ Accepted issues nobody is working on yet. Earlier rows win:
 ### Issues - In progress
 
 For each assignee, code gathers plain facts: when they were assigned, their comments, their own PRs' merges and
-commits, and recent review events. Jev answers the judgement calls:
+commits, and their PRs' pushes, reviews and comments. Jev answers the judgement calls:
 
 - is each comment since the assignee last acted a check-in with them?
 - is the assignee still on it?
@@ -179,8 +179,8 @@ A card waits here for the reporter, and nothing moves it when they answer.
 
 - **Code reads the dates:** when `triage/needs-information` (or `not-reproducible`) last went on, and when the
   reporter last wrote.
-- **Jev reads the request** (the comment that applied the label, or the question just before a bare
-  `/triage needs-information`) and every reply since. It asks two things:
+- **Jev reads the request** (the comment that applied the label, or the maintainers' questions before a bare
+  `/triage needs-information`), what the reporter wrote before it, and every reply since. It asks two things:
   - has what was asked been supplied, by the reporter or by anyone who hits the problem, or made unnecessary by a
     maintainer reproducing it?
   - which later comments remind the reporter?
@@ -208,8 +208,9 @@ cards had no priority, and 64 were still open although a merged PR referenced th
   - `critical-urgent` and `important-soon` belong in High Priority, the rest in Triaged, and the card moves there.
 - **Fixed?** Jev reads the thread and the linked PRs. At P ≥ 0.8 the suggestion closes it with a comment naming the
   fix; 0.5–0.8 is your call.
-- **Duplicate?** Each card is compared with the three cards whose titles share the most words. A duplicate closes in
-  favour of the other card, and an assigned card is never the one closed.
+- **Duplicate?** Each card is compared with every other open card in both columns (the 40 most alike in a bigger
+  column), reading their descriptions, comments and linked PRs. A duplicate closes in favour of the other card, a High
+  Priority card stays over a Triaged one, and an assigned card is never the one closed.
 - **Quiet assignee:** only people who assigned themselves (`/assign`) are nudged, then unassigned after an
   unanswered check-in, as in Issues - In progress. An owner a triager assigned is left alone.
 - **High Priority with nobody assigned** is flagged for you.

@@ -34,7 +34,8 @@
  *  out early had no mark the others lacked (7 of the 49 there now say WIP, 11 need a rebase). No Jev.
  *
  *  A move only changes the Status: the maintainers add no comments or labels. */
-import { isBot } from "./boards";
+import { isBot, isProwOnly } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { JevClient } from "./jev";
 import { laneQuestion } from "./prompts/dra";
 import { choiceReading, type Reading } from "./readings";
@@ -284,39 +285,54 @@ export function releaseCycle(now: number): { latest: string; development: string
 
 const daysAgo = (at: string, now: number) => Math.round((now - Date.parse(at)) / DAY);
 const NOISE = /^(needs-triage|cncf-cla|wg\/device-management)/;
-
-/** What Jev reads for an open issue: the thread, and the facts code computes (labels, assignees, linked PRs, the
- *  release cycle). */
+/** What Jev reads for an open issue: the whole thread (human comments in full), every linked PR with its whole
+ *  description (template comments stripped), and the facts code computes (labels, assignees, the milestone, the
+ *  release cycle). Past the guard (fit.ts), comments go from the middle, then the description's middle. */
 export function draIssueState(item: BoardItem, d: ItemDetail, prs: LinkedPr[], now: number) {
   const cycle = releaseCycle(now);
-  return {
+  const milestone = d.milestone ?? null;
+  const st = {
     type: "issue",
     repository: item.repository,
     title: d.title,
-    description: (d.body ?? "").slice(0, 6000),
+    description: d.body ?? "",
     author: d.author.login,
     opened_days_ago: daysAgo(d.createdAt, now),
     labels: d.labels.map((l) => l.name).filter((l) => !NOISE.test(l)),
     assignees: item.assignees,
-    linked_prs: prs.slice(-6).map((p) => ({
+    milestone,
+    milestone_is_development_cycle: milestone === `v${cycle.development}`,
+    linked_prs: prs.map((p) => ({
       pr: `${p.repository}#${p.number}`,
       title: p.title,
       author: p.author,
       state: p.state,
       opened_days_ago: daysAgo(p.createdAt, now),
-      description: p.body.slice(0, 300),
+      description: p.body.replace(/<!--[\s\S]*?-->/g, "").trim(),
     })),
     human_comments: d.comments
-      .filter((c) => !isBot(c.author.login) && c.body.trim())
+      .filter((c) => !isBot(c.author.login) && c.body.trim() && !isProwOnly(c.body))
       .map((c) => ({
         author: c.author.login === d.author.login ? `${c.author.login} (reporter)` : c.author.login,
         days_ago: daysAgo(c.createdAt, now),
-        text: c.body.slice(0, 1000),
-      }))
-      .slice(-10),
+        text: c.body,
+      })),
     development_cycle: cycle.development,
     latest_release: cycle.latest,
   };
+  st.human_comments = fitMiddle(
+    st.human_comments,
+    (kept) => size({ ...st, human_comments: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({
+      author: "",
+      days_ago: st.human_comments[n]!.days_ago,
+      text: `(${n} comments left out here: the thread is too long)`,
+    }),
+  );
+  const over = size(st) - MAX_STATE_CHARS;
+  if (over > 0) st.description = fitText(st.description, st.description.length - over);
+  return st;
 }
 
 const COLUMN_NAMES = ["in_progress", "ready", "backlog"];
@@ -359,14 +375,14 @@ export async function judgeDra(
   r.milestone = d.milestone ?? null;
   r.opted_in = d.labels.some((l) => l.name === OPTED_IN);
   r.kep = item.repository.endsWith("/enhancements") || d.labels.some((l) => l.name.startsWith("stage/"));
-  r.linked_prs = prs.slice(-6).map((p) => ({
+  r.linked_prs = prs.map((p) => ({
     repository: p.repository,
     number: p.number,
     title: p.title,
     state: p.state,
     opened_days_ago: daysAgo(p.createdAt, now),
   }));
-  r.state_chars = JSON.stringify(st).length;
+  r.state_chars = size(st);
   // A KEP in the release is placed by its labels.
   if (column !== "new" && inRelease(r)) return r;
   // In progress and In review are placed by state alone: Jev could not tell stalled work from live there.

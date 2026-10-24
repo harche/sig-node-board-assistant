@@ -8,6 +8,7 @@
  *  days (the community triage guide's wait) the reporter is reminded once. After that the card stays: the Kubernetes
  *  lifecycle bot marks the issue stale, then rotten, then closes it, and the extension leaves that to it. */
 import { isBot } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import {
   acceptBody,
   bugLabels,
@@ -227,8 +228,10 @@ export function askedAt(tl: TimelineEvent[]): string | null {
   );
 }
 
-/** What Jev reads: the report, the request (the comment that applied the label, and the maintainer comments just
- *  before it when that one is only the command), and every human reply since. */
+/** What Jev reads: the whole report; the request (the maintainers' comments that led to the label); what the
+ *  reporter wrote before the ask (details they gave before the label went on); and every human reply since, each in
+ *  full. Code facts (the reporter's last reply, reminder candidates) read `replies` whole; Jev reads them through
+ *  `sentInfoState`. */
 export function infoState(d: ItemDetail, asked: string | null, now: number) {
   const reporter = d.author.login;
   const human = d.comments
@@ -238,34 +241,67 @@ export function infoState(d: ItemDetail, asked: string | null, now: number) {
       is_reporter: c.author.login === reporter,
       days_ago: daysAgo(c.createdAt, now),
       at: c.createdAt,
-      text: c.body.slice(0, 1500),
+      text: c.body,
     }));
   const t = asked ? Date.parse(asked) : Infinity;
   const before = human.filter((c) => Date.parse(c.at) <= t + 60_000);
   const replies = human.filter((c) => Date.parse(c.at) > t + 60_000);
-  // The asking comment carries the label command; a bare command means the question came just before it.
-  const asking = before.filter((c) => !c.is_reporter).slice(-3);
-  const last = asking.at(-1);
-  const request = last && last.text.replace(/^\s*\/\S.*$/gm, "").trim().length >= 40 ? [last] : asking;
+  // The asking comment carries the label command; a bare command means the question came before it, maybe over
+  // several comments. So: back to the last comment by others that says something, and with it the run of others'
+  // comments just before it (the maintainers' exchange), up to the reporter's previous word.
+  const says = (c: (typeof human)[number]) => c.text.replace(/^\s*\/\S.*$/gm, "").trim().length >= 40;
+  let from = before.length - 1;
+  while (from >= 0 && (before[from]!.is_reporter || !says(before[from]!))) from--;
+  while (from > 0 && !before[from - 1]!.is_reporter) from--;
+  // No comment by others says anything: the last three of theirs, not the whole thread.
+  const request =
+    from < 0
+      ? before.filter((c) => !c.is_reporter).slice(-3)
+      : before.slice(from).filter((c) => !c.is_reporter);
   return {
     title: d.title,
-    description: (d.body ?? "").slice(0, 3000),
+    description: d.body ?? "",
     reporter,
     asked_days_ago: asked ? daysAgo(asked, now) : null,
     request: request.map(({ author, days_ago, text }) => ({ author, days_ago, text })),
-    replies: replies.slice(-10),
+    reporter_before_ask: before
+      .filter((c) => c.is_reporter)
+      .map(({ days_ago, text }) => ({ days_ago, text })),
+    replies,
   };
 }
 
-type Replies = ReturnType<typeof infoState>["replies"];
+type InfoState = ReturnType<typeof infoState>;
+type Replies = InfoState["replies"];
 
-/** Replies by others after the reporter's last word: the ones that could be a reminder. */
-export function reminderCandidates(replies: Replies): Replies {
-  const lastReporter = replies.filter((c) => c.is_reporter).at(-1)?.at ?? "";
-  return replies.filter((c) => !c.is_reporter && c.at > lastReporter).slice(-4);
+/** The state as Jev is sent it: whole, unless the thread is too long even for Jev's context; then replies go from the
+ *  middle, oldest first (the first reply and the latest stay), then the description's middle. */
+export function sentInfoState(st: InfoState): InfoState {
+  const out = { ...st };
+  out.replies = fitMiddle(
+    st.replies,
+    (kept) => size({ ...st, replies: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({
+      author: "",
+      is_reporter: false,
+      days_ago: st.replies[n]!.days_ago,
+      at: st.replies[n]!.at,
+      text: `(${n} replies left out here: the thread is too long)`,
+    }),
+  );
+  const over = size(out) - MAX_STATE_CHARS;
+  if (over > 0) out.description = fitText(out.description, out.description.length - over);
+  return out;
 }
 
-export function infoQuestions(st: ReturnType<typeof infoState>): Record<string, unknown> {
+/** Every reply by others after the reporter's last word: the ones that could be a reminder. */
+export function reminderCandidates(replies: Replies): Replies {
+  const lastReporter = replies.filter((c) => c.is_reporter).at(-1)?.at ?? "";
+  return replies.filter((c) => !c.is_reporter && c.at > lastReporter);
+}
+
+export function infoQuestions(st: InfoState): Record<string, unknown> {
   const q: Record<string, unknown> = {
     answered: {
       type: "noul",
@@ -273,8 +309,8 @@ export function infoQuestions(st: ReturnType<typeof infoState>): Record<string, 
         question:
           "A maintainer asked for more information (`request`). Do the `replies` supply it, or make it unnecessary, so the next move is the maintainers'?",
         focus:
-          "An answer can come from the reporter or from anyone else who hits the problem. Judge what was asked, not whether the bug is now understood.",
-        evidence: ["request", "replies", "description"],
+          "An answer can come from the reporter or from anyone else who hits the problem. Judge what was asked, not whether the bug is now understood. `reporter_before_ask` is what the reporter wrote before the label went on: it counts only where it gives what the request asks for (an answer posted between the question and the label).",
+        evidence: ["request", "replies", "reporter_before_ask", "description"],
       },
       criteria: {
         true: {
@@ -339,6 +375,7 @@ export async function judgeInfo(
   const labels = bugLabels(d.labels.map((l) => l.name));
   const asked = askedAt(tl);
   const st = infoState(d, asked, now);
+  const sent = sentInfoState(st);
   const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const ask = async <A>(state: unknown, q: Record<string, unknown>): Promise<A> => {
     const res = await jev.ask<A>(state, q);
@@ -346,6 +383,7 @@ export async function judgeInfo(
     usage.cost += res.usage.cost;
     return res.answers;
   };
+  // Facts from every reply, not only the ones Jev is sent.
   const reporterReplies = st.replies.filter((c) => c.is_reporter);
   const r: InfoResult = {
     kind: "info",
@@ -366,7 +404,7 @@ export async function judgeInfo(
     priority_why: labels.priority ? "already labelled" : "",
     readings: [],
     usage,
-    state_chars: JSON.stringify(st).length,
+    state_chars: size(sent),
   };
   if (
     r.state !== "open" ||
@@ -377,7 +415,7 @@ export async function judgeInfo(
     if (r.state === "open" && labels.triage_accepted && !labels.priority) await setPriority(r, d, item, ask);
     return r;
   }
-  const a = await ask<Record<string, JevNoul>>(st, infoQuestions(st));
+  const a = await ask<Record<string, JevNoul>>(sent, infoQuestions(st));
   r.p_answered = a.answered?.noul ?? null;
   const cands = reminderCandidates(st.replies);
   r.reminded_days_ago =

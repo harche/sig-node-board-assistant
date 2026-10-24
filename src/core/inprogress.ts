@@ -9,7 +9,8 @@
  *  next day (25/28, the rest borderline), and on 2026-09-25 26/26 against a hand-checked reading. */
 import { noulReading, type Reading } from "./readings";
 import type { ProwFix } from "./prowcmds";
-import { isBot } from "./boards";
+import { isBot, isProwOnly } from "./boards";
+import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import type { TimelineEvent } from "./github";
 import type { JevClient } from "./jev";
 import type { ActionStep, BoardItem, ItemDetail, JevNoul, JevUsage } from "./types";
@@ -52,20 +53,18 @@ const LAST_ACTIVITY =
 /** What Jev is told about the threshold; the grace-period arithmetic is decideProgress's. */
 export const POLICY = { stale_after_days: STALE_DAYS };
 
-/** Comments that are only Prow commands (/remove-lifecycle stale, /test …): no check-in, no discussion. */
-const PROW_ONLY = /^(\s*\/[a-z-]+( [^\n]*)?\s*)+$/i;
-
-/** A PR's last few events that say whose move it is: pushes, human comments and reviews (each marked when the PR's
- *  author made it), and the needs-rebase / do-not-merge / lgtm / approved labels. */
-const recentPrEvents = (tl: TimelineEvent[], author: string, now: number) =>
-  tl
+/** A PR's events that say whose move it is: pushes, human comments and reviews in full (each marked when the PR's
+ *  author made it), and the needs-rebase / do-not-merge / lgtm / approved labels. A run of pushes is one event with
+ *  its count and its latest date, so a long push series never buries a review. */
+export const prEvents = (tl: TimelineEvent[], author: string, now: number) => {
+  const all = tl
     .filter((e) =>
       ["committed", "head_ref_force_pushed", "commented", "reviewed", "labeled"].includes(e.event),
     )
     .filter(
       (e) => e.event !== "labeled" || /needs-rebase|do-not-merge|lgtm|approved/.test(e.label?.name ?? ""),
     )
-    .filter((e) => e.event !== "commented" || !PROW_ONLY.test(e.body ?? ""))
+    .filter((e) => e.event !== "commented" || !isProwOnly(e.body ?? ""))
     .map((e) => {
       const who = e.event === "committed" ? author : (e.actor?.login ?? e.user?.login ?? "?");
       return {
@@ -74,11 +73,25 @@ const recentPrEvents = (tl: TimelineEvent[], author: string, now: number) =>
         by_pr_author: lower(who) === lower(author),
         days_ago: daysAgo(e.created_at ?? e.submitted_at ?? e.committer?.date, now),
         ...(e.event === "reviewed" ? { review: lower(e.state) } : {}),
-        ...(e.event === "commented" || e.event === "reviewed" ? { text: (e.body ?? "").slice(0, 200) } : {}),
+        ...(e.event === "commented" || e.event === "reviewed" ? { text: e.body ?? "" } : {}),
       };
     })
-    .filter((e) => e.days_ago !== null)
-    .slice(-6);
+    .filter((e) => e.days_ago !== null);
+  type Ev = (typeof all)[number] & { count?: number };
+  const out: Ev[] = [];
+  for (const e of all) {
+    const prev = out.at(-1);
+    if (
+      prev &&
+      prev.event === e.event &&
+      prev.who === e.who &&
+      /^(committed|head_ref_force_pushed)$/.test(e.event)
+    )
+      out[out.length - 1] = { ...e, count: (prev.count ?? 1) + 1 };
+    else out.push(e);
+  }
+  return out;
+};
 
 /** Facts for one In-progress card, for every assignee at once. */
 export async function progressState(
@@ -91,7 +104,7 @@ export async function progressState(
   now: number,
 ): Promise<Record<string, unknown>> {
   const as = new Set(assignees.map(lower));
-  const human = d.comments.filter((c) => !isBot(c.author.login) && c.body.trim() && !PROW_ONLY.test(c.body));
+  const human = d.comments.filter((c) => !isBot(c.author.login) && c.body.trim() && !isProwOnly(c.body));
   const prs = await Promise.all(
     linkedPrSources(tl).map(async (s) => {
       const merged = Boolean(s.pull_request?.merged_at);
@@ -114,7 +127,7 @@ export async function progressState(
         ...(state === "open"
           ? {
               last_commit_days_ago: daysAgo(lastCommit, now),
-              recent_events: recentPrEvents(await f.timeline(r, s.number).catch(() => []), author, now),
+              events: prEvents(await f.timeline(r, s.number).catch(() => []), author, now),
             }
           : {}),
       };
@@ -137,7 +150,7 @@ export async function progressState(
     return { login, last: ts.sort().at(-1) ?? null };
   });
   const shown = prs.map(({ merged_at: _m, last_commit: _c, ...p }) => p);
-  return {
+  const state = {
     today_note: "Every days_ago is counted back from today.",
     policy: POLICY,
     issue: {
@@ -146,7 +159,7 @@ export async function progressState(
       title: d.title,
       labels: d.labels.map((l) => l.name).filter((l) => /^(lifecycle|triage|priority|kind)\//.test(l)),
       opened_days_ago: daysAgo(d.createdAt, now),
-      description_start: d.body.slice(0, 1500),
+      description: d.body,
     },
     assignees: facts.map(({ login, last }) => {
       const L = lower(login);
@@ -164,8 +177,8 @@ export async function progressState(
         ),
       };
     }),
-    linked_prs: shown.filter((p) => p.state !== "closed" || p.author_is_assignee).slice(-10),
-    thread: human.slice(-15).map((c) => ({
+    linked_prs: shown.filter((p) => p.state !== "closed" || p.author_is_assignee),
+    thread: human.map((c) => ({
       author: c.author.login,
       author_is_assignee: as.has(lower(c.author.login)),
       days_ago: daysAgo(c.createdAt, now),
@@ -173,9 +186,27 @@ export async function progressState(
       no_activity_since_by: facts
         .filter((x) => lower(x.login) !== lower(c.author.login) && (!x.last || x.last < c.createdAt))
         .map((x) => x.login),
-      text: c.body.slice(0, 800),
+      text: c.body,
     })),
   };
+  // Past the guard (fit.ts), thread comments go from the middle, oldest first (the marker is nobody's check-in), then
+  // the description's middle.
+  state.thread = fitMiddle(
+    state.thread,
+    (kept) => size({ ...state, thread: kept }),
+    MAX_STATE_CHARS,
+    (n) => ({
+      author: "",
+      author_is_assignee: false,
+      days_ago: state.thread[n]!.days_ago,
+      no_activity_since_by: [],
+      text: `(${n} comments left out here: the thread is too long)`,
+    }),
+  );
+  const over = size(state) - MAX_STATE_CHARS;
+  if (over > 0)
+    state.issue.description = fitText(state.issue.description, state.issue.description.length - over);
+  return state;
 }
 
 // Jev's questions, one call per card:

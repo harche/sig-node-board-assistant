@@ -6,12 +6,15 @@ import {
   decideProgress,
   decideProgressCard,
   nudgeBody,
+  prEvents,
+  progressState,
   progressSteps,
   unassignBody,
   type AssigneeVerdict,
   type ProgressResult,
 } from "../src/core/inprogress";
-import type { BoardItem, JevNoul } from "../src/core/types";
+import type { TimelineEvent } from "../src/core/github";
+import type { BoardItem, ItemDetail, JevNoul } from "../src/core/types";
 
 const LAST = "last_own_activity_days_ago (comment, commit, PR merge or assignment, whichever is latest)";
 const noul = (p: number): JevNoul => ({ type: "noul", noul: p });
@@ -183,4 +186,71 @@ describe("isDraftedComment for In progress", () => {
     ["a mention in the thread question", `${askThreadProgressBody()} @y`],
     ["a mention in the unassign reason", `${unassignBody("x")} @y`],
   ])("refuses %s", (_what, body) => expect(isDraftedComment(body)).toBe(false));
+});
+
+describe("progressState", () => {
+  const NOW = Date.parse("2026-10-24T00:00:00Z");
+  const ago = (d: number) => new Date(NOW - d * 86_400_000).toISOString();
+
+  it("reads the whole thread in full, so an old check-in is still a candidate", async () => {
+    const d: ItemDetail = {
+      title: "t",
+      body: "d".repeat(3000),
+      labels: [],
+      state: "OPEN",
+      author: { login: "rep" },
+      createdAt: ago(300),
+      url: "u",
+      comments: [
+        { author: { login: "x" }, createdAt: ago(200), body: "/assign" },
+        { author: { login: "x" }, createdAt: ago(190), body: "I'll look into this" },
+        {
+          author: { login: "owner" },
+          createdAt: ago(120),
+          body: `@x are you still working on this? ${"c".repeat(900)}`,
+        },
+        ...Array.from({ length: 20 }, (_, k) => ({
+          author: { login: `u${k}` },
+          createdAt: ago(100 - k),
+          body: "+1 still failing",
+        })),
+      ],
+    };
+    const tl: TimelineEvent[] = [{ event: "assigned", created_at: ago(200), assignee: { login: "x" } }];
+    const f = { timeline: async () => [], prLastCommit: async () => null };
+    const st = await progressState("o/r", 1, ["x"], d, tl, f, NOW);
+    const thread = st.thread as { author: string; text: string }[];
+    expect(thread).toHaveLength(22);
+    expect((st.issue as { description: string }).description).toHaveLength(3000);
+    const [cands] = checkinCandidates(st);
+    expect(thread[cands![0]!]!.author).toBe("owner");
+    expect(thread[cands![0]!]!.text).toHaveLength(934);
+  });
+});
+
+describe("prEvents", () => {
+  const NOW = Date.parse("2026-10-24T00:00:00Z");
+  const ago = (d: number) => new Date(NOW - d * 86_400_000).toISOString();
+
+  it("folds a run of pushes into one event, so a review before them is not pushed out", () => {
+    const tl: TimelineEvent[] = [
+      {
+        event: "reviewed",
+        submitted_at: ago(20),
+        user: { login: "rev" },
+        state: "CHANGES_REQUESTED",
+        body: "r".repeat(500),
+      },
+      ...Array.from({ length: 12 }, (_, k): TimelineEvent => ({
+        event: "committed",
+        committer: { date: ago(19 - k) },
+      })),
+      { event: "commented", created_at: ago(5), user: { login: "a" }, body: "PTAL" },
+    ];
+    const ev = prEvents(tl, "a", NOW);
+    expect(ev.map((e) => e.event)).toEqual(["reviewed", "committed", "commented"]);
+    expect(ev[0]).toMatchObject({ who: "rev", review: "changes_requested" });
+    expect((ev[0] as { text: string }).text).toHaveLength(500);
+    expect(ev[1]).toMatchObject({ count: 12, days_ago: 8, by_pr_author: true });
+  });
 });

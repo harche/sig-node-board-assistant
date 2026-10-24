@@ -14,11 +14,29 @@
   and a **Comment** button: it posts one comment listing the ticked issues as possible duplicates or related, and
   asks the thread to take a look. On the CI/Test board, an issue's Triage hover card can run the same search
   (**Find**) and post the same comment.
-- **Jev: long context for large requests.** With the TypeSafe provider, a request over Jev's default context (64k
-  tokens per request, 32k per question) used to fail. It is now sent again with TypeSafe's long-context option,
-  which allows up to 262k tokens but is slower and less accurate, so it is used only for a request that needs it.
-  OpenRouter already accepts requests that long. Jev calls go through TypeSafe SDK 0.7.0, and building from source
+- **Jev: long context.** With the TypeSafe provider, a request over Jev's default context (64k tokens per request,
+  32k per question) used to fail. Every TypeSafe request now uses TypeSafe's long-context option, which allows up to
+  262k tokens, as OpenRouter already does. Jev calls go through TypeSafe SDK 0.7.0, and building from source
   needs Node 22 or later.
+- **Jev reads the whole evidence.** Jev used to see a window of each item: the last 10 comments cut to 1,000
+  characters, the start of a description, a few linked PRs. Now every board and TestGrid send the whole description,
+  every human comment in full and every linked PR; comments that are only Prow commands are left out. Only a
+  thread too long even for the long context is cut, from the middle, and the state says so. What changes:
+  - **Needs Information** reads every reply since the ask, so a reporter who answered long ago is no longer nudged,
+    and the reporter's comments from before the ask count too.
+  - **Needs Reviewer, Needs Approver and Waiting on Author** see the whole PR history, with a run of pushes shown as
+    one event, and every participant. A `/cc` or mention late in a long comment is now found.
+  - **In progress and the Bugs backlog's assignee check** see the whole thread, so an old check-in is found.
+  - **Triaged and High Priority** see every linked PR, so the original fix is no longer pushed out by cherry-picks,
+    and the closing comment can name any merged PR.
+  - **DRA** sees every linked PR and the issue's milestone.
+  - **Duplicates** on To do and the Bugs backlog are judged in one call per card over the column's other issues,
+    with their comments and linked PRs. On the Bugs backlog, of two duplicates the High Priority card stays.
+  - **TestGrid** reads every junit failure with its count, the end of the build log (the summary and suite timeout),
+    the job's status and history, and each candidate issue's whole thread. When several open issues track a
+    failure, Jev picks the main one; if it can't, the card says so and Accept leaves it to you. Umbrella issues are
+    read from SIG Node's whole open flake and failing-test pool.
+  - **Failing CI on the PR page** judges the cause with every changed file and the hunks of all 20 suspect files.
 
 ## 0.1.5
 

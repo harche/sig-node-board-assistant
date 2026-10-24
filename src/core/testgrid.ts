@@ -392,7 +392,7 @@ export class TestGridClient {
         testgrid: `${ref.dashboard}#${ref.tab}`,
         named_in_title: title.includes(name) || title.includes(ref.tab),
         tracked_tests: rows.size
-          ? [...rows.values()].slice(0, 5).map((r) => strip(rowSignal(tbl, r, ref, asOf, since)))
+          ? [...rows.values()].map((r) => strip(rowSignal(tbl, r, ref, asOf, since)))
           : "not found in this job's recent runs",
         whole_job: job && (({ test: _t, ...rest }) => rest)(strip(job)),
       });

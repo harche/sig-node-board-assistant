@@ -144,10 +144,13 @@ band); longer criteria lists and a four-question decomposition scored worse. Inj
 into `ci_signal` pushed every resolved issue below 0.35, so Jev reads the run history rather than a
 commenter's "seems green now".
 
-Duplicates reuse the CLI's pairwise question after judging: each To-do card against the other To-do and
-In-progress issues. On 2,145 pairs of 151 issues the four pairs humans closed as duplicates scored 0.69–0.90.
-Pairs at or above 0.65 are grouped and each group keeps one issue (In progress, then assigned, then Jev's
-strongest survivor), so pairwise picks that go round in a circle can never close them all.
+Duplicates reuse the CLI's pairwise question after judging, asked in one call per To-do card over all the other
+To-do and In-progress issues at once (`src/core/duplicates.ts`), each issue with its description, human comments and
+linked PRs. Per candidate Jev answers "the same failure?" and "which stays open?". On 2,145 pairs of 151 issues,
+asked one pair at a time, the four pairs humans closed as duplicates scored 0.69–0.90; the wording and the 0.65
+threshold are unchanged, not re-measured in the one-call shape. Pairs at or above 0.65 are grouped and each group
+keeps one issue (In progress, then assigned, then Jev's strongest survivor), so pairwise picks that go round in a
+circle can never close them all.
 
 ## Issues - In progress
 
@@ -155,7 +158,7 @@ The CLI's stale pass decided with a regex for its own nudge wording, a window of
 PR in" heuristic and a days-quiet sum, and each misfired somewhere: a "/assign" someone posted on a PR read as a
 review, so a 171-day-quiet assignee counted as active. `src/core/inprogress.ts` keeps only plain facts in code
 (assignment and comment dates, each assignee's latest own comment, commit or merge, and each linked PR's last
-events marked by who made them) and asks Jev, in one call per card: for each comment since an assignee last acted,
+events, a run of pushes as one, marked by who made them) and asks Jev, in one call per card: for each comment since an assignee last acted,
 is it a check-in to them (the comment's text goes in the question itself; pointing at it by index gave false
 positives); is the assignee still on it (asked only past 30 days of quiet, since Jev is unreliable at date
 comparisons); is the work moving through others. Code then does only date arithmetic: a check-in under 14 days
@@ -170,12 +173,23 @@ whose move it is (author, reviewers, blocked), per participant whether they are 
 declined, and whether a reviewer's hold condition is met. Reviews that only left inline comments are kept as events:
 dropping them hid a reviewer's request from Jev.
 
+Jev reads the whole PR: every event (a run of pushes with nothing between them is one push with its commit count, so
+a long rebase history does not crowd out the discussion), each comment and review summary in full, the description
+without its HTML comments (the template's hints), every changed file, every failing check, and every issue or PR the
+thread names with the paragraph around each mention. Every participant gets the engaged and declined questions with
+everything they wrote, every @-mentioned person not asked otherwise gets a mention question, and every comment since
+the author last acted is a check-in candidate. The parsers read the full text too: `asks()` and `lastPing()` once
+read comments cut at 600 characters, so a `/cc` or a ping further down a long comment was missed. Only a thread too
+long for Jev's context is cut (`src/core/fit.ts`): the state's oldest middle events, and each participant's words,
+which the questions repeat, within half the guard between them.
+
 `src/core/candidates.ts` finds reviewers. The CLI ranked OWNERS approvers near the top; tested on 662 merged 151 PRs
 that was one of the weakest signals (about half had an actual reviewer in its top 3), below who reviewed recent PRs
 touching the same files. The extension gathers, per touched file and top directory, the last year's merged PRs and
 their reviewers (one small GraphQL query per path; one large query timed out), plus the author's own recent PRs,
 blends them with OWNERS as a small bonus, and lets Jev pick three of the best eight given each candidate's counts and
-the titles they reviewed lately.
+the titles they reviewed lately. Jev sees every changed file; what costs GitHub reads stays capped (five files and
+three directories of history, 15 PRs each).
 
 ## PRs - Needs Approver
 
@@ -243,8 +257,12 @@ duplicate grouping (`closeDuplicates`, now per column) and In progress's assigne
   (nothing for the extension to do); of the 18 a person closed as fixed, P ≥ 0.8 caught 3 and P ≥ 0.5 caught 11. Of
   171 open Triaged cards, P ≥ 0.8 flagged 2 (both with the fix merged) and 0.5–0.8 flagged 13, most with the fix merged,
   a few with work left (a temporary fix, a rollout). Hence ≥ 0.8 on Accept, 0.5–0.8 the reviewer's call.
-- Duplicates: every pair of a 176-card column is 15,000 questions, so each card is compared with the three whose titles
-  share the most words (126 pairs on 185); two pairs scored ≥ 0.65, both plausibly the same bug.
+- Duplicates: as To do's, one call per card over the open cards of both columns, at most the 40 whose title and
+  description share the most words with it (a 170-card column would leave each issue too little of the state guard).
+  Pairwise, with each card compared with the three whose titles shared the most words (126 pairs on 185), two pairs
+  scored ≥ 0.65, both plausibly the same bug. Each column's pass asks from its own cards' side, so a pair across
+  the two is read once per pass; the High Priority card is the one kept, ahead of an assigned Triaged one (which,
+  held, stays open too), so both passes agree and a higher priority never closes into a lower.
 - Assignees: of 78 quiet assignees on 49 cards, 57 had assigned themselves and 21 were owners a triager assigned, often
   maintainers holding a bug for the long run. By the board owner's decision only the self-assigned are nudged and
   unassigned (34 nudges, 5 unassigns on 185).
@@ -330,12 +348,29 @@ their runs' logs.
 - Evidence is where the CLI fell short. Its junit parser read each test case's `classname` ("E2eNode Suite") as its
   name, and a build log's tail is the kubetest wrapper's traceback on every failed run. With the tail and those names
   Jev read today's jobs badly; with real names and signal lines it read them well.
+- Jev is sent the whole evidence (every Jev request has a 262k-token context): every junit failure of up to 50 junit
+  files a run, each once, with their count, a message up to 3,000 characters (a long Go test's output keeps the lines
+  above each `--- FAIL:`, where the assertion is, rather than its leading `=== RUN` logs); the build log's signal lines
+  up to 30,000 characters, read to the end so Ginkgo's failure summary, `Ran N of M Specs` and a suite timeout are
+  always there, each `[FAILED]` with the lines after it (Gomega's expected and actual values); the job's status and
+  TestGrid history (runs, failures, the streak, every failing test row, harness-only) and each run's build, start and
+  result; and each candidate issue's whole body and every person's comment (bots' left out). A state that would still
+  pass 500,000 characters (`src/core/fit.ts`) loses a thread's oldest comments after the first, or a broken build's
+  later junit failures, and says so. The caps they replaced (8 failures of 15 files, 400-character messages, 5,000
+  characters of log, a candidate's first 2,500 characters and last 15 comments, a 16,000-character thread for
+  `names_job`) were caution, not the context's limit.
 - Kind of failure (test failure, suite timeout, infra) against the issues' own account: 24/26. The misses: a kubelet
   startup panic from a product change, read as infra; a run that both timed out and was OOM-killed.
 - Tracking, each issue's runs against the real issue and up to 5 lookalikes (run URLs stripped): at P ≥ 0.65 the real
   issue 25/28, others 11/119, most of them duplicates people themselves linked (the same test's flake filed twice).
 - Today's 37 jobs: 12 read as tracked, 11 right on reading; the kind DRA skew jobs' cause (1.33 artifacts removed)
   was tracked in kubernetes/test-infra, so test-infra is searched too.
+- Several open issues tracking one failure (the same flake filed twice, a per-test issue and its umbrella): one more
+  question reads them side by side, threads and all, for the main one, where people work on it and a new job's report
+  belongs (`canonical`, at ≥ 0.5). It replaced the latest-activity tie-break, which could not tell a live tracking
+  issue from a duplicate someone touched last. One that already names the job still wins over a pick that does not,
+  since commenting on another would report the job twice. When Jev names none and none names the job, the top-scored
+  one is suggested, for the reader to confirm.
 - TestGrid marks a failed cell with several values (FAIL 12, FLAKY 13, TIMED_OUT 9, BUILD_FAIL 11, …); all count.
 - Search: REST search allows 30 requests a minute even with a token; GraphQL search, several queries aliased in one
   request, costs about a point of 5,000 an hour. One request per job: a dashboard of 16 jobs in about 7 seconds.
@@ -349,7 +384,7 @@ their runs' logs.
   this one?", and only open umbrellas (12 of 13 were closed, some since 2018).
 - Live on sig-node-containerd: umbrellas are SIG Node's open flake and failing-test issues with broad titles
   ("Probe tests are flaking often on some jobs") that neither words nor meaning find, so Jev reads that whole pool
-  outside the searches' cap. Harness rows (Node Tests) and struct field names from status dumps (`LastProbeTime:`)
+  (searched page by page; 24 issues in October 2026) outside the searches' cap. Harness rows (Node Tests) and struct field names from status dumps (`LastProbeTime:`)
   are left out of the searches. 3 of 17 jobs got a related issue: the probe umbrella #116123, and
   PodAndContainerStatsFromCRI breaking metrics (#111276) behind the alpha Summary API failure.
 - Not yet: clustering jobs that fail the same way into one issue.
@@ -367,8 +402,9 @@ PRs.
   failures keep their classname. A Go case's message is "Failed" and a verify script's "see stderr for details": the
   failure's text or the case's stderr is read instead, which the TestGrid review's evidence gains too.
 - Prow reports a job it could not schedule as `error` with no artifacts: that is infra, decided by code.
-- Jev reads the PR's title, changed paths and per-file suspects, the failed run, this PR's runs and the record
-  elsewhere. On #142200: verify (a new alpha gate on by default) and the Windows unit job (the same) as the PR's at 0.99, a probe test that
+- Jev reads the PR's title, every changed path (up to the 300 the check reads) and per-file suspects (the top 20, each
+  with its hunks while they fit in 150,000 characters), the failed run, this PR's runs and the record elsewhere for
+  every failing test; a candidate flake issue is read with its whole body and every person's comment, as on TestGrid. On #142200: verify (a new alpha gate on by default) and the Windows unit job (the same) as the PR's at 0.99, a probe test that
   failed on 14 of 436 other runs as a flake at 0.98, a GCE instance that could not be created as infra.
 - The diff, read one file at a time. A trial on 167 recent failures of kubernetes/kubernetes PRs, labelled from each
   PR's own runs (84 failed, then passed only after the author changed the code; 83 failed, then passed on a rerun of
@@ -382,7 +418,9 @@ PRs.
 
   Hunks picked by keyword barely helped; a question per file did, most on cmd, verify and DRA integration jobs, where the
   failure names what the PR changed. Half the diffs were over 20 KB (the largest 665 KB): per file, nothing is left
-  out, each file cut at 8,000 characters. Most remaining "wrong" PR cases look mislabelled: a test that also fails on
+  out. The trial cut each file at 8,000 characters and gave the cause question the top 5 files' hunks within 20 KB;
+  with a 262k-token context each file is now judged on up to 60,000 characters and the cause question gets the top
+  20 files' hunks within 150,000. Most remaining "wrong" PR cases look mislabelled: a test that also fails on
   other PRs, which passed after an unrelated push. The cost is a Jev call per changed file (median 7).
 
 - `/retest` reruns every failed job, so it is suggested only when none of them is the PR's.
@@ -393,7 +431,7 @@ PRs.
 
 `src/core/issuecheck.ts`, `src/item/issue.ts`. Read-only, tried on real kubernetes/kubernetes issues. Every question
 is one the extension already asks elsewhere: To do's `resolved` and `resolution` on To do's state, the TestGrid
-review's `tracks` on the newest failed run.
+review's `tracks` on the newest failed run, which reads the issue's whole body and every person's comment.
 
 - The verdict uses the named test that failed most; the whole job only when the title names it, as the fresh-fix
   guard does. #142439 names `pull-kubernetes-kind-dra-all` only as where a data race showed, and that job fails half
@@ -430,6 +468,10 @@ issue was shown.
 - The ceiling is search: 29% of originals were never found; people linked those by investigation, not by anything
   either text said.
 - Live, about 40 candidates, one relation question each and a verification for the few that pass; about 9 seconds.
+- Each side of a pair is read whole: the body without its HTML comments and every human comment in full, but those
+  that are only Prow commands. The trial read the last 10 comments at 800 characters, which loses the early comments
+  where a root cause is usually named. Each side keeps to half the state guard (`src/core/fit.ts`): past it, the
+  oldest middle comments go first.
 
 ## Broken Prow commands
 
@@ -462,23 +504,35 @@ so the extension has no Python dependency). It holds, for every item in the CLI'
 item, the raw detail, the computed signals, the Jev state and its Python `json.dumps` length; plus the
 questions for both item types, a 328-case grid over the decision policy, all 36 PR-lane combinations and
 sample command lines. `tests/parity.test.ts` runs the TypeScript over the same inputs and expects the same
-outputs, down to the "why" string. Two things had to be deliberate to make that hold:
+outputs, down to the "why" string, apart from the deliberate differences below. One thing had to be deliberate to
+make that hold:
 
 - **Number formatting.** Python's `f"{x:.2f}"` rounds the exact binary value half-to-even; JavaScript's
   `toFixed` rounds half-up and V8 mis-rounds some values (`0.665 → "0.66"`). `policy.f2()` reproduces
   Python.
-- **State size.** Truncation thresholds are measured in characters of Python's `json.dumps` output, which
-  has different separators and escapes non-ASCII. `state.pyJsonLength()` reproduces that length.
 
-Where the port deliberately differs from the reference: the state carries every human routing comment as
-`human_routing` (the reference only sent the last 10 comments, so an early `/sig node` was invisible to the
-owner question), the description-trimming loop terminates when the description is exhausted, the ownership
-guard above is restored, and a human `/sig node` overrides only the ownership half of a REMOVE
-(`HAND_ROUTED_CI_AT`) instead of any REMOVE. The last one is the only place the fixture itself was edited: its
-`questions` block carries the port's `in_scope` focus and no `/sig node` includes line, and the 84 decision
-cases that write `/sig node` carry the port's verdicts and `why` strings. Everything else in the file is still
-the CLI's, unchanged. The Python CLI is the historical reference; this repository is where the policy lives
-now.
+Where the port deliberately differs from the reference:
+
+- **The Jev state is the port's own.** The reference sent the last 10 human comments cut at 1,000 characters, the
+  description cut at 8,000 and at most 40 test and 40 other changed files, and trimmed a state over 40,000
+  characters to the last 3 comments and a shorter description. None of that was forced by Jev's context, which is
+  now 262k tokens on every request, and it hid evidence: an early comment saying the failure is a product bug, the
+  reproduction a long description ends with. The port sends the whole description, every human comment in full,
+  leaving out bots and comments that are only Prow commands (their `/sig` and `/area` lines are in
+  `human_routing`), and every changed file. A PR's review-thread comments are among the comments, in time order;
+  with no window they no longer push the discussion out. Only a state over `MAX_STATE_CHARS` (500,000 characters,
+  `src/core/fit.ts`) is cut: the oldest middle comments first, then the middle of the description or the file
+  lists, whichever is bigger. The fixture's `state` and `state_chars` were regenerated from the port; `state_chars`
+  is still Python's `json.dumps` length (`state.pyJsonLength()`), as the CLI reported it.
+- **Routing.** The state carries every human routing comment as `human_routing` (the reference's window made an
+  early `/sig node` invisible to the owner question).
+- **Ownership.** The ownership guard above is restored, and a human `/sig node` overrides only the ownership half of
+  a REMOVE (`HAND_ROUTED_CI_AT`) instead of any REMOVE. The fixture's `questions` block carries the port's `in_scope`
+  focus and no `/sig node` includes line, and the 84 decision cases that write `/sig node` carry the port's
+  verdicts and `why` strings.
+
+The rest of the file (items, details, signals, decisions, lanes, commands) is still the CLI's. The Python CLI is the
+historical reference; this repository is where the policy lives now.
 
 ## What the section shows and why (Triage)
 

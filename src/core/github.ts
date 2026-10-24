@@ -7,6 +7,7 @@
  *  Link-header pagination; this class adds a short retry on 5xx and rate limits, and the board shapes. */
 import { Octokit } from "@octokit/core";
 import { paginateRest } from "@octokit/plugin-paginate-rest";
+import { isBot } from "./boards";
 import { forever, Reads } from "./reads";
 import type {
   Comment,
@@ -294,7 +295,7 @@ export class GitHubClient {
       failing: p.statuses
         .filter((x) => x.context !== "tide" && (x.state === "failure" || x.state === "error"))
         .map((x) => x.context),
-      reviews: p.reviews.map((r) => ({ ...r, body: r.body.slice(0, 600) })),
+      reviews: p.reviews,
     };
   }
 
@@ -484,10 +485,11 @@ export class GitHubClient {
     return { repository: c.html_url.split("/").slice(3, 5).join("/"), number: c.number };
   }
 
-  /** Issues matching each search query, at most `n` each. A plain query is a keyword search, newest-updated first;
-   *  `{ q, type }` asks GitHub's semantic or hybrid (semantic and keyword) search, best match first. One GraphQL
-   *  request carries every query (aliased searches cost about one point of the 5,000 an hour, and do not count
-   *  against REST search's 30 a minute). */
+  /** Issues matching each search query, at most `n` each (past 100, page by page; GitHub's search stops at 1,000). A
+   *  plain query is a keyword search, newest-updated first; `{ q, type }` asks GitHub's semantic or hybrid (semantic
+   *  and keyword) search, best match first. One GraphQL request carries every query (aliased searches cost about one
+   *  point of the 5,000 an hour, and do not count against REST search's 30 a minute), and one more each further page
+   *  any of them needs. Bodies are whole: they are what Jev reads of a candidate. */
   async searchIssues(queries: SearchQuery[], n = 10): Promise<RawSearchIssue[][]> {
     const norm = (x: SearchQuery) => (typeof x === "string" ? { q: x, type: "ISSUE" as const } : x);
     const id = (x: SearchQuery) => {
@@ -496,75 +498,95 @@ export class GitHubClient {
     };
     const out = new Map<string, RawSearchIssue[]>();
     const todo = [...new Map(queries.map((x) => [id(x), norm(x)])).values()];
-    if (todo.length) {
-      const fields =
-        "nodes { ... on Issue { number title state closedAt createdAt updatedAt url body author { login } assignees(first: 5) { nodes { login } } } }";
-      const query = `query(${todo.map((_, i) => `$q${i}: String!`).join(", ")}) { ${todo
-        .map((x, i) => `s${i}: search(query: $q${i}, type: ${x.type}, first: ${n}) { ${fields} }`)
+    type Node = {
+      number?: number;
+      title: string;
+      state: string;
+      closedAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+      url: string;
+      body: string;
+      author: { login: string } | null;
+      assignees: { nodes: { login: string }[] } | null;
+    };
+    const got = todo.map((): Node[] => []);
+    // The queries still to read, and where each one's next page starts.
+    let next = todo.map((_, i) => ({ i, after: null as string | null }));
+    const fields =
+      "pageInfo { hasNextPage endCursor } nodes { ... on Issue { number title state closedAt createdAt updatedAt url body author { login } assignees(first: 5) { nodes { login } } } }";
+    while (next.length) {
+      const query = `query(${next.map((_, k) => `$q${k}: String!, $a${k}: String`).join(", ")}) { ${next
+        .map(
+          ({ i }, k) =>
+            `s${k}: search(query: $q${k}, type: ${todo[i]!.type}, first: ${Math.min(100, n - got[i]!.length)}, after: $a${k}) { ${fields} }`,
+        )
         .join(" ")} }`;
-      type Node = {
-        number?: number;
-        title: string;
-        state: string;
-        closedAt: string | null;
-        createdAt: string;
-        updatedAt: string;
-        url: string;
-        body: string;
-        author: { login: string } | null;
-        assignees: { nodes: { login: string }[] } | null;
-      };
-      const data = await this.graphql<Record<string, { nodes: Node[] }>>(
+      const data = await this.graphql<Record<string, Connection<Node> | null>>(
         query,
         // Keyword searches newest first; semantic and hybrid keep their own ranking.
         Object.fromEntries(
-          todo.map((x, i) => [`q${i}`, x.type === "ISSUE" ? `${x.q} sort:updated-desc` : x.q]),
+          next.flatMap(({ i, after }, k) => {
+            const x = todo[i]!;
+            return [
+              [`q${k}`, x.type === "ISSUE" ? `${x.q} sort:updated-desc` : x.q],
+              [`a${k}`, after],
+            ];
+          }),
         ),
         // A failed alias comes back null beside the others: partial, and checked below.
         true,
       );
-      for (const [i, x] of todo.entries()) {
+      const more: typeof next = [];
+      for (const [k, { i }] of next.entries()) {
         // A failed alias comes back null beside the others' data: an error, not "nothing found".
-        const hit = data[`s${i}`];
-        if (!hit) throw new Error(`GitHub search failed for: ${x.q}`);
-        out.set(
-          id(x),
-          hit.nodes
-            .filter((y) => y.number)
-            .map((y) => ({
-              number: y.number!,
-              title: y.title,
-              state: y.state.toLowerCase() as "open" | "closed",
-              closed_at: y.closedAt,
-              html_url: y.url,
-              body: (y.body ?? "").slice(0, 3000),
-              created_at: y.createdAt,
-              updated_at: y.updatedAt,
-              author: y.author?.login ?? "ghost",
-              assignees: (y.assignees?.nodes ?? []).map((a) => a.login),
-            })),
-        );
+        const hit = data[`s${k}`];
+        if (!hit) throw new Error(`GitHub search failed for: ${todo[i]!.q}`);
+        got[i]!.push(...hit.nodes);
+        if (hit.pageInfo?.hasNextPage && hit.nodes.length && got[i]!.length < n)
+          more.push({ i, after: hit.pageInfo.endCursor });
       }
+      next = more;
     }
+    for (const [i, x] of todo.entries())
+      out.set(
+        id(x),
+        got[i]!.filter((y) => y.number).map((y) => ({
+          number: y.number!,
+          title: y.title,
+          state: y.state.toLowerCase() as "open" | "closed",
+          closed_at: y.closedAt,
+          html_url: y.url,
+          body: y.body ?? "",
+          created_at: y.createdAt,
+          updated_at: y.updatedAt,
+          author: y.author?.login ?? "ghost",
+          assignees: (y.assignees?.nodes ?? []).map((a) => a.login),
+        })),
+      );
     return queries.map((x) => out.get(id(x)) ?? []);
   }
 
-  /** Issues with their recent thread, by number, in one GraphQL request (pull requests and missing numbers come back
-   *  null). For the duplicates check: each candidate's title, body, labels and last 15 comments. */
+  /** Issues with their whole thread, by number (pull requests and missing numbers come back null): each one's title,
+   *  body, labels and every comment, oldest first. One GraphQL request per 25 issues, and one more for each further
+   *  100 comments any of them has. For the duplicates check and the TestGrid review's candidates. */
   async issueThreads(repo: string, numbers: number[]): Promise<Map<number, ThreadIssue | null>> {
     const out = new Map<number, ThreadIssue | null>();
     const todo = [...new Set(numbers)];
     const [owner, name] = repo.split("/");
+    type RawComment = { author: { login: string } | null; body: string; createdAt: string };
+    const COMMENTS = "pageInfo { hasNextPage endCursor } nodes { author { login } body createdAt }";
     for (let i = 0; i < todo.length; i += 25) {
       const chunk = todo.slice(i, i + 25);
       const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${chunk
         .map(
           (n) =>
-            `i${n}: issueOrPullRequest(number: ${n}) { __typename ... on Issue { number title body state createdAt closedAt url author { login } labels(first: 20) { nodes { name } } comments(last: 15) { nodes { author { login } body createdAt } } } }`,
+            `i${n}: issueOrPullRequest(number: ${n}) { __typename ... on Issue { id number title body state createdAt closedAt url author { login } labels(first: 20) { nodes { name } } comments(first: 100) { ${COMMENTS} } } }`,
         )
         .join(" ")} } }`;
       type Node = {
         __typename: string;
+        id: string;
         number: number;
         title: string;
         body: string;
@@ -574,7 +596,7 @@ export class GitHubClient {
         url: string;
         author: { login: string } | null;
         labels: { nodes: { name: string }[] };
-        comments: { nodes: { author: { login: string } | null; body: string; createdAt: string }[] };
+        comments: Connection<RawComment>;
       };
       // A number that is no issue comes back null beside a NOT_FOUND error: partial.
       const data = await this.graphql<{ repository: Record<string, Node | null> }>(
@@ -582,39 +604,66 @@ export class GitHubClient {
         { owner, name },
         true,
       );
-      for (const n of chunk) {
+      const issues = chunk.flatMap((n) => {
         const x = data.repository?.[`i${n}`];
-        out.set(
-          n,
-          x && x.__typename === "Issue"
-            ? {
-                number: x.number,
-                title: x.title,
-                body: (x.body ?? "").slice(0, 6000),
-                state: x.state.toLowerCase() as "open" | "closed",
-                created_at: x.createdAt,
-                closed_at: x.closedAt,
-                url: x.url,
-                author: x.author?.login ?? "ghost",
-                labels: x.labels.nodes.map((l) => l.name),
-                comments: x.comments.nodes.map((c) => ({
-                  author: c.author?.login ?? "ghost",
-                  body: (c.body ?? "").slice(0, 2000),
-                  created_at: c.createdAt,
-                })),
-              }
-            : null,
+        return x && x.__typename === "Issue" ? [x] : [];
+      });
+      const comments = new Map(issues.map((x) => [x.number, [...x.comments.nodes]]));
+      // Long threads' further comments, every issue's next page in one request.
+      let next = issues.flatMap((x) =>
+        x.comments.pageInfo?.hasNextPage ? [{ x, after: x.comments.pageInfo.endCursor }] : [],
+      );
+      while (next.length) {
+        const q = `query(${next.map((_, k) => `$id${k}: ID!, $a${k}: String!`).join(", ")}) { ${next
+          .map(
+            (_, k) =>
+              `c${k}: node(id: $id${k}) { ... on Issue { comments(first: 100, after: $a${k}) { ${COMMENTS} } } }`,
+          )
+          .join(" ")} }`;
+        const more = await this.graphql<Record<string, { comments: Connection<RawComment> } | null>>(
+          q,
+          Object.fromEntries(
+            next.flatMap(({ x, after }, k) => [
+              [`id${k}`, x.id],
+              [`a${k}`, after],
+            ]),
+          ),
         );
+        next = next.flatMap(({ x }, k) => {
+          const c = more[`c${k}`]?.comments;
+          if (!c) return [];
+          comments.get(x.number)!.push(...c.nodes);
+          return c.pageInfo.hasNextPage && c.nodes.length ? [{ x, after: c.pageInfo.endCursor }] : [];
+        });
       }
+      for (const n of chunk) out.set(n, null);
+      for (const x of issues)
+        out.set(x.number, {
+          number: x.number,
+          title: x.title,
+          body: x.body ?? "",
+          state: x.state.toLowerCase() as "open" | "closed",
+          created_at: x.createdAt,
+          closed_at: x.closedAt,
+          url: x.url,
+          author: x.author?.login ?? "ghost",
+          labels: x.labels.nodes.map((l) => l.name),
+          comments: comments.get(x.number)!.map((c) => ({
+            author: c.author?.login ?? "ghost",
+            body: c.body ?? "",
+            created_at: c.createdAt,
+          })),
+        });
     }
     return out;
   }
 
-  /** An issue's whole body and every comment, as one text. With `mirrorRepo`, the comments on its
-   *  "[mirror] <repo>#<n>" issue there too (where the TestGrid review writes while being tried out). */
-  async issueText(repo: string, number: number, mirrorRepo?: string): Promise<string> {
+  /** An issue's whole body, then every comment but bots' (stale and triage notices, Prow's replies), oldest first.
+   *  With `mirrorRepo`, every comment on its "[mirror] <repo>#<n>" issue there too (where the TestGrid review writes
+   *  while being tried out). */
+  async issueText(repo: string, number: number, mirrorRepo?: string): Promise<string[]> {
     const { detail, comments } = await this.item(repo, number);
-    const parts = [detail.body, ...comments.map((c) => c.body)];
+    const parts = [detail.body, ...comments.filter((c) => !isBot(c.author.login)).map((c) => c.body)];
     if (mirrorRepo) {
       const title = `[mirror] ${repo}#${number}`;
       const all = await this.paged<{ number: number; title: string }>(`/repos/${mirrorRepo}/issues`, {
@@ -623,7 +672,7 @@ export class GitHubClient {
       const m = all.find((x) => x.title === title);
       if (m) parts.push(...(await this.item(mirrorRepo, m.number)).comments.map((c) => c.body));
     }
-    return parts.join("\n");
+    return parts;
   }
 
   /** Creates a secret gist on the token's account (feedback's attachments); returns its URL. Needs the `gist` scope. */
@@ -757,7 +806,8 @@ export class GitHubClient {
     return (await this.pull(repo, num)).pull.lastCommit;
   }
 
-  /** PRs that reference an issue (cross-referenced timeline events), newest reference last, deduped. */
+  /** PRs that reference an issue (cross-referenced timeline events), newest reference last, deduped, each with its
+   *  whole description. */
   async linkedPrs(repo: string, num: number): Promise<LinkedPr[]> {
     const out = new Map<string, LinkedPr>();
     for (const e of await this.timeline(repo, num)) {
@@ -1147,7 +1197,7 @@ interface RawProjectItem {
 }
 export type SearchQuery = string | { q: string; type: "ISSUE" | "ISSUE_SEMANTIC" | "ISSUE_HYBRID" };
 
-/** An issue and its recent thread, as the duplicates check reads a candidate. */
+/** An issue and its whole thread, as the duplicates check and the TestGrid review read a candidate. */
 export interface ThreadIssue {
   number: number;
   title: string;
@@ -1174,8 +1224,8 @@ export interface RawSearchIssue {
   assignees?: string[];
 }
 
-/** Timeline events the extension reads, cut to the fields it reads, with long bodies cut: the judges see the
- *  thread's comments in full elsewhere. */
+/** Timeline events the extension reads, cut to the fields it reads. Bodies stay whole: a PR's linked-PR body is its
+ *  description (linkedPrs), whose template opens with a long HTML comment that a cut can leave as all there is. */
 const KEPT_EVENTS = new Set([
   "review_requested",
   "assigned",
@@ -1204,7 +1254,7 @@ export function slim(events: TimelineEvent[]): TimelineEvent[] {
         assignee: who(e.assignee),
         requested_reviewer: who(e.requested_reviewer),
         label: e.label && { name: e.label.name },
-        body: e.body?.slice(0, 300),
+        body: e.body ?? undefined,
         committer: e.committer && { date: e.committer.date },
         source: i && {
           issue: {
@@ -1213,7 +1263,7 @@ export function slim(events: TimelineEvent[]): TimelineEvent[] {
             state: i.state,
             html_url: i.html_url,
             created_at: i.created_at,
-            body: i.body?.slice(0, 1000) ?? null,
+            body: i.body ?? null,
             user: who(i.user) ?? undefined,
             pull_request: i.pull_request && { merged_at: i.pull_request.merged_at },
           },
@@ -1268,8 +1318,9 @@ export interface CommitStatus {
   description: string;
   target_url: string;
 }
-/** A changed file's patch is cut here: one file of a huge change is judged from its first hunks. */
-export const PATCH_MAX = 8000;
+/** A changed file's patch is cut here: Jev judges a file of up to about 60k characters of diff whole, and a larger
+ *  one from its first 60k. */
+export const PATCH_MAX = 60_000;
 export interface ChangedFile {
   file: string;
   /** added, modified, removed, renamed… */

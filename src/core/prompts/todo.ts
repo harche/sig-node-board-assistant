@@ -74,24 +74,55 @@ export function todoQuestions(): { resolved: typeof resolved; resolution: typeof
   return { resolved, resolution };
 }
 
-/** Pairwise duplicate check, the CLI's sweep DUP_Q. */
-export const DUPLICATE_QUESTIONS = {
-  duplicate: {
-    type: "noul",
-    instructions: "Are issue_A and issue_B tracking the same failure? Same title alone is not proof.",
+/** Per candidate `c` of a duplicate pass (duplicates.ts): `duplicate_<k>`, is it the same as `issue`, and
+ *  `survivor_<k>`, which of the two stays open. All of a column's candidates go in one call, so each question names
+ *  its own candidate; it is judged on its own, as the pair question was. */
+export function candidateQuestions(
+  keys: string[],
+  q: {
+    duplicate: (c: string) => string;
+    criteria: { true: string; false: string };
+    survivor: (c: string) => string;
+  },
+): Record<string, unknown> {
+  const note =
+    "`candidates` holds the other open issues in the column, the ones sharing the most words with `issue` first; each carries facts code computed against `issue` (`precomputed (use as given)`). Any number of candidates, or none, can be duplicates. `days_ago` values are relative to now.";
+  return Object.fromEntries(
+    keys.flatMap((c, k) => [
+      [
+        `duplicate_${k}`,
+        {
+          type: "noul",
+          instructions: { question: q.duplicate(c), note, evidence: ["issue", `candidates.${c}`] },
+          criteria: q.criteria,
+        },
+      ],
+      [
+        `survivor_${k}`,
+        {
+          type: "choice",
+          instructions: { question: q.survivor(c), evidence: ["issue", `candidates.${c}`] },
+          criteria: {
+            issue: `\`issue\` should stay open; close \`candidates.${c}\`.`,
+            candidate: `\`candidates.${c}\` should stay open; close \`issue\`.`,
+          },
+        },
+      ],
+    ]),
+  );
+}
+
+/** To do's duplicates: the CLI's sweep DUP_Q, per candidate. */
+export function duplicateQuestions(keys: string[]): Record<string, unknown> {
+  return candidateQuestions(keys, {
+    duplicate: (c) =>
+      `Are \`issue\` and \`candidates.${c}\` tracking the same failure? Same title alone is not proof.`,
     criteria: {
       true: "Same test (or same job-level failure) on the same job or job family, with the same failure signature/assertion; one could be closed in favour of the other with nothing lost.",
       false:
         "Different tests, different jobs with different causes, or the same assertion but clearly different root causes or scope.",
     },
-  },
-  survivor: {
-    type: "choice",
-    instructions:
-      "If they are duplicates, which issue should stay open? Prefer the newer or superset issue (covers more variants, has triage links, more discussion).",
-    criteria: {
-      A: "issue_A should stay open; close issue_B.",
-      B: "issue_B should stay open; close issue_A.",
-    },
-  },
-};
+    survivor: (c) =>
+      `If \`issue\` and \`candidates.${c}\` are duplicates, which should stay open? Prefer the newer or superset issue (covers more variants, has triage links, more discussion).`,
+  });
+}

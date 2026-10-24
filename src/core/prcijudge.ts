@@ -19,19 +19,11 @@ import {
 import { choiceReading, noulReading, type Reading } from "./readings";
 import { matchRows, tally, type TgRef, type TgTable } from "./testgrid";
 import { forever } from "./reads";
-import { candidates, runEvidence, type TgDeps } from "./tgjudge";
-import {
-  GCS,
-  MAYBE_AT,
-  stripRuns,
-  type JobFacts,
-  type JunitFailure,
-  type Track,
-  type TrackAnswer,
-} from "./tgreview";
+import { candidates, candidateThreads, fitRuns, runEvidence, withIssue, type TgDeps } from "./tgjudge";
+import { GCS, MAYBE_AT, type JobFacts, type JunitFailure, type Track, type TrackAnswer } from "./tgreview";
 import type { JevChoice, JevUsage } from "./types";
 
-export interface CiDeps extends Pick<TgDeps, "search" | "fetchFn"> {
+export interface CiDeps extends Pick<TgDeps, "search" | "fetchFn" | "threads"> {
   pull(repo: string, number: number): Promise<PullChecks>;
   /** The PR's diff at `sha`, its head; null once the head has moved on. */
   diff(repo: string, number: number, sha: string): Promise<ChangedFile[] | null>;
@@ -40,10 +32,11 @@ export interface CiDeps extends Pick<TgDeps, "search" | "fetchFn"> {
   jev: JevClient;
 }
 
-/** suspect_changes: the files listed, and those given with their hunks (within HUNKS characters). */
+/** suspect_changes: the files listed, each with its hunks while they fit in HUNKS characters (a file's patch is at
+ *  most PATCH_MAX, so the top two or three whole at worst, all twenty for most PRs). */
 const SUSPECTS = 20;
-const WITH_HUNKS = 5;
-const HUNKS = 20_000;
+const WITH_HUNKS = SUSPECTS;
+const HUNKS = 150_000;
 
 /** Generated and vendored files: listed as not judged rather than asked about one by one (a vendor bump changes
  *  hundreds), since a check that fails over them names them anyway. */
@@ -125,7 +118,7 @@ async function elsewhere(
   if (!tbl?.timestamps.length) return null;
   const overall = tbl.tests.find((r) => /(^|\.)Overall$/.test(r.name));
   const tests = new Map<string, { test: string; runs: number; failed: number }>();
-  for (const j of failures.slice(0, 8)) {
+  for (const j of failures) {
     const row = matchRows(tbl, rowName(j))[0];
     if (row && !tests.has(row.name)) tests.set(row.name, { test: row.name, ...tally(tbl, row, ours) });
   }
@@ -133,7 +126,7 @@ async function elsewhere(
     testgrid: `${ref.dashboard}#${ref.tab}`,
     window_days: Math.max(1, Math.round((now - tbl.timestamps[tbl.timestamps.length - 1]!) / DAY)),
     job: overall ? tally(tbl, overall, ours) : { runs: 0, failed: 0 },
-    tests: [...tests.values()].slice(0, 5),
+    tests: [...tests.values()],
   };
 }
 
@@ -186,9 +179,15 @@ export async function judgeCi(
     return res.answers;
   };
   const failures = evidence.junit_failures.map((j) => ({ test: rowName(j), message: j.message }));
-  const run = { junit_failures: failures, log_signals: evidence.log_signals ?? [] };
+  const [run] = fitRuns([
+    {
+      junit_total: evidence.junit_total ?? failures.length,
+      junit_failures: failures,
+      log_signals: evidence.log_signals ?? [],
+    },
+  ]);
   const state = {
-    pr: { title: pr.title, files: pr.files.slice(0, 150), files_total: pr.files_total },
+    pr: { title: pr.title, files: pr.files, files_total: pr.files_total },
     job: check.job,
     run,
     this_pr: this_pr.map((r) => ({
@@ -244,22 +243,13 @@ export async function judgeCi(
       }
     : state;
   const st = { job: check.job, runs: [run] };
+  // Each candidate with its whole thread, as the TestGrid review reads it.
+  const threads = await candidateThreads(d, cands);
   const [cause, answers] = await Promise.all([
     ask<{ cause: JevChoice }>(cstate, causeQuestion()).then((a) => a.cause ?? null),
     Promise.all(
       cands.map((c) =>
-        ask<TrackAnswer>(
-          {
-            ...st,
-            issue: {
-              number: c.number,
-              title: c.title,
-              state: c.state,
-              body: stripRuns(c.body).slice(0, 2500),
-            },
-          },
-          tracksQuestion(),
-        ),
+        ask<TrackAnswer>(withIssue(st, c, threads.get(`${c.repo}#${c.number}`)?.comments), tracksQuestion()),
       ),
     ),
   ]);

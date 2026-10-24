@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   backlogSteps,
   decideBacklog,
+  judgeBacklog,
   selfAssigned,
-  shortlist,
   type BacklogResult,
 } from "../src/core/backlog";
 import { bugLabels } from "../src/core/bugs";
 import { isDraftedComment } from "../src/core/comments";
 import type { AssigneeVerdict } from "../src/core/inprogress";
-import type { BoardItem } from "../src/core/types";
+import type { JevClient } from "../src/core/jev";
+import type { BoardItem, ItemDetail, LinkedPr } from "../src/core/types";
 
 const fixed = (p: number, how = "fixed_by_change") => ({
   resolved: { type: "noul" as const, noul: p },
@@ -170,19 +171,46 @@ describe("selfAssigned", () => {
   });
 });
 
-describe("shortlist", () => {
-  it("pairs each target with the cards sharing the most words, once per pair", () => {
-    const c = (restId: number, title: string) => ({ restId, title });
-    const pool = [
-      c(1, "devicemanager stuck in Allocate RPC"),
-      c(2, "kubelet stuck when device plugin Allocate RPC hangs"),
-      c(3, "eviction manager ignores ephemeral storage"),
-    ];
-    const pairs = shortlist(pool, pool, (x) => x.title);
-    expect(pairs.map(([a, b]) => [a.restId, b.restId])).toEqual([[1, 2]]);
-    // The same pair from the other side comes out in the same order.
-    expect(shortlist([pool[1]!], pool, (x) => x.title).map(([a, b]) => [a.restId, b.restId])).toEqual([
-      [1, 2],
-    ]);
+describe("judgeBacklog", () => {
+  it("offers the original fix among 12 cherry-picks, and names it", async () => {
+    const prs: LinkedPr[] = Array.from({ length: 13 }, (_, k) => ({
+      repository: "kubernetes/kubernetes",
+      number: 300 + k,
+      title: k ? `Automated cherry pick of #300: kubelet: fix probe leak` : "kubelet: fix probe leak",
+      author: "a",
+      state: "merged",
+      createdAt: `2026-09-${String(k + 1).padStart(2, "0")}T00:00:00Z`,
+      mergedAt: `2026-09-${String(k + 2).padStart(2, "0")}T00:00:00Z`,
+      body: "fixes the leak",
+    }));
+    const asked: Record<string, unknown>[] = [];
+    const jev = {
+      ask: async (_s: unknown, q: Record<string, unknown>) => {
+        asked.push(q);
+        return {
+          answers: {
+            ...fixed(0.9),
+            fix_pr: { type: "choice", choice: "pr_300", confidence: 0.9, probabilities: { pr_300: 0.9 } },
+          },
+          usage: { input_tokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as JevClient;
+    const d = {
+      title: "probe leak",
+      body: "b",
+      labels: [{ name: "triage/accepted" }, { name: "priority/backlog" }],
+      state: "OPEN",
+      author: { login: "rep" },
+      createdAt: "2026-08-01T00:00:00Z",
+      url: "u",
+      comments: [],
+    } as ItemDetail;
+    const card = { ...item, assignees: [], status: "Triaged" } as BoardItem;
+    const r = await judgeBacklog(card, d, prs, {} as never, jev);
+    const q = asked.find((x) => "fix_pr" in x) as { fix_pr: { criteria: Record<string, unknown> } };
+    expect(Object.keys(q.fix_pr.criteria)).toHaveLength(14);
+    expect(q.fix_pr.criteria).toHaveProperty("pr_300");
+    expect(r.fixed_by).toMatchObject({ number: 300 });
   });
 });

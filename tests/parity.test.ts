@@ -1,9 +1,12 @@
 /** The extension against a frozen snapshot of the Python reference's outputs (tests/fixtures/parity.json).
- *  Same signals, same Jev state, same questions, same verdicts, same commands. */
+ *  Same signals, questions, verdicts and commands, apart from the deliberate differences noted below. The Jev state
+ *  is the port's own: the fixture's `state` and `state_chars` were regenerated from buildState when it began sending
+ *  the whole evidence (docs/design.md, "Parity with the reference"). */
 import { describe, expect, it } from "vitest";
 import { decide, priority, prLane } from "../src/core/policy";
 import { priorityQuestion, triageQuestions } from "../src/core/prompts/triage";
 import { signals } from "../src/core/signals";
+import { MAX_STATE_CHARS } from "../src/core/fit";
 import { buildState, pyJsonLength } from "../src/core/state";
 import { moveCommand, prowCommand } from "../src/core/triage";
 import type { BoardFields, BoardItem, ItemDetail, ItemKind, Signals, TriageAnswers } from "../src/core/types";
@@ -61,34 +64,83 @@ describe("signals()", () => {
 });
 
 describe("buildState()", () => {
+  // Deliberate difference: the reference sent the last 10 human comments at 1,000 characters each, the description
+  // at 8,000 and 40 + 40 changed files, under a 40,000-character cap. The port sends every human comment in full but
+  // those that are only Prow commands, the whole description, every file, and every human /sig or /area comment as
+  // `human_routing`.
   it.each(items.map((e) => [`${e.item.repository}#${e.item.number}`, e] as const))("%s", (_name, e) => {
     const st = buildState(toItem(e.item), e.detail, e.kind);
-    // The port adds every human /sig or /area comment as `human_routing` (the Python reference only sent the last
-    // 10 comments, so early routing was invisible to the owner question); everything else must match.
-    const { human_routing, ...rest } = st;
-    expect(rest).toEqual(e.state);
+    expect(st).toEqual(e.state);
     const routing = e.signals.human_slash_routing_comments.map((r) => ({ author: r.who, command: r.cmd }));
-    expect(human_routing ?? []).toEqual(routing);
-    expect(pyJsonLength(rest)).toBe(e.state_chars);
+    expect(st.human_routing ?? []).toEqual(routing);
+    expect(pyJsonLength(st)).toBe(e.state_chars);
   });
-  it("terminates when the description alone cannot bring the state under the limit", () => {
-    const e = items.find((x) => x.kind === "PullRequest")!;
+  const e = items.find((x) => x.kind === "PullRequest")!;
+  it("keeps an early decisive comment in a long thread", () => {
+    const comments = Array.from({ length: 40 }, (_, i) => ({
+      author: { login: `h${i}` },
+      body: i === 2 ? "This is a product bug in the kubelet, not a test problem." : `comment ${i}`,
+      createdAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z`,
+    }));
+    const st = buildState(toItem(e.item), { ...e.detail, comments }, e.kind);
+    expect(st.human_comments).toHaveLength(40);
+    expect(st.human_comments[2]).toEqual({
+      author: "h2",
+      text: "This is a product bug in the kubelet, not a test problem.",
+    });
+  });
+  it("leaves out comments that are only Prow commands, but not their routing", () => {
+    const comments = [
+      { author: { login: "a" }, body: "/sig node\n/area test", createdAt: "2026-01-01T00:00:01Z" },
+      { author: { login: "b" }, body: "/retest", createdAt: "2026-01-01T00:00:02Z" },
+      {
+        author: { login: "c" },
+        body: "/lgtm\nThanks, the fix looks right.",
+        createdAt: "2026-01-01T00:00:03Z",
+      },
+    ];
+    const st = buildState(toItem(e.item), { ...e.detail, comments }, e.kind);
+    expect(st.human_comments).toEqual([{ author: "c", text: "/lgtm\nThanks, the fix looks right." }]);
+    expect(st.human_routing).toEqual([
+      { author: "a", command: "/sig node" },
+      { author: "a", command: "/area test" },
+    ]);
+  });
+  it("sends a long comment, description and file list whole", () => {
+    const long = "x".repeat(20_000);
+    const files = Array.from({ length: 300 }, (_, i) => ({
+      path: `pkg/f${i}.go`,
+      additions: 1,
+      deletions: 1,
+    }));
+    const st = buildState(
+      toItem(e.item),
+      { ...e.detail, body: long, files, comments: [{ author: { login: "h" }, body: long, createdAt: "" }] },
+      "PullRequest",
+    );
+    expect(st.description).toBe(long);
+    expect(st.human_comments).toEqual([{ author: "h", text: long }]);
+    expect(st.changed_files!.other).toHaveLength(300);
+  });
+  it("over the guard, drops the oldest middle comments, then cuts the middle of the description, and terminates", () => {
     const huge: ItemDetail = {
       ...e.detail,
-      body: "x".repeat(50_000),
-      comments: Array.from({ length: 3 }, (_, i) => ({
+      body: "x".repeat(480_000),
+      comments: Array.from({ length: 30 }, (_, i) => ({
         author: { login: `h${i}` },
-        body: "é".repeat(1000),
-        createdAt: "",
+        body: "é".repeat(20_000),
+        createdAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z`,
       })),
-      files: Array.from({ length: 80 }, (_, i) => ({
-        path: `pkg/${"p".repeat(600)}${i}.go`,
-        additions: 1,
-        deletions: 1,
-      })),
+      files: Array.from({ length: 80 }, (_, i) => ({ path: `pkg/p${i}.go`, additions: 1, deletions: 1 })),
     };
     const st = buildState(toItem(e.item), huge, "PullRequest");
-    expect(st.description).toBe("(truncated)");
+    expect(JSON.stringify(st).length).toBeLessThanOrEqual(MAX_STATE_CHARS);
+    const who = st.human_comments.map((c) => c.author);
+    expect(who[0]).toBe("h0");
+    expect(who.at(-1)).toBe("h29");
+    expect(st.human_comments[1]!.text).toMatch(/^\(\d+ comments left out here/);
+    expect(st.description).toMatch(/^x+\n…\[\d+ characters cut\]…\nx+$/);
+    expect(st.changed_files!.other).toHaveLength(80);
   });
 });
 

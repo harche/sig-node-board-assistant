@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { isDraftedComment } from "../src/core/comments";
-import type { JobSignal } from "../src/core/testgrid";
+import type { JobSignal, TestGridClient } from "../src/core/testgrid";
 import {
   askThreadBody,
+  buildTodoState,
   closeDuplicates,
   closeFixedBody,
   decideTodo,
@@ -11,7 +12,7 @@ import {
   todoSteps,
   type TodoResult,
 } from "../src/core/todo";
-import type { BoardItem } from "../src/core/types";
+import type { BoardItem, ItemDetail, LinkedPr } from "../src/core/types";
 
 const job = (
   rows: Partial<JobSignal["whole_job"]> & { failures: number; runs: number },
@@ -117,7 +118,7 @@ const result = (p: number, over: Partial<TodoResult> = {}): TodoResult => ({
       author: "x",
       state: "merged",
       merged_days_ago: 4,
-      description_start: "",
+      description: "",
     },
   ],
   priority: null,
@@ -301,8 +302,82 @@ describe("closeDuplicates", () => {
     expect(closeDuplicates([{ a: prog, b: mine, p: 0.9, survivor: "A" }], new Set([4, 5])).size).toBe(0);
   });
 
+  it("counts a pair asked from both sides once per side, and keeps the card both picked", () => {
+    const m = closeDuplicates(
+      [
+        { a, b, p: 0.9, survivor: "B" },
+        { a: b, b: a, p: 0.8, survivor: "A" },
+        { a, b: c, p: 0.2, survivor: "A" },
+      ],
+      all,
+    );
+    expect(closed(m)).toEqual({ 1: 2 });
+    expect(m.get(1)!.p).toBe(0.9);
+  });
+
+  it("keeps a card of the `keep` column over Jev's pick and over a held card, which stays open too", () => {
+    const cols = { working: "", closable: ["Triaged", "High Priority"], keep: "High Priority" };
+    const t = card(1, { status: "Triaged" });
+    const h = card(2, { status: "High Priority" });
+    const mine = card(3, { status: "Triaged", assignees: ["x"] });
+    expect(closed(closeDuplicates([{ a: t, b: h, p: 0.9, survivor: "A" }], new Set([1]), cols))).toEqual({
+      1: 2,
+    });
+    expect(closeDuplicates([{ a: h, b: t, p: 0.9, survivor: "B" }], new Set([2]), cols).size).toBe(0);
+    // High Priority is never closed into Triaged, and the assigned Triaged card is held: nothing closes.
+    expect(closeDuplicates([{ a: h, b: mine, p: 0.9, survivor: "B" }], new Set([2, 3]), cols).size).toBe(0);
+  });
+
   it("ignores pairs below the threshold and cards that were not asked about", () => {
     expect(closeDuplicates([{ a, b, p: 0.6, survivor: "B" }], all).size).toBe(0);
     expect(closed(closeDuplicates([{ a, b, p: 0.9, survivor: "A" }], new Set([1])))).toEqual({});
+  });
+});
+
+describe("buildTodoState", () => {
+  const NO_CI = { ciSignal: async () => [] } as unknown as TestGridClient;
+  const d: ItemDetail = {
+    title: "[Flaking Test] e2e-node pod resize",
+    body: `${"details ".repeat(2000)}\nend of the description`,
+    labels: [],
+    state: "OPEN",
+    author: { login: "rep" },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: "u",
+    comments: [
+      ...Array.from({ length: 14 }, (_, k) => ({
+        author: { login: `u${k}` },
+        createdAt: `2026-09-${String(k + 2).padStart(2, "0")}T00:00:00Z`,
+        body: `${k} ${"w".repeat(1500)}`,
+      })),
+      { author: { login: "m" }, createdAt: "2026-09-20T00:00:00Z", body: "/retest" },
+      { author: { login: "s" }, createdAt: "2026-09-21T00:00:00Z", body: "reply from ***@***" },
+    ],
+  };
+  const prs: LinkedPr[] = Array.from({ length: 13 }, (_, k) => ({
+    repository: "kubernetes/kubernetes",
+    number: 200 + k,
+    title: k ? `Automated cherry pick of #200 to release-1.${30 + k}` : "kubelet: fix pod resize race",
+    author: "a",
+    state: "merged",
+    createdAt: `2026-09-${String(k + 2).padStart(2, "0")}T00:00:00Z`,
+    mergedAt: `2026-09-${String(k + 3).padStart(2, "0")}T00:00:00Z`,
+    body: `<!-- ${"template ".repeat(200)} -->\n#### What this PR does\n${"why ".repeat(300)}`,
+  }));
+
+  it("sends the whole description, every human comment in full and every linked PR in full", async () => {
+    const st = await buildTodoState(
+      "kubernetes/kubernetes",
+      d,
+      prs,
+      NO_CI,
+      Date.parse("2026-10-01T00:00:00Z"),
+    );
+    expect(st.description).toBe(d.body);
+    expect(st.human_comments).toHaveLength(14);
+    expect(st.human_comments[0]!.text).toHaveLength(1502);
+    expect(st.linked_prs.map((p) => p.number)).toContain(200);
+    expect(st.linked_prs).toHaveLength(13);
+    expect(st.linked_prs[0]!.description).toBe(`#### What this PR does\n${"why ".repeat(300)}`.trim());
   });
 });

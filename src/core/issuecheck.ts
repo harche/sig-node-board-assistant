@@ -19,9 +19,9 @@ import {
   type JobSignal,
   type TestGridClient,
 } from "./testgrid";
-import { runEvidence, type TgDeps } from "./tgjudge";
+import { fitRuns, runEvidence, runState, withIssue, type TgDeps } from "./tgjudge";
 import type { RelatedMatch } from "./related";
-import { MAYBE_AT, stripRuns, type RunEvidence, type TrackAnswer } from "./tgreview";
+import { MAYBE_AT, type RunEvidence, type TrackAnswer } from "./tgreview";
 import { buildTodoState, freshFixGuard, RESOLVED_AT, type TodoAnswers } from "./todo";
 import type { ItemDetail, JevUsage, LinkedPr } from "./types";
 
@@ -216,17 +216,13 @@ export async function judgeIssueCi(
       const evidence = await runEvidence(d, gcs, at.build, at.started);
       let tracks: number | null = null;
       if (evidence.junit_failures.length || evidence.log_signals?.length) {
+        // The issue as the TestGrid review reads a candidate: its whole body and every person's comment.
         const a = await d.jev.ask<TrackAnswer>(
-          {
-            job: main.job,
-            runs: [{ junit_failures: evidence.junit_failures, log_signals: evidence.log_signals ?? [] }],
-            issue: {
-              number,
-              title: detail.title,
-              state: detail.state,
-              body: stripRuns(detail.body).slice(0, 2500),
-            },
-          },
+          withIssue(
+            { job: main.job, runs: fitRuns([runState(evidence)]) },
+            { number, title: detail.title, state: detail.state, body: detail.body },
+            detail.comments.map((c) => ({ author: c.author.login, created_at: c.createdAt, body: c.body })),
+          ),
           tracksQuestion(),
         );
         addUsage(usage, a.usage);

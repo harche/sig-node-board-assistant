@@ -14,7 +14,7 @@ export const DRA_BOARD = {
 };
 
 const NOTE =
-  "`linked_prs`, `assignees` and `labels` are computed by code: use them as given. `development_cycle` is the Kubernetes release being developed now. `days_ago` values are relative to now.";
+  "`linked_prs`, `assignees`, `labels` and `milestone` are computed by code: use them as given. `development_cycle` is the Kubernetes release being developed now; `milestone` is the release the issue is targeted at (null when none), and `milestone_is_development_cycle` says whether that is the release being developed now. `days_ago` values are relative to now.";
 
 /** Where a new issue belongs on the board. */
 const lane = {
@@ -23,7 +23,7 @@ const lane = {
     board: DRA_BOARD,
     question: "Which column does this issue belong in now?",
     focus:
-      "Judge whether work is under way now, whether it is ready to be picked up this cycle, or whether it waits for later.",
+      "Judge whether work is under way now, whether it is ready to be picked up this cycle (`development_cycle`; a `milestone` for it says it is wanted now, one for a later release that it waits), or whether it waits for later.",
     note: NOTE,
   },
   criteria: {

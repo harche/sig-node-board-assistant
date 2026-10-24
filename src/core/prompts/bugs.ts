@@ -14,7 +14,7 @@ export const BUGS_BOARD = {
     "device plugins and the kubelet side of Dynamic Resource Allocation",
     "static pods, node status and node registration, kubelet configuration",
   ],
-  evidence: ["title", "description", "human_comments"],
+  evidence: ["title", "description", "human_comments", "human_routing"],
 };
 
 /** What kind of report it is. */
@@ -63,7 +63,7 @@ const owner = {
     board: BUGS_BOARD,
     question: "Which group owns the code this report is about?",
     focus:
-      "A human /sig comment in `human_comments` is strong evidence; a label the reporter or a bot set is not.",
+      "A human /sig command (`human_routing` lists every one; a comment that is only commands is not repeated in `human_comments`) is strong evidence; a label the reporter or a bot set is not.",
   },
   criteria: {
     node: { areas: BUGS_BOARD.node_owns },
