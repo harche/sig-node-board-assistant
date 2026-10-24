@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7
 
 - **TestGrid: an infra failure is looked up by its error.** A job that breaks around its tests (a GCE stockout, a
   node image that never comes up) used to be searched only by its job, tab and test names, which an infra issue
