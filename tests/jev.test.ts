@@ -109,7 +109,7 @@ describe("JevClient", () => {
       sent.push(new Headers(init?.headers).get("TypeSafe-Danger-Zone-Long-Context"));
       return tooLong();
     }) as typeof fetch);
-    await expect(never.ask({}, { q: {} })).rejects.toThrow(/max_tokens_exceeded/);
+    await expect(never.ask({}, { q: {} })).rejects.toMatchObject({ status: 400, tooLong: true });
     expect(sent).toEqual([null, "true"]);
 
     // Once long, any failure gets LONG_CONTEXT_ATTEMPTS in all
@@ -125,7 +125,7 @@ describe("JevClient", () => {
     // OpenRouter serves 262k without the header
     sent.length = 0;
     const or = new JevClient({ apiKey: "k", provider: "openrouter", backoffMs: 0 }, fetchFn);
-    await expect(or.ask({}, { q: {} })).rejects.toThrow(/max_tokens_exceeded/);
+    await expect(or.ask({}, { q: {} })).rejects.toMatchObject({ status: 400, tooLong: true });
     expect(sent).toEqual([null]);
   });
 
