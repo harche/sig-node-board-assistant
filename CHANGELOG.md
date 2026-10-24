@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6
 
 - **Triage: a `/sig node` cannot make an item CI work.** On the CI/Test board, a human `/sig node` used to turn any
   "remove" into "borderline", so an item a human routed to SIG Node but Jev read as a KEP, a product fix or another
