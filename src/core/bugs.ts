@@ -102,11 +102,43 @@ export function bugLabels(labels: string[]): BugLabels {
   };
 }
 
+/** Jev's reading of a report. Every answer is optional: Jev's answers are not validated by the client, so
+ *  `bugAnswers` checks each where it comes in and leaves out a malformed one, and every reader handles its absence. */
 export interface BugAnswers {
-  report: JevChoice;
-  owner: JevChoice;
-  dra: JevNoul;
-  enough_information: JevNoul;
+  report?: JevChoice;
+  owner?: JevChoice;
+  dra?: JevNoul;
+  enough_information?: JevNoul;
+  /** Which SIG owns the code; asked on Triage only. */
+  sig?: JevChoice;
+}
+
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
+const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+const probs = (x: unknown) => isObj(x) && Object.values(x).every(isNum);
+
+export function choiceOk(x: unknown): JevChoice | undefined {
+  return isObj(x) && typeof x.choice === "string" && probs(x.probabilities)
+    ? (x as unknown as JevChoice)
+    : undefined;
+}
+export function noulOk(x: unknown): JevNoul | undefined {
+  return isObj(x) && isNum(x.noul) ? (x as unknown as JevNoul) : undefined;
+}
+export function scoreOk(x: unknown): JevScore | undefined {
+  return isObj(x) && probs(x.probabilities) ? (x as unknown as JevScore) : undefined;
+}
+
+/** The Triage questions' answers, each kept only if it has the shape its type says. */
+export function bugAnswers(a: Record<string, unknown>): BugAnswers {
+  const out: BugAnswers = {};
+  const set = <K extends keyof BugAnswers>(k: K, v: BugAnswers[K]) => v !== undefined && (out[k] = v);
+  set("report", choiceOk(a.report));
+  set("owner", choiceOk(a.owner));
+  set("dra", noulOk(a.dra));
+  set("enough_information", noulOk(a.enough_information));
+  set("sig", choiceOk(a.sig));
+  return out;
 }
 
 export interface BugResult {
@@ -118,7 +150,8 @@ export interface BugResult {
   url: string;
   state: "open" | "closed";
   labels: BugLabels;
-  /** Humans who routed it here with /sig node; a topic-ownership hand-over is not suggested over them. */
+  /** Humans whose /sig node still stands (`routedBy`), shown on the card and in a hand-over's why. Jev weighs them
+   *  through `human_routing`; they do not override its answer. */
   routed_by: string[];
   /** Null when the labels already decide and Jev was not asked. */
   answers: BugAnswers | null;
@@ -156,6 +189,8 @@ export function decideBug(r: BugResult): { action: BugAction; why: string; auto:
     };
   const a = r.answers;
   if (!a) return { action: "keep", why: "Jev was not asked", auto: false };
+  // A rule whose answer is missing (bugAnswers left it out) hands the card to a human instead of reading as 0.
+  if (!a.report) return { action: "keep", why: "Jev gave no kind of report", auto: false };
   const support = p(a.report, "support_question");
   if (support >= SUPPORT_ASK_AT)
     return {
@@ -166,19 +201,28 @@ export function decideBug(r: BugResult): { action: BugAction; why: string; auto:
   const feature = p(a.report, "feature_request");
   if (feature >= FEATURE_AT)
     return { action: "feature", why: `P(feature request, not a bug)=${f2(feature)}`, auto: false };
-  const other = p(a.owner, "other");
-  if (other >= OTHER_AT) {
-    if (r.routed_by.length)
+  // Asked which SIG, Jev answered SIG Node: nobody to hand it to, so it is judged as SIG Node's and the owner answer
+  // is not read. A human /sig node does not override the hand-over: the owner question already reads every human /sig
+  // command (`human_routing`) as strong evidence, so a P(another SIG) this high has weighed it. Counting it again sent
+  // sure calls back to the reviewer as an Accept; the why names the routing, since the reviewer sees it on the card.
+  if (r.sig !== null) {
+    if (!a.owner) return { action: "keep", why: "Jev gave no owner", auto: false };
+    const other = p(a.owner, "other");
+    if (other >= OTHER_AT) {
+      const routed = r.routed_by.length
+        ? `, though ${r.routed_by.join(", ")} routed it here with /sig node`
+        : "";
       return {
-        action: "accept",
-        why: `P(another SIG owns it)=${f2(other)}, but ${r.routed_by.join(", ")} routed it here with /sig node`,
+        action: "other_sig",
+        why: `P(SIG ${r.sig} owns it, not SIG Node)=${f2(other)}${routed}`,
         auto: false,
       };
-    // Asked which SIG, Jev answered SIG Node: nobody to hand it to, so it is judged as SIG Node's.
-    if (r.sig !== null)
-      return { action: "other_sig", why: `P(SIG ${r.sig} owns it, not SIG Node)=${f2(other)}`, auto: false };
-  }
-  const info = a.enough_information.noul;
+    }
+  } else if (!a.sig && (!a.owner || p(a.owner, "other") >= OTHER_AT))
+    // No SIG to hand it to because Jev left the question out, not because it answered SIG Node.
+    return { action: "keep", why: "Jev gave no SIG that owns the code", auto: false };
+  const info = a.enough_information?.noul;
+  if (info === undefined) return { action: "keep", why: "Jev gave no P(enough information)", auto: false };
   if (info < INFO_ASK_AT)
     return { action: "needs_info", why: `P(enough information to start)=${f2(info)}`, auto: info <= INFO_AT };
   return { action: "accept", why: `a SIG Node bug; P(enough information)=${f2(info)}`, auto: true };
@@ -206,7 +250,7 @@ const DRA_LINE = "/wg device-management";
 
 /** Whether the /wg line is added: a DRA report without the label. */
 const draLine = (r: BugResult) =>
-  r.answers && r.answers.dra.noul >= DRA_AT && !r.labels.wg_device_management ? [DRA_LINE] : [];
+  (r.answers?.dra?.noul ?? 0) >= DRA_AT && !r.labels.wg_device_management ? [DRA_LINE] : [];
 
 /** Accept: /triage accepted and the priority, replacing a different one; only what is not already set. */
 export function acceptBody(r: BugResult, priority: string): string | null {
@@ -323,7 +367,20 @@ export function isBugComment(body: string): boolean {
 
 // ---------------------------------------------------------------------------------------------------- judging
 
-const SIG_NODE = /^\s*\/sig\s+node\b/im;
+/** Humans whose /sig node still stands, in thread order: a later /remove-sig node, from anyone, undoes every one
+ *  before it. `/sig node network` routes to both. */
+export function routedBy(comments: ItemDetail["comments"]): string[] {
+  let who = new Set<string>();
+  for (const c of comments) {
+    if (isBot(c.author.login)) continue;
+    for (const m of c.body.matchAll(/^[ \t]*\/(remove-)?sig((?:[ \t]+[\w-]+)+)/gim)) {
+      if (!m[2]!.toLowerCase().trim().split(/\s+/).includes("node")) continue;
+      if (m[1]) who = new Set();
+      else who.add(c.author.login);
+    }
+  }
+  return [...who].sort();
+}
 /** What Jev reads: the whole report (a bug form ends with the version, OS and runtime) and every human comment in
  *  full, never labels (bot- and reporter-set, unreliable). Past the guard (fit.ts), comments go from the middle,
  *  then the description's middle. */
@@ -376,23 +433,18 @@ function scorePriority(s: JevScore | undefined): { priority: string; why: string
   return { priority: levels[level]!, why: "Jev's pick" };
 }
 
-function setPriority(r: BugResult, a: { priority: JevScore }): void {
-  const s = scorePriority(a.priority);
+/** `a.priority` is Jev's raw answer, checked here. */
+function setPriority(r: BugResult, a: { priority?: unknown }): void {
+  const score = scoreOk(a.priority);
+  const s = scorePriority(score);
   r.priority = s.priority;
   r.priority_why = s.why;
-  r.readings = [
-    ...(r.readings ?? []),
-    ...choiceReading("Priority", a.priority, [...BUG_PRIORITIES].reverse()),
-  ];
+  r.readings = [...(r.readings ?? []), ...choiceReading("Priority", score, [...BUG_PRIORITIES].reverse())];
 }
 
 export async function judgeBug(item: BoardItem, d: ItemDetail, jev: JevClient): Promise<BugResult> {
   const labels = bugLabels(d.labels.map((l) => l.name));
-  const routed_by = [
-    ...new Set(
-      d.comments.filter((c) => !isBot(c.author.login) && SIG_NODE.test(c.body)).map((c) => c.author.login),
-    ),
-  ].sort();
+  const routed_by = routedBy(d.comments);
   const state = bugState(item, d);
   const usage: JevUsage = { input_tokens: 0, cost: 0 };
   const ask = async <A>(q: Record<string, unknown>): Promise<A> => {
@@ -423,7 +475,7 @@ export async function judgeBug(item: BoardItem, d: ItemDetail, jev: JevClient): 
   // Needs information already decided, unless triage/accepted is also set: then accepted wins (decideBug). Only the
   // priority is asked, for a reviewer who accepts it because the reporter has since answered.
   if (!labels.triage_accepted && (labels.needs_information || labels.not_reproducible)) {
-    if (!labels.priority) setPriority(r, await ask<{ priority: JevScore }>(priorityQuestion()));
+    if (!labels.priority) setPriority(r, await ask<{ priority?: unknown }>(priorityQuestion()));
     return r;
   }
   // One call for the reading, which SIG would own it (asked every time, so the reviewer can hand any card over) and
@@ -431,22 +483,27 @@ export async function judgeBug(item: BoardItem, d: ItemDetail, jev: JevClient): 
   // on the same state, each answered on its own.
   const prioQ = labels.priority ? {} : priorityQuestion();
   if (!labels.triage_accepted) {
-    const a = await ask<BugAnswers & { sig: JevChoice; priority?: JevScore }>({
+    const raw = await ask<Record<string, unknown>>({
       ...bugQuestions(),
       ...sigQuestion(),
       ...prioQ,
     });
-    r.answers = { report: a.report, owner: a.owner, dra: a.dra, enough_information: a.enough_information };
-    r.sig = OTHER_SIGS.includes(a.sig.choice as never) ? a.sig.choice : null;
+    const a = bugAnswers(raw);
+    r.answers = a;
+    r.sig = a.sig && OTHER_SIGS.includes(a.sig.choice as never) ? a.sig.choice : null;
     r.readings = [
       ...choiceReading("Kind of report", a.report),
       ...choiceReading("Owner", a.owner),
       ...choiceReading("Which SIG owns the code", a.sig),
-      ...noulReading("Enough information", a.enough_information, a.enough_information.noul < INFO_ASK_AT),
+      ...noulReading(
+        "Enough information",
+        a.enough_information,
+        (a.enough_information?.noul ?? 1) < INFO_ASK_AT,
+      ),
       ...noulReading("About DRA", a.dra),
     ];
-    if (!labels.priority) setPriority(r, { priority: a.priority! });
-  } else if (!labels.priority) setPriority(r, await ask<{ priority: JevScore }>(prioQ));
+    if (!labels.priority) setPriority(r, raw);
+  } else if (!labels.priority) setPriority(r, await ask<{ priority?: unknown }>(prioQ));
   // What to ask the reporter for, only when that is the action.
   const missing =
     decideBug(r).action === "needs_info" ? await ask<Record<string, JevNoul>>(missingQuestions()) : null;

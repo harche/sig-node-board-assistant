@@ -230,8 +230,19 @@ needs-information, 24 another SIG, 21 support, 19 feature or other kind, 2 dupli
   important-longterm (39%) and caught more backlog bugs; the card has a priority select.
 - Duplicates were 2 of 300 first decisions, so there is no duplicate pass yet.
 
-A human `/sig node` keeps a hand-over from being suggested over them, as in the CI board's Triage (where it likewise
-overrides only the ownership half of a REMOVE, never the CI question).
+A human `/sig node` does not override Jev's owner answer. The owner question reads every human `/sig` command
+(`human_routing`) as strong evidence, so a P(another SIG) at or above 0.5 has already weighed the routing; turning it
+back into an Accept counted the routing twice and sent sure hand-overs to the reviewer as Accepts. The hand-over is
+suggested and its why names who routed it: those whose `/sig node` still stands, since a later `/remove-sig node`
+undoes every one before it (`routedBy`). As on the CI board's Triage, the routing speaks only through the question
+it answers (there, ownership; never the CI question).
+
+Jev's answers are not validated by the client, so `bugAnswers` checks each where it comes in (Triage and the Needs
+Information re-read) and leaves out one without the shape its type says; the priority score is checked the same
+way. A rule whose answer is missing hands the card to the reviewer instead of reading it as 0: no kind of report,
+no P(enough information), no owner when there is a SIG to hand it to, or no which-SIG answer when the owner says
+another SIG leaves the card in Triage, and an answered Needs Information card without the kind of report or the
+owner is suggested for Accept but not applied by it. A missing DRA reading adds no `/wg` line.
 
 ## SIG Node Bugs: Needs Information
 

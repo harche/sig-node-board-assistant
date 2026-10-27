@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptBody,
+  bugAnswers,
   bugLabels,
   bugState,
   bugSteps,
@@ -7,6 +9,7 @@ import {
   isBugComment,
   judgeBug,
   laneFor,
+  routedBy,
   type BugAnswers,
   type BugResult,
 } from "../src/core/bugs";
@@ -68,14 +71,52 @@ describe("decideBug", () => {
     ["another SIG", base({ answers: answers({ other: 0.8 }) }), "other_sig", false],
     [
       "another SIG, but which one Jev reads as SIG Node",
-      base({ answers: answers({ other: 0.8 }), sig: null }),
+      base({ answers: { ...answers({ other: 0.8 }), sig: choice({ node: 1 }) }, sig: null }),
       "accept",
       true,
     ],
     [
-      "another SIG, but a human routed it with /sig node",
-      base({ answers: answers({ other: 0.8 }), routed_by: ["tri"] }),
+      "the same, routed with /sig node: still accepted on its own",
+      base({
+        answers: { ...answers({ other: 0.8 }), sig: choice({ node: 1 }) },
+        sig: null,
+        routed_by: ["tri"],
+      }),
       "accept",
+      true,
+    ],
+    [
+      "no owner, but Jev reads SIG Node as the owning SIG: the owner is not read",
+      base({ answers: { ...answers(), owner: undefined, sig: choice({ node: 1 }) }, sig: null }),
+      "accept",
+      true,
+    ],
+    [
+      "another SIG, and no SIG to hand it to",
+      base({ answers: answers({ other: 0.8 }), sig: null }),
+      "keep",
+      false,
+    ],
+    ["no SIG and no owner", base({ answers: { ...answers(), owner: undefined }, sig: null }), "keep", false],
+    ["no SIG, SIG Node owns it", base({ answers: answers(), sig: null }), "accept", true],
+    [
+      "another SIG, though a human routed it with /sig node: Jev weighed the routing",
+      base({ answers: answers({ other: 0.8 }), routed_by: ["tri"] }),
+      "other_sig",
+      false,
+    ],
+    [
+      "a /sig node does not lift a SIG Node bug's Accept off Accept",
+      base({ routed_by: ["tri"] }),
+      "accept",
+      true,
+    ],
+    ["no kind of report", base({ answers: { ...answers(), report: undefined } }), "keep", false],
+    ["no owner, a SIG to hand it to", base({ answers: { ...answers(), owner: undefined } }), "keep", false],
+    [
+      "no P(enough information)",
+      base({ answers: { ...answers(), enough_information: undefined } }),
+      "keep",
       false,
     ],
     ["hardly any information", base({ answers: answers({ info: 0.2 }) }), "needs_info", true],
@@ -84,6 +125,45 @@ describe("decideBug", () => {
   ] as [string, BugResult, string, boolean][])("%s -> %s", (_w, r, action, auto) =>
     expect(decideBug(r)).toMatchObject({ action, auto }),
   );
+
+  it("names the /sig node routing in a hand-over's why", () =>
+    expect(decideBug(base({ answers: answers({ other: 0.8 }), routed_by: ["a", "b"] })).why).toBe(
+      "P(SIG storage owns it, not SIG Node)=0.80, though a, b routed it here with /sig node",
+    ));
+});
+
+describe("bugAnswers", () => {
+  it("keeps well-formed answers and leaves out the rest", () => {
+    const good = answers({ dra: 0.7 });
+    expect(bugAnswers({ ...good, sig: choice({ storage: 1 }) })).toEqual({
+      ...good,
+      sig: choice({ storage: 1 }),
+    });
+    expect(
+      bugAnswers({
+        report: { type: "choice", choice: "bug" }, // no probabilities
+        owner: { type: "choice", choice: "node", probabilities: { node: "high" } },
+        dra: { type: "noul", noul: null },
+        enough_information: "yes",
+      }),
+    ).toEqual({});
+  });
+});
+
+describe("routedBy", () => {
+  const c = (login: string, body: string) => ({ author: { login }, createdAt: "", body });
+  it("lists the humans whose /sig node still stands", () => {
+    expect(
+      routedBy([c("b", "/sig node"), c("a", "/sig node\n/triage accepted"), c("k8s-ci-robot", "/sig node")]),
+    ).toEqual(["a", "b"]);
+    expect(routedBy([c("a", "/sig network node")])).toEqual(["a"]);
+    expect(routedBy([c("a", "/sig nodes"), c("b", "see /sig node")])).toEqual([]);
+  });
+
+  it("drops every /sig node a later /remove-sig node undid", () => {
+    expect(routedBy([c("a", "/sig node"), c("b", "/remove-sig node\n/sig storage")])).toEqual([]);
+    expect(routedBy([c("a", "/sig node"), c("b", "/remove-sig node"), c("d", "/sig node")])).toEqual(["d"]);
+  });
 });
 
 describe("bugSteps", () => {
@@ -221,6 +301,29 @@ describe("judgeBug", () => {
     );
     expect(calls[1]!.every((k) => k.startsWith("missing_"))).toBe(true);
     expect(r).toMatchObject({ sig: "storage", priority: "important-longterm" });
+  });
+
+  it("judges an answer with parts missing or malformed instead of throwing", async () => {
+    const client = {
+      ask: async () => ({
+        answers: {
+          report: answers().report,
+          owner: answers({ other: 0.8 }).owner,
+          dra: { type: "noul" },
+          priority: { type: "score" },
+        },
+        usage: { input_tokens: 0, cost: 0 },
+      }),
+    } as unknown as JevClient;
+    const r = await judgeBug(item, detail([]), client);
+    expect(r.answers).toEqual({ report: answers().report, owner: answers({ other: 0.8 }).owner });
+    expect(r).toMatchObject({
+      sig: null,
+      priority: "important-longterm",
+      priority_why: "default; Jev gave no level",
+    });
+    expect(decideBug(r)).toMatchObject({ action: "keep", why: "Jev gave no SIG that owns the code" });
+    expect(acceptBody(r, "important-longterm")).toBe("/triage accepted\n/priority important-longterm");
   });
 
   it("falls back to important-longterm when the score has no levels", async () => {

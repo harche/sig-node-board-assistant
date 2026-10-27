@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Bugs board Triage: a `/sig node` no longer overrides a hand-over.** On the SIG Node Bugs board, a report Jev
+  read as another SIG's code used to be suggested as an Accept whenever someone had written `/sig node` on it, so
+  sure calls came back for a manual decision. Jev already weighs every human `/sig` command when it judges the
+  owner, so its answer now stands: the card suggests handing it over, says who routed it, and the reviewer still
+  decides. A `/sig node` that someone later took off with `/remove-sig node` is no longer listed as routing it.
+- **Bugs board: an incomplete answer from Jev goes to the reviewer.** If Jev's answer leaves out or garbles part of
+  its reading (the kind of report, the owner, which SIG, whether there is enough information, DRA or the priority),
+  the Triage and Needs Information cards used to fail or read the missing part as 0, which could accept a card on
+  its own. A card whose decision needs the missing part now stays in Triage (or, answered in Needs Information, is
+  not accepted without you), and a missing priority falls back to important-longterm.
 - **Apply on the issue or PR page.** An item on a board column used to show its verdict in the page's sidebar with
   only the commands to copy. After **Judge**, an **Apply** section above the verdict now offers the column's
   action, with the same picks as the board's hover card and the same checks on the write, and says which ignored

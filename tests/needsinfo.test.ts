@@ -61,6 +61,24 @@ describe("decideInfo", () => {
     ["no information label any more", base({}, []), "to_triage", true],
     ["answered, enough to start", base({ p_answered: 0.9, answers: answers(0.8) }), "accept", true],
     ["answered, still thin", base({ p_answered: 0.9, answers: answers(0.3) }), "keep", false],
+    [
+      "answered, no P(enough information)",
+      base({ p_answered: 0.9, answers: { ...answers(0.8), enough_information: undefined } }),
+      "keep",
+      false,
+    ],
+    [
+      "answered, enough, no owner",
+      base({ p_answered: 0.9, answers: { ...answers(0.8), owner: undefined } }),
+      "accept",
+      false,
+    ],
+    [
+      "answered, enough, no kind of report",
+      base({ p_answered: 0.9, answers: { ...answers(0.8), report: undefined } }),
+      "accept",
+      false,
+    ],
     ["unsure whether answered", base({ p_answered: 0.5 }), "keep", false],
     ["asked 10 days ago", base({ asked_days_ago: 10 }), "keep", true],
     ["asked 30 days ago, nobody reminded", base(), "nudge", true],
@@ -72,6 +90,13 @@ describe("decideInfo", () => {
 });
 
 describe("infoSteps", () => {
+  it("accepts an answer without a DRA reading, adding no /wg line", () => {
+    const r = base({ p_answered: 0.9, answers: { ...answers(0.8), dra: undefined } });
+    expect(infoSteps(item, r, "accept")[0]).toMatchObject({
+      body: "/remove-triage needs-information\n/triage accepted\n/priority important-longterm",
+    });
+  });
+
   const out = (r: InfoResult, a: Parameters<typeof infoSteps>[2]) =>
     infoSteps(item, r, a).map((s) => (s.kind === "comment" ? s.body : `-> ${s.lane}`));
 

@@ -11,12 +11,14 @@ import { isBot } from "./boards";
 import { fitMiddle, fitText, MAX_STATE_CHARS, size } from "./fit";
 import {
   acceptBody,
+  bugAnswers,
   bugLabels,
   bugState,
   INFO_ASK_AT,
   laneFor,
   LANE,
   OTHER_AT,
+  scoreOk,
   SUPPORT_AT,
   type BugAnswers,
   type BugLabels,
@@ -27,7 +29,7 @@ import { BUG_PRIORITIES, bugQuestions, priorityQuestion } from "./prompts/bugs";
 import { f2 } from "./policy";
 import type { ProwFix } from "./prowcmds";
 import { choiceReading, noulReading, type Reading } from "./readings";
-import type { ActionStep, BoardItem, ItemDetail, JevNoul, JevScore, JevUsage } from "./types";
+import type { ActionStep, BoardItem, ItemDetail, JevNoul, JevUsage } from "./types";
 
 export const WAIT_DAYS = 20; // the community issue-triage guide's wait for a response
 export const ANSWERED_AT = 0.65;
@@ -99,24 +101,34 @@ export function decideInfo(r: InfoResult): { action: InfoAction; why: string; au
   const p = r.p_answered;
   if (p !== null && p >= ANSWERED_AT) {
     const a = r.answers;
-    const info = a?.enough_information.noul ?? 0;
-    if (!a || info < INFO_ASK_AT)
+    // bugAnswers leaves out a malformed answer; a missing one goes to the maintainer instead of reading as 0.
+    if (!a?.enough_information)
+      return {
+        action: "keep",
+        why: `answered (P ${f2(p)}), but Jev gave no P(enough information): a maintainer should read the reply`,
+        auto: false,
+      };
+    const info = a.enough_information.noul;
+    if (info < INFO_ASK_AT)
       return {
         action: "keep",
         why: `answered (P ${f2(p)}), but Jev still reads too little to start (P enough ${f2(info)}): a maintainer should read the reply`,
         auto: false,
       };
-    const support = a.report.probabilities.support_question ?? 0;
-    const other = a.owner.probabilities.other ?? 0;
-    const unsure = support >= SUPPORT_AT || other >= OTHER_AT;
+    const gap = !a.report ? "kind of report" : !a.owner ? "owner" : null;
+    const support = a.report?.probabilities.support_question ?? 0;
+    const other = a.owner?.probabilities.other ?? 0;
+    const but = gap
+      ? `; but Jev gave no ${gap}`
+      : support >= SUPPORT_AT
+        ? "; but Jev reads it as a support question"
+        : other >= OTHER_AT
+          ? "; but Jev reads it as another SIG's code"
+          : "";
     return {
       action: "accept",
-      why:
-        `answered (P ${f2(p)}), now enough to start (P ${f2(info)})` +
-        (unsure
-          ? `; but Jev reads it as ${support >= SUPPORT_AT ? "a support question" : "another SIG's code"}`
-          : ""),
-      auto: !unsure,
+      why: `answered (P ${f2(p)}), now enough to start (P ${f2(info)})${but}`,
+      auto: !but,
     };
   }
   if (p !== null && p > UNANSWERED_AT)
@@ -432,7 +444,7 @@ export async function judgeInfo(
   if ((r.p_answered ?? 0) >= ANSWERED_AT) {
     // Answered: the Triage questions again, on the whole thread with the answers in it.
     const bs = bugState(item, d);
-    const answers = await ask<BugAnswers>(bs, bugQuestions());
+    const answers = bugAnswers(await ask<Record<string, unknown>>(bs, bugQuestions()));
     r.answers = answers;
     r.readings.push(
       ...choiceReading("Kind of report", answers.report),
@@ -440,7 +452,7 @@ export async function judgeInfo(
       ...noulReading(
         "Enough information now",
         answers.enough_information,
-        answers.enough_information.noul < INFO_ASK_AT,
+        (answers.enough_information?.noul ?? 1) < INFO_ASK_AT,
       ),
       ...noulReading("About DRA", answers.dra),
     );
@@ -456,15 +468,16 @@ async function setPriority(
   item: BoardItem,
   ask: <A>(state: unknown, q: Record<string, unknown>) => Promise<A>,
 ): Promise<void> {
-  const p = await ask<{ priority: JevScore }>(bugState(item, d), priorityQuestion());
+  const p = await ask<{ priority?: unknown }>(bugState(item, d), priorityQuestion());
+  const score = scoreOk(p.priority);
   const levels = [...BUG_PRIORITIES].reverse();
   let best = 0;
   let level = -1;
   levels.forEach((_, i) => {
-    const v = p.priority?.probabilities[String(i)] ?? 0;
+    const v = score?.probabilities[String(i)] ?? 0;
     if (v > best) [best, level] = [v, i];
   });
   r.priority = level < 0 ? "important-longterm" : levels[level]!;
   r.priority_why = level < 0 ? "default; Jev gave no level" : "Jev's pick";
-  r.readings = [...(r.readings ?? []), ...choiceReading("Priority", p.priority, levels)];
+  r.readings = [...(r.readings ?? []), ...choiceReading("Priority", score, levels)];
 }
