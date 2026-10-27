@@ -80,7 +80,8 @@ export interface InfoHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export function renderInfoHoverCard(c: InfoHoverContent): HTMLElement {

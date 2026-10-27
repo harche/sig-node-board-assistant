@@ -32,7 +32,7 @@ import type { ActionStep, BoardItem } from "../core/types";
 import { actionBox, allReadings, describe, readingsBlock, select } from "./hcparts";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
-import { h } from "./ui";
+import { h, logins, userRef } from "./ui";
 
 type PrResult = ReviewResult | ApproveResult | AuthorResult;
 
@@ -92,7 +92,7 @@ export function chosenPr(spec: PrSpec, r: PrResult, o: { action?: string }): str
   return o.action && spec.actions(r).includes(o.action) ? o.action : spec.decide(r).action;
 }
 
-const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
+const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
 /** Jev's readings; Needs Reviewer's pick among the candidates is one too. */
 function jev(spec: PrSpec, r: PrResult): HTMLElement {
@@ -109,14 +109,18 @@ function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
   if (prow.length) out.push(["Labels", prow.join(", ")]);
   if (r.pr.tide?.description) out.push(["Tide", r.pr.tide.description]);
   if (r.pr.failing.length) out.push(["Failing", r.pr.failing.slice(0, 4).join(", ")]);
-  if (r.holder) out.push(["Hold", `by ${r.holder}`]);
+  if (r.holder) out.push(["Hold", h("span", {}, "by ", userRef(r.holder))]);
   if (r.engaged.length)
     out.push([
       "Reviewing",
       lines(
-        r.engaged.map(
-          (e) =>
-            `${e.login}: last ${e.last_days_ago}d ago${r.pinged[e.login] != null ? `, pinged ${r.pinged[e.login]}d ago` : ""}`,
+        r.engaged.map((e) =>
+          h(
+            "span",
+            {},
+            userRef(e.login),
+            `: last ${e.last_days_ago}d ago${r.pinged[e.login] != null ? `, pinged ${r.pinged[e.login]}d ago` : ""}`,
+          ),
         ),
       ),
     ]);
@@ -124,22 +128,30 @@ function facts(spec: PrSpec, r: PrResult): [string, Node | string][] {
     out.push([
       "Asked",
       lines(
-        r.asked.map(
-          (a) =>
-            `${a.login}, by ${a.by} ${a.days_ago}d ago${a.pinged_days_ago !== null && a.pinged_days_ago < a.days_ago ? `, pinged ${a.pinged_days_ago}d ago` : ""}`,
+        r.asked.map((a) =>
+          h(
+            "span",
+            {},
+            userRef(a.login),
+            ", by ",
+            userRef(a.by),
+            ` ${a.days_ago}d ago${a.pinged_days_ago !== null && a.pinged_days_ago < a.days_ago ? `, pinged ${a.pinged_days_ago}d ago` : ""}`,
+          ),
         ),
       ),
     ]);
-  if (r.declined.length) out.push(["Declined or handed off", r.declined.join(", ")]);
+  if (r.declined.length) out.push(["Declined or handed off", logins(r.declined)]);
   if (r.author_last_days_ago !== null)
-    out.push(["Author", `${r.pr.author}, last moved ${r.author_last_days_ago}d ago`]);
+    out.push(["Author", h("span", {}, userRef(r.pr.author), `, last moved ${r.author_last_days_ago}d ago`)]);
   if (r.candidates.length)
     out.push([
       spec.asks,
       h(
         "span.snba-lines",
         {},
-        ...r.candidates.map((c) => h("span", {}, h("b", {}, c.login), h("span.snba-muted", {}, c.reason))),
+        ...r.candidates.map((c) =>
+          h("span", {}, h("b", {}, userRef(c.login)), h("span.snba-muted", {}, c.reason)),
+        ),
       ),
     ]);
   else if (r.candidates_note) out.push(["Candidates", r.candidates_note]);
@@ -175,7 +187,8 @@ export interface ReviewHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export function renderReviewHoverCard(c: ReviewHoverContent): HTMLElement {

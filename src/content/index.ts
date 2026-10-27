@@ -15,6 +15,7 @@ import {
   columns,
   isOurs,
   itemLink,
+  onMissedAnchor,
   paneItemId,
   placeBadge,
   placeRunButton,
@@ -26,8 +27,8 @@ import { HoverCard, type Applied } from "./hovercard";
 import { Judged } from "./judged";
 import { freshPicks, relatedPicker, type PickState } from "./relatedpick";
 import type { RelatedResult } from "../core/related";
-import { h, octicon } from "./ui";
-import { withFixes, WORKFLOWS, type ColumnWorkflow, type Overrides } from "./workflows";
+import { h, linkifyTree, octicon } from "./ui";
+import { prowFixesNote, withFixes, WORKFLOWS, type ColumnWorkflow, type Overrides } from "./workflows";
 
 /** Items judged or applied at once. */
 const PARALLEL = 8;
@@ -52,6 +53,12 @@ class Page {
     );
     pill.addEventListener("click", () => void send({ type: "options.open" }));
     document.body.append(pill);
+    // A GitHub redesign the anchors missed: said on the pill, which is always on screen.
+    const warn = h("span.snba-pill-warn", {}, " · GitHub's page changed");
+    onMissedAnchor((what) => {
+      if (!warn.isConnected) pill.append(warn);
+      pill.title = `GitHub's page changed (${what} not found): some of the assistant's buttons may be out of place. Please send feedback.`;
+    });
     const owner = (restId: number) => this.assistants.find((a) => a.judges(restId));
     this.hover = new HoverCard(
       (restId) => owner(restId)?.hoverContent(restId) ?? null,
@@ -681,16 +688,8 @@ class BoardAssistant<R> {
       apply: (choice) => void this.applyOne(restId, choice),
     });
     // Every column: say which Prow commands were ignored, above the buttons that would post the fix.
-    const fixes =
-      (slot.result as { prow_fixes?: { who: string; wrote: string; fix: string }[] }).prow_fixes ?? [];
-    if (fixes.length)
-      el.querySelector(".snba-hc-actions")?.before(
-        h(
-          "p.snba-hc-status.snba-muted",
-          {},
-          `Prow ignored ${fixes.map((f) => `"${f.wrote}" (${f.who})`).join(", ")}; Apply and Accept also post ${fixes.map((f) => `"${f.fix}"`).join(", ")}, unless the item is closed or archived.`,
-        ),
-      );
+    const note = prowFixesNote(slot.result);
+    if (note) el.querySelector(".snba-hc-actions")?.before(note);
     if (this.wf.related && item.type === "Issue") el.append(this.relatedBlock(item, col));
     const a = this.applied.get(restId);
     el.append(
@@ -706,7 +705,7 @@ class BoardAssistant<R> {
         card: () => el,
       }),
     );
-    return el;
+    return linkifyTree(el, item.repository);
   }
 
   /** The hover card's "Duplicates and related": a button that runs the search, then the matches to tick and a
@@ -984,6 +983,7 @@ class BoardAssistant<R> {
         }),
       );
     section.dataset.snbaKey = key;
+    linkifyTree(section, item.repository);
     placeSection(side.el, section);
     if (!slot && !this.skipped.has(restId)) void this.judgeOne(item);
     return true;

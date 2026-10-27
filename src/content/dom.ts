@@ -1,5 +1,7 @@
-/** Board DOM anchors. GitHub Projects is a React app with hashed class names; only the data-* attributes below
- *  are relied on. If GitHub renames them, this file is the one place to fix. */
+/** Board DOM anchors. GitHub Projects is a React app with hashed class names, and it renames them (the
+ *  "Module-module__" prefixes went in 2026), so nothing here relies on a class: only data-* attributes, Primer's
+ *  data-component, ids GitHub builds from the item id, and the page's structure. If GitHub renames those, this file
+ *  is the one place to fix; a miss is reported once on the console (missedAnchor). */
 
 const attr = (v: string) => v.replace(/["\\]/g, "\\$&");
 
@@ -44,32 +46,62 @@ export function columns(root: ParentNode): { name: string; el: HTMLElement }[] {
   }));
 }
 
-/** Puts the run button in the column's header, before GitHub's own "…" and "+" buttons. The actions row is found by
- *  its CSS-module class prefix, then by the column title (h2); failing both, the button is not placed. */
+const missed = new Set<string>();
+const missListeners: ((what: string) => void)[] = [];
+
+/** Says once per page, on the console and to onMissedAnchor's listeners (the board's pill), that an anchor was not
+ *  found, so a GitHub redesign is noticed rather than silently degrading what the page shows. */
+export function missedAnchor(what: string): void {
+  if (missed.has(what)) return;
+  missed.add(what);
+  console.warn(`SIG Node board assistant: GitHub's page changed, ${what} not found; using a fallback.`);
+  for (const f of missListeners) f(what);
+}
+
+export function onMissedAnchor(f: (what: string) => void): void {
+  missListeners.push(f);
+  for (const what of missed) f(what);
+}
+
+/** The row holding GitHub's own "…" and "+" buttons in a column's header: the parent of the first Primer icon
+ *  button (data-component="IconButton") that shares an ancestor with the column title (h2) and is not on a card. */
+export function columnActions(col: HTMLElement): HTMLElement | null {
+  const title = col.querySelector<HTMLElement>("h2");
+  for (let e = title?.parentElement; e && e !== col; e = e.parentElement) {
+    const btn = [...e.querySelectorAll<HTMLElement>('[data-component="IconButton"]')].find(
+      (b) => !b.closest(SEL.card) && !b.closest(SEL.run),
+    );
+    if (btn?.parentElement) return btn.parentElement;
+  }
+  return null;
+}
+
+/** Puts the run button in the column's header, before GitHub's own "…" and "+" buttons; failing that, after the
+ *  column title (h2); failing both, the button is not placed. */
 export function placeRunButton(col: HTMLElement, ...btns: HTMLElement[]): boolean {
-  const actions = col.querySelector<HTMLElement>('[class*="__ColumnActions"]');
+  const actions = columnActions(col);
   if (actions) {
     actions.prepend(...btns);
     return true;
   }
+  missedAnchor("the column header's actions row");
   const title = col.querySelector<HTMLElement>("h2");
   if (!title?.parentElement) return false;
   title.parentElement.append(...btns);
   return true;
 }
 
-/** Puts the badge in the card's header row (repo #number … avatar), before the avatar. The row is found by
- *  its CSS-module class prefix, then by the "repo #123" text; failing both, the badge goes at the end of the card. */
+/** Puts the badge after the card's "repo #number", in the title cell GitHub ids by the item
+ *  (`board-card-header-title-<id>`); failing that, beside the "repo #123" text; failing both, at the card's end. */
 export function placeBadge(card: HTMLElement, badge: HTMLElement): void {
-  const header = card.querySelector<HTMLElement>('[class*="__Header"]');
-  const row = header?.firstElementChild as HTMLElement | null;
-  if (row) {
-    if (badge.parentElement === row) return;
-    if (row.children.length >= 2) row.insertBefore(badge, row.lastElementChild);
-    else row.append(badge);
+  const cell = card.querySelector<HTMLElement>('[id^="board-card-header-title-"]');
+  if (cell) {
+    if (badge.parentElement !== cell) cell.append(badge);
     return;
   }
   if (badge.isConnected && card.contains(badge)) return;
+  // A card GitHub has not drawn yet (the board virtualises) has no link: nothing is missing there.
+  if (itemLink(card)) missedAnchor("the card's title cell");
   for (const el of card.querySelectorAll<HTMLElement>("span, div, a")) {
     if (el.children.length === 0 && /#\d+$/.test(el.textContent?.trim() ?? "")) {
       (el.parentElement ?? card).append(badge);
@@ -91,7 +123,9 @@ export function paneItemId(url: string = location.href): number | null {
 export function isOurs(node: Node): boolean {
   const el = node instanceof Element ? node : node.parentElement;
   return Boolean(
-    el?.closest(".snba-badge, .snba-run, .snba-tip, .snba-evidence, .snba-ci, .snba-hovercard, #snba-pill"),
+    el?.closest(
+      ".snba-badge, .snba-run, .snba-tip, .snba-evidence, .snba-act, .snba-ci, .snba-hovercard, #snba-pill, #snba-float",
+    ),
   );
 }
 

@@ -129,7 +129,8 @@ export interface ActionBox {
   /** Where Skip leaves the card: "in Triage", "in To do", or "" for wherever it is. */
   where: string;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 /** Apply and Skip, what each does, and the apply state. */
@@ -156,22 +157,24 @@ export function actionBox(c: ActionBox): HTMLElement {
       "div.snba-hc-buttons",
       {},
       button("Apply", "primary", locked || !(c.summary ? c.summary.writes : c.steps.length), c.apply),
-      button("Skip", "invisible", locked, c.skip),
+      c.skip ? button("Skip", "invisible", locked, c.skip) : null,
     ),
     h(
       "ul.snba-hc-steps",
       {},
       h("li", {}, h("b", {}, c.label), h("span.snba-muted", {}, `: ${c.summary?.text ?? describe(c.steps)}`)),
-      h(
-        "li",
-        {},
-        h("b", {}, "Skip"),
-        h(
-          "span.snba-muted",
-          {},
-          `: leave it ${c.where ? `${c.where} ` : ""}untouched and drop the verdict; Accept passes over it`,
-        ),
-      ),
+      c.skip
+        ? h(
+            "li",
+            {},
+            h("b", {}, "Skip"),
+            h(
+              "span.snba-muted",
+              {},
+              `: leave it ${c.where ? `${c.where} ` : ""}untouched and drop the verdict; Accept passes over it`,
+            ),
+          )
+        : null,
     ),
   );
   if (c.applied?.state === "pending") box.append(h("p.snba-hc-status", {}, "Applying…"));

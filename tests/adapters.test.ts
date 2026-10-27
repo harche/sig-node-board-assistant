@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { findSidebar, paneAdapter, placeSection } from "../src/content/adapters";
+import { describe, expect, it, vi } from "vitest";
+import {
+  FLOAT_AFTER_MS,
+  findSidebar,
+  itemSidebar,
+  nativeButton,
+  PANE_SIDEBAR,
+  paneAdapter,
+  placeSection,
+} from "../src/content/adapters";
 import { renderEvidence } from "../src/content/evidence";
 import { proposedActions } from "../src/core/triage";
 import type { BoardFields, BoardItem, TriageResult } from "../src/core/types";
@@ -104,6 +112,64 @@ describe("paneAdapter", () => {
     const a = paneAdapter(document.getElementById("side")!);
     expect(a.section("x").root.querySelector("h3.snba-heading")).not.toBeNull();
     expect(a.row("k", "v").className).toBe("snba-row");
+  });
+});
+
+describe("PANE_SIDEBAR", () => {
+  it("matches the sections container with or without the IssueSidebar-module prefix, and nothing else", () => {
+    document.body.innerHTML = `<div class="IssueSidebar-module__sidebarContent__x" id="old"></div>
+      <div data-testid="sticky-sidebar"><div class="sidebarContent__xBd6hp" id="new">
+        <div data-testid="sidebar-labels-section"></div></div></div>
+      <div class="sidebarContent__y" id="other"><div></div></div>`;
+    expect([...document.querySelectorAll(PANE_SIDEBAR)].map((e) => e.id)).toEqual(["old", "new"]);
+  });
+});
+
+describe("itemSidebar", () => {
+  it("floats the sections, with a note, once no sidebar has been recognised for a while", () => {
+    vi.useFakeTimers();
+    try {
+      // A PR's Files changed tab has no sidebar: nothing floats there.
+      history.replaceState(null, "", "/kubernetes/kubernetes/pull/1/files");
+      document.body.innerHTML = `<main></main>`;
+      expect(itemSidebar(document)).toBeNull();
+      vi.advanceTimersByTime(FLOAT_AFTER_MS + 1);
+      expect(itemSidebar(document)).toBeNull();
+      expect(document.getElementById("snba-float")).toBeNull();
+      history.replaceState(null, "", "/kubernetes/kubernetes/issues/1");
+      expect(itemSidebar(document)).toBeNull();
+      vi.advanceTimersByTime(FLOAT_AFTER_MS + 1);
+      const side = itemSidebar(document)!;
+      expect(side.el.closest("#snba-float")).not.toBeNull();
+      expect(document.querySelector(".snba-float-note a")!.getAttribute("href")).toContain("/issues/new?");
+      const { root } = side.adapter.section("Apply");
+      expect(root.querySelector("h3.snba-heading")!.textContent).toBe("Apply");
+      // The real sidebar wins as soon as it is there, and the floating panel goes.
+      document.body.insertAdjacentHTML("beforeend", `<div id="partial-discussion-sidebar"></div>`);
+      expect(itemSidebar(document)!.el.id).toBe("partial-discussion-sidebar");
+      expect(document.getElementById("snba-float")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("nativeButton", () => {
+  it("copies a GitHub button that has a visual and a label, skipping ones it cannot copy", () => {
+    document.body.innerHTML = `
+      <button class="prc-Button-x snba-run-check"><span data-component="buttonContent"><span data-component="text">Ours</span></span></button>
+      <button class="prc-Button-x mod__y"><span class="prc-C" data-component="buttonContent"><span class="prc-V" data-component="leadingVisual"></span><span class="prc-T" data-component="text">Search</span></span></button>`;
+    const { root, native } = nativeButton(document, null, "Accept", "primary");
+    expect(native).toBe(true);
+    expect(root.className).toBe("prc-Button-x");
+    expect(root.dataset.variant).toBe("primary");
+  });
+  it("falls back to a button styled from Primer's variables", () => {
+    document.body.innerHTML = ``;
+    const { root, native } = nativeButton(document, null, "Accept", "primary");
+    expect(native).toBe(false);
+    expect(root.className).toBe("snba-btn");
+    expect(root.dataset.variant).toBe("primary");
   });
 });
 

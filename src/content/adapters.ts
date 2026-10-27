@@ -6,10 +6,15 @@
  *
  *  Classic PR page (`#partial-discussion-sidebar`): `discussion-sidebar-item` + `discussion-sidebar-heading`,
  *  the same classes GitHub's Milestone and Projects items use. */
+import { FEEDBACK_REPO } from "../core/feedback";
+import { missedAnchor } from "./dom";
 import type { SidebarAdapter } from "./evidence";
 import { h } from "./ui";
 
-export const PANE_SIDEBAR = '[class*="IssueSidebar-module__sidebarContent"]';
+/** GitHub's sections container. Its class lost the "IssueSidebar-module__" prefix (now "sidebarContent__<hash>"), so
+ *  it is also found by its sections' test ids ("sidebar-labels-section"…), which outlast the class names. */
+export const PANE_SIDEBAR =
+  '[class*="IssueSidebar-module__sidebarContent"], [class*="sidebarContent"]:has(> [data-testid^="sidebar-"][data-testid$="-section"])';
 export const CLASSIC_SIDEBAR = "#partial-discussion-sidebar";
 
 /** True when a sidebar section's text starts with one of `names` as a whole heading ("FieldsPriority…" counts,
@@ -90,7 +95,9 @@ export function classicAdapter(): SidebarAdapter {
 }
 
 /** Finds the sidebar container on the current page, if either host is present. */
-export function findSidebar(doc: Document): { el: HTMLElement; adapter: SidebarAdapter } | null {
+export type Sidebar = { el: HTMLElement; adapter: SidebarAdapter };
+
+export function findSidebar(doc: Document): Sidebar | null {
   const pane = [...doc.querySelectorAll<HTMLElement>(PANE_SIDEBAR)].find(
     (e) => e.getBoundingClientRect().width > 0,
   );
@@ -98,6 +105,63 @@ export function findSidebar(doc: Document): { el: HTMLElement; adapter: SidebarA
   const classic = doc.querySelector<HTMLElement>(CLASSIC_SIDEBAR);
   if (classic) return { el: classic, adapter: classicAdapter() };
   return null;
+}
+
+/** An issue's page or a PR's Conversation tab: the pages that have a sidebar. */
+export function onConversationTab(path: string = location.pathname): boolean {
+  return /^\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+\/?$/.test(path);
+}
+
+/** How long an issue or PR page may go without a sidebar we recognise before its sections float instead. */
+export const FLOAT_AFTER_MS = 4000;
+let missingSince = 0;
+let missingPath = "";
+
+/** The issue or PR page's sidebar. An item's conversation tab always has one, so if none is recognised there for
+ *  FLOAT_AFTER_MS GitHub has changed its markup: the sections then go in a floating panel that says so, rather than
+ *  not showing at all. Null while still waiting, and on a PR's other tabs (Files changed, Commits, Checks), which
+ *  have no sidebar. Call it only with something to show. */
+export function itemSidebar(doc: Document): Sidebar | null {
+  const side = findSidebar(doc);
+  if (side) {
+    missingSince = 0;
+    doc.getElementById("snba-float")?.remove();
+    return side;
+  }
+  if (!onConversationTab()) return null;
+  if (!missingSince || missingPath !== location.pathname) {
+    missingSince = Date.now();
+    missingPath = location.pathname;
+  }
+  if (Date.now() - missingSince < FLOAT_AFTER_MS) return null;
+  missedAnchor("the issue sidebar");
+  const body = floatingPanel(doc);
+  return { el: body, adapter: paneAdapter(body) };
+}
+
+/** The floating panel's sections container, created on first use. */
+function floatingPanel(doc: Document): HTMLElement {
+  const old = doc.querySelector<HTMLElement>("#snba-float .snba-float-body");
+  if (old) return old;
+  const report = `https://github.com/${FEEDBACK_REPO}/issues/new?${new URLSearchParams({
+    title: "GitHub's page changed: the issue sidebar was not found",
+    // In a code span: a plain item reference would show up on that item's timeline.
+    body: `On \`${location.pathname}\` the extension did not recognise GitHub's sidebar and floated its sections.`,
+  })}`;
+  const body = h("div.snba-float-body");
+  const panel = h(
+    "div",
+    { id: "snba-float", role: "complementary", "aria-label": "SIG Node board assistant" },
+    h(
+      "p.snba-float-note",
+      {},
+      "GitHub's page changed, so these sections float here instead of in the sidebar. ",
+      h("a", { href: report, target: "_blank", rel: "noopener" }, "Report it"),
+    ),
+    body,
+  );
+  doc.body.append(panel);
+  return body;
 }
 
 /** Inserts our section after the "Fields" or "Labels" section in the pane, or after "Projects" on the PR page;
@@ -118,15 +182,27 @@ export function nativeButton(
   label: string,
   variant: "invisible" | "primary" | "default" = "invisible",
 ): { root: HTMLElement; label: HTMLElement; native: boolean } {
-  const tpl = scope
-    .querySelector<HTMLElement>('button:not(.snba-run) [data-component="buttonContent"]')
-    ?.closest<HTMLElement>("button");
+  // The first of GitHub's buttons with both a leading visual and a label; ours (no visual) never qualify.
+  const tpl = [
+    ...scope.querySelectorAll<HTMLElement>('button:not(.snba-run) [data-component="buttonContent"]'),
+  ]
+    .map((c) => c.closest<HTMLElement>("button"))
+    .find(
+      (b) =>
+        b?.querySelector('[data-component="leadingVisual"]') && b.querySelector('[data-component="text"]'),
+    );
   const content = tpl?.querySelector<HTMLElement>('[data-component="buttonContent"]');
   const visual = tpl?.querySelector<HTMLElement>('[data-component="leadingVisual"]');
   const text = tpl?.querySelector<HTMLElement>('[data-component="text"]');
   if (!tpl || !content || !visual || !text) {
+    // Not a GitHub change: a page or a reader (read-only, no "Add item") may have no such button.
+    // Styled by content.css from Primer's own CSS variables, which outlast its class names.
     const l = h("span", {}, label);
-    return { root: h("button", { type: "button" }, icon, l), label: l, native: false };
+    return {
+      root: h("button.snba-btn", { type: "button", "data-variant": variant }, icon, l),
+      label: l,
+      native: false,
+    };
   }
   // Only Primer's own classes (prc-*): the template's column-module class makes it full-width.
   const prc = (el: HTMLElement) => [...el.classList].filter((c) => c.startsWith("prc-")).join(" ");
@@ -152,10 +228,9 @@ export function nativeButton(
 }
 
 /** A small default button drawn by GitHub's own styles, for the sidebar's "Check" and "Judge again": Primer React's
- *  classes where the page has such a button to copy, else the classic pages' Primer CSS `btn btn-sm`. */
+ *  classes where the page has such a button to copy, else `.snba-btn` from Primer's CSS variables. */
 export function pageButton(label: string): HTMLButtonElement {
-  const { root, native } = nativeButton(document, null, label, "default");
-  if (!native) root.className = "btn btn-sm";
+  const { root } = nativeButton(document, null, label, "default");
   root.classList.add("snba-run-check");
   return root as HTMLButtonElement;
 }

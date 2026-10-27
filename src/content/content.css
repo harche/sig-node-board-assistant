@@ -84,21 +84,21 @@
 
 /* ---------- card tint (board): once judged, the card's own box takes Primer's muted success / danger / attention
    background and border, the same pair GitHub uses for its flash banners. The attribute sits on the card root;
-   GitHub paints the card's background on its
-   card-internal-content Box child. */
-[data-board-card-id][data-snba-verdict="KEEP"] > [class*="__Box__"] {
+   GitHub paints the card's background on the card's first child, found by position: its class is hashed and
+   renamed ("Box__…"). A card GitHub has not drawn yet holds only our badge, which is left alone. */
+[data-board-card-id][data-snba-verdict="KEEP"] > :first-child:not(.snba-badge) {
   background-color: var(--bgColor-success-muted, #dafbe1);
   border-color: var(--borderColor-success-muted, #4ac26b66);
 }
-[data-board-card-id][data-snba-verdict="REMOVE"] > [class*="__Box__"] {
+[data-board-card-id][data-snba-verdict="REMOVE"] > :first-child:not(.snba-badge) {
   background-color: var(--bgColor-danger-muted, #ffebe9);
   border-color: var(--borderColor-danger-muted, #ff818266);
 }
-[data-board-card-id][data-snba-verdict="BORDERLINE"] > [class*="__Box__"] {
+[data-board-card-id][data-snba-verdict="BORDERLINE"] > :first-child:not(.snba-badge) {
   background-color: var(--bgColor-attention-muted, #fff8c5);
   border-color: var(--borderColor-attention-muted, #d4a72c66);
 }
-[data-board-card-id][data-snba-verdict="MOVE"] > [class*="__Box__"] {
+[data-board-card-id][data-snba-verdict="MOVE"] > :first-child:not(.snba-badge) {
   background-color: var(--bgColor-accent-muted, #ddf4ff);
   border-color: var(--borderColor-accent-muted, #54aeff66);
 }
@@ -497,6 +497,89 @@
   }
 }
 
+/* ---------- fallback button (adapters.ts nativeButton, when no GitHub button is found to copy classes from):
+   Primer's look from Primer's CSS variables, which GitHub keeps across redesigns that rename its classes. */
+.snba-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: var(--control-small-size, 28px);
+  padding: 0 var(--control-small-paddingInline-condensed, 8px);
+  border: 1px solid var(--button-default-borderColor-rest, #d1d9e0);
+  border-radius: var(--borderRadius-medium, 6px);
+  background: var(--button-default-bgColor-rest, #f6f8fa);
+  color: var(--button-default-fgColor-rest, #25292e);
+  font-size: var(--text-body-size-small, 12px);
+  font-weight: var(--base-text-weight-medium, 500);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.snba-btn:hover {
+  background: var(--button-default-bgColor-hover, #eff2f5);
+}
+.snba-btn[data-variant="primary"] {
+  border-color: var(--button-primary-borderColor-rest, #1f232826);
+  background: var(--button-primary-bgColor-rest, #1f883d);
+  color: var(--button-primary-fgColor-rest, #fff);
+}
+.snba-btn[data-variant="primary"]:hover {
+  background: var(--button-primary-bgColor-hover, #1c8139);
+}
+.snba-btn[data-variant="invisible"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--button-invisible-fgColor-rest, #25292e);
+}
+.snba-btn[data-variant="invisible"]:hover {
+  background: var(--button-invisible-bgColor-hover, #818b981a);
+}
+.snba-btn:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, #0969da);
+  outline-offset: -2px;
+}
+.snba-btn:disabled,
+.snba-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ---------- floating fallback (adapters.ts itemSidebar): the issue or PR page's sections when GitHub's sidebar is
+   not recognised, so a redesign shows up as a visible note instead of missing buttons. */
+#snba-float {
+  position: fixed;
+  top: 80px;
+  right: 16px;
+  z-index: 100;
+  box-sizing: border-box;
+  width: 320px;
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--borderColor-default, #d1d9e0);
+  border-radius: var(--borderRadius-large, 12px);
+  background: var(--bgColor-default, #fff);
+  box-shadow: var(--shadow-floating-large, 0 40px 80px 0 #25292e3d);
+  font-size: var(--text-body-size-medium, 14px);
+}
+.snba-float-note {
+  margin: 0 0 12px;
+  padding: 8px;
+  border: 1px solid var(--borderColor-attention-muted, #d4a72c66);
+  border-radius: var(--borderRadius-medium, 6px);
+  background: var(--bgColor-attention-muted, #fff8c5);
+  font-size: var(--text-body-size-small, 12px);
+}
+.snba-float-body > * + * {
+  margin-top: 16px;
+}
+.snba-pill-warn {
+  color: var(--fgColor-attention, #9a6700);
+}
+
 /* ---------- tooltip fallback (normally GitHub's own Primer tooltip class is borrowed; see adapters.ts) */
 .snba-tip-plain {
   position: absolute;
@@ -568,6 +651,19 @@
 }
 .snba-hc-facts dd.snba-hc-text {
   overflow-wrap: anywhere;
+}
+/* In the page's sidebar (about 300px) a long label (a job name) would take the whole width and squeeze its value
+   into a sliver: the label goes on its own line, the value indented under it. The hover card keeps two columns. */
+:is(.snba-evidence, .snba-act, .snba-ci, #snba-float) .snba-hc-facts {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 2px;
+}
+:is(.snba-evidence, .snba-act, .snba-ci, #snba-float) .snba-hc-facts dt {
+  overflow-wrap: anywhere;
+}
+:is(.snba-evidence, .snba-act, .snba-ci, #snba-float) .snba-hc-facts dd {
+  margin-bottom: 6px;
+  padding-left: 12px;
 }
 .snba-hc-prio {
   display: flex;

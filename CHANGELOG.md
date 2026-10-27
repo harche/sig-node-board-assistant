@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **Apply on the issue or PR page.** An item on a board column used to show its verdict in the page's sidebar with
+  only the commands to copy. After **Judge**, an **Apply** section above the verdict now offers the column's
+  action, with the same picks as the board's hover card and the same checks on the write, and says which ignored
+  Prow commands it also posts. It waits for a duplicates comment on the same issue to finish, and that comment waits
+  for it.
+- **The sections show again after GitHub's redesign.** GitHub renamed the classes its pages are built from, so issue
+  pages and the board's item pane lost every section (CI history, duplicates, the verdict), the board's column
+  buttons and card badges moved, and judged cards lost their tint. The extension now finds these places by GitHub's
+  test ids, Primer's component names and the page's structure, which outlast class names. If it still cannot find
+  the issue sidebar, its sections float beside the page with a note and a link to report it, and the board's pill
+  says "GitHub's page changed"; a button with no GitHub button to copy is drawn from Primer's own colours.
+- **Everything that names something opens it.** Issue and PR references, linked PRs, duplicates, assignees and
+  reviewers, and URLs in Jev's reasons are links. A CI job's name opens its Prow run history where it is known, its
+  run counts open its TestGrid tab, and each failed run read on a TestGrid card opens in Prow.
+- **CI facts read in the sidebar.** A long job name used to take the sidebar's width and squeeze its run counts into
+  a narrow column; each name now has its own line, with its details under it.
+
 ## 0.1.7
 
 - **TestGrid: an infra failure is looked up by its error.** A job that breaks around its tests (a GCE stockout, a

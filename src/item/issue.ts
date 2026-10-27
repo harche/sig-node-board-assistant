@@ -3,18 +3,17 @@
  *  has, a duplicate or a related issue Jev is sure of. Both run when the reader clicks "Check": until then, and when
  *  neither has anything to say, one section offers the check. A suggested command is for the reader to post; the one
  *  write is the comment listing the duplicates and related issues the reader ticks (issue.comment). */
-import { findSidebar, pageButton, placeSection } from "../content/adapters";
+import { itemSidebar, pageButton, placeSection, type Sidebar } from "../content/adapters";
 import { readingsBlock } from "../content/hcparts";
-import { h } from "../content/ui";
+import { h, itemRef, jobLink, link, linkifyTree, testgridUrl } from "../content/ui";
 import { decideIssueCi, ISSUE_CI_LABEL, ISSUE_CI_TINT, type IssueCiResult } from "../core/issuecheck";
 import { shortTest } from "../core/prci";
-import { openDuplicate, shortRef as ref, type RelatedResult } from "../core/related";
+import { openDuplicate, type RelatedResult } from "../core/related";
 import { send } from "../shared/messages";
 import { feedbackLink } from "../content/feedback";
 import { freshPicks, relatedPicker, relationLabel, type PickState } from "../content/relatedpick";
 import { runButton } from "./button";
 
-const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
 type Part<T> = { state: "idle" } | { state: "done"; result: T } | { state: "error"; message: string };
@@ -39,7 +38,23 @@ export class IssueCheck {
     private repo: string,
     private number: number,
     private live: () => boolean,
+    /** The page's own write on this issue (the board's Apply): while it runs, Comment waits; `changed` tells the page
+     *  when the comment's state changes, so its Apply can wait in turn. */
+    private hooks: { blocked: () => string | null; changed: () => void } = {
+      blocked: () => null,
+      changed: () => {},
+    },
   ) {}
+
+  /** Whether there is a section to show: the check is offered (a SIG Node or DRA issue) or has run. */
+  hasContent(): boolean {
+    return this.scope || this.started;
+  }
+
+  /** The related-issues comment is being posted. */
+  commenting(): boolean {
+    return this.picks.post.state === "pending";
+  }
 
   /** Whether to offer the check: one GitHub read of the labels, no Jev. */
   async prepare(): Promise<void> {
@@ -89,13 +104,20 @@ export class IssueCheck {
   }
 
   private bump(): void {
+    this.refresh();
+    this.hooks.changed();
+  }
+
+  /** Redraws the sections (the page's Apply started or finished: Comment's wait changed). */
+  refresh(): void {
     this.version++;
     this.sync();
   }
 
-  sync(): void {
+  /** `found` is the sidebar the page already looked up; without it, it is looked up only if there is a section. */
+  sync(found?: Sidebar | null): void {
     if (!this.live()) return;
-    const side = findSidebar(document);
+    const side = found !== undefined ? found : this.hasContent() ? itemSidebar(document) : null;
     const key = `${this.repo}#${this.number}:${this.version}`;
     const have = [...document.querySelectorAll<HTMLElement>(".snba-issuecheck")];
     if (this.rendered === key && have.length === this.placed && have.every((e) => side?.el.contains(e)))
@@ -123,6 +145,7 @@ export class IssueCheck {
     // After the board's evidence section when there is one, else where it would go.
     let after = side.el.querySelector(".snba-evidence");
     for (const el of out) {
+      linkifyTree(el, this.repo);
       el.classList.add("snba-ci", "snba-issuecheck");
       if (after) after.after(el);
       else placeSection(side.el, el);
@@ -141,7 +164,7 @@ export class IssueCheck {
     to.focus({ preventScroll: true });
   }
 
-  private ciSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
+  private ciSection(adapter: NonNullable<ReturnType<typeof itemSidebar>>["adapter"]): HTMLElement | null {
     // Duplicates can come back first: say the CI history is still coming.
     if (this.busy && this.ci.state === "idle" && this.dups.state !== "idle") {
       const { root, body } = adapter.section("CI history");
@@ -198,7 +221,7 @@ export class IssueCheck {
     return root;
   }
 
-  private dupSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
+  private dupSection(adapter: NonNullable<ReturnType<typeof itemSidebar>>["adapter"]): HTMLElement | null {
     const title = "Duplicates and related";
     // The slower of the two (dozens of candidates): say it is still coming once the CI history is in.
     if (this.busy && this.dups.state === "idle" && this.ci.state !== "idle") {
@@ -221,7 +244,7 @@ export class IssueCheck {
         number: this.number,
         result: r,
         state: this.picks,
-        blocked: null,
+        blocked: this.hooks.blocked(),
         button: (label) => pageButton(label),
         comment: (b) => void this.comment(b),
       }),
@@ -252,7 +275,7 @@ export class IssueCheck {
   /** Posts the related-issues comment (the worker sends it to the test repo in test mode). */
   private async comment(body: string): Promise<void> {
     const picks = this.picks;
-    if (picks.post.state === "pending" || picks.post.state === "done") return;
+    if (picks.post.state === "pending" || picks.post.state === "done" || this.hooks.blocked()) return;
     picks.post = { state: "pending" };
     this.bump();
     try {
@@ -278,7 +301,7 @@ export class IssueCheck {
   }
 
   /** The section that offers the check, says it is running, or that it found nothing to show. */
-  private startSection(adapter: NonNullable<ReturnType<typeof findSidebar>>["adapter"]): HTMLElement | null {
+  private startSection(adapter: NonNullable<ReturnType<typeof itemSidebar>>["adapter"]): HTMLElement | null {
     if (!this.scope) return null;
     const { root, body } = adapter.section("CI history and duplicates");
     body.append(
@@ -319,21 +342,23 @@ export class IssueCheck {
   }
 }
 
-function ciFacts(r: IssueCiResult, repo: string): [string, Node | string][] {
-  const out: [string, Node | string][] = [];
+function ciFacts(r: IssueCiResult, repo: string): [Node | string, Node | string][] {
+  const out: [Node | string, Node | string][] = [];
+  // The newest failed run's Prow page gives its own job's history; the other jobs open their TestGrid tab.
+  const runUrl = r.newest?.evidence.url;
   for (const j of r.ci.slice(0, 3)) {
-    const [dash, tab] = j.testgrid.split("#");
+    const tg = testgridUrl(j.testgrid);
     const rows = typeof j.tracked_tests === "string" ? [] : j.tracked_tests;
     const w = j.whole_job;
     out.push([
-      j.job.replace(/^ci-kubernetes-/, ""),
+      jobLink(j.job, { runUrl }, j.job.replace(/^ci-kubernetes-/, ""), tg),
       lines([
         h(
           "span",
           {},
-          w ? `job failed ${w.failures} of ${w.runs} runs in ${w.window_days}d (` : "(",
-          link(`https://testgrid.k8s.io/${dash}#${tab}`, "TestGrid"),
-          ")",
+          ...(w
+            ? ["job failed ", link(tg, `${w.failures} of ${w.runs} runs`), ` in ${w.window_days}d`]
+            : [link(tg, "TestGrid")]),
         ),
         ...rows.map(
           (t) =>
@@ -360,9 +385,13 @@ function ciFacts(r: IssueCiResult, repo: string): [string, Node | string][] {
       lines(
         r.linked_prs
           .slice(-4)
-          .map(
-            (p) =>
-              `${ref(p.repository, p.number, repo)} ${p.state}${p.merged_days_ago !== undefined ? ` ${p.merged_days_ago}d ago` : ""}: ${p.title.slice(0, 70)}`,
+          .map((p) =>
+            h(
+              "span",
+              {},
+              itemRef(p.repository, p.number, repo),
+              ` ${p.state}${p.merged_days_ago !== undefined ? ` ${p.merged_days_ago}d ago` : ""}: ${p.title.slice(0, 70)}`,
+            ),
           ),
       ),
     ]);

@@ -15,19 +15,24 @@ import type { ActionStep, BoardItem } from "../core/types";
 import { actionBox, allReadings, describe, readingsBlock, select } from "./hcparts";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
-import { h } from "./ui";
+import { h, userRef } from "./ui";
 
 export function chosenProgress(r: ProgressResult, o: { action?: string }): ProgressAction {
   const a = o.action as ProgressAction | undefined;
   return a && progressActions(r).includes(a) ? a : decideProgressCard(r).action;
 }
 
-function assigneeLine(a: AssigneeVerdict): string {
+function assigneeLine(a: AssigneeVerdict): HTMLElement {
   const last =
     a.last_activity_days_ago === null ? "no activity" : `last active ${a.last_activity_days_ago}d ago`;
-  return a.verdict === "active"
-    ? `${a.login}: active, ${last}`
-    : `${a.login}: ${a.verdict === "wait" ? "waiting on a check-in" : "quiet"}, ${last}. ${a.why}`;
+  return h(
+    "span",
+    {},
+    userRef(a.login),
+    a.verdict === "active"
+      ? `: active, ${last}`
+      : `: ${a.verdict === "wait" ? "waiting on a check-in" : "quiet"}, ${last}. ${a.why}`,
+  );
 }
 
 function heading(r: ProgressResult, action: ProgressAction): HTMLElement {
@@ -52,9 +57,7 @@ function facts(r: ProgressResult): [string, Node | string][] {
   const out: [string, Node | string][] = [];
   out.push([
     "Assignees",
-    r.assignees.length
-      ? h("span.snba-lines", {}, ...r.assignees.map((a) => h("span", {}, assigneeLine(a))))
-      : "none",
+    r.assignees.length ? h("span.snba-lines", {}, ...r.assignees.map((a) => assigneeLine(a))) : "none",
   ]);
   if (!r.sig_node) out.push(["Labels", "no sig/node"]);
   return out;
@@ -71,7 +74,8 @@ export interface ProgressHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export function renderProgressHoverCard(c: ProgressHoverContent): HTMLElement {

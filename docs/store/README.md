@@ -26,7 +26,7 @@ surface that changes least. The README shows the same file, so a release that ch
 A tool for Kubernetes SIG Node maintainers. It helps triage the SIG Node project boards, CI failures and flaky tests, right on the GitHub and TestGrid pages you already use.
 
 PROJECT BOARDS
-Click Tackle on a column of the SIG Node CI/Test, SIG Node Bugs or Dynamic Resource Allocation board. Each card gets a suggested action: keep or remove, close as fixed or as a duplicate, nudge a quiet assignee, /cc reviewers picked from who actually reviews that code, or move the card to the column its state calls for. Hover a card for the evidence. Change the action if you disagree, then Apply it, or Accept the whole column.
+Click Tackle on a column of the SIG Node CI/Test, SIG Node Bugs or Dynamic Resource Allocation board. Each card gets a suggested action: keep or remove, close as fixed or as a duplicate, nudge a quiet assignee, /cc reviewers picked from who actually reviews that code, or move the card to the column its state calls for. Hover a card for the evidence. Change the action if you disagree, then Apply it, or Accept the whole column. An item's own issue or pull request page shows the same evidence and Apply in its sidebar.
 
 TESTGRID
 On a SIG Node dashboard, Tackle reads every failing and flaky job. It works out what fails, whether an issue already tracks it, and whether to comment on that issue or file a new one from the kubernetes/kubernetes template.
@@ -38,7 +38,7 @@ HOW IT DECIDES
 Code gathers the facts: labels, review state, assignees, CI history. Jev, a decision model, answers calibrated questions about them, such as "is this resolved?". Fixed thresholds turn the answers into one action, and every suggestion shows how it was reached.
 
 SAFE BY DEFAULT
-Nothing is written until you click, and you see the exact comment or move first. The only writes are Apply and Accept, and the duplicate comment you tick on an issue. The PR check only shows a command for you to post.
+Nothing is written until you click, and you see the exact comment or move first. The only writes are Apply (on a board card or on the item's own page) and Accept, and the duplicate comment you tick on an issue. The PR check only shows a command for you to post.
 
 WHAT YOU NEED
 A GitHub personal access token, and a key for Jev from TypeSafe (typesafe.ai) or OpenRouter (openrouter.ai). Judging a card costs about $0.0002. Setup guide: https://github.com/harche/sig-node-board-assistant#configure

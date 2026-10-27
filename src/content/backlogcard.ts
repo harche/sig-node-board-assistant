@@ -17,7 +17,7 @@ import type { ActionStep, BoardItem } from "../core/types";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { actionBox, allReadings, describe, fact, readingsBlock, select } from "./hcparts";
-import { h } from "./ui";
+import { h, itemRef, logins, userRef } from "./ui";
 
 export interface BacklogOverrides {
   action?: string;
@@ -54,7 +54,7 @@ function heading(r: BacklogResult, action: BacklogAction, picked = false): HTMLE
   );
 }
 
-const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
+const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
 function facts(r: BacklogResult): [string, Node | string][] {
   const out: [string, Node | string][] = [];
@@ -64,27 +64,45 @@ function facts(r: BacklogResult): [string, Node | string][] {
     out.push([
       "PRs",
       lines([
-        ...merged.slice(-3).map((p) => `#${p.number} merged ${p.merged_days_ago}d ago: ${p.title}`),
-        ...open.slice(-2).map((p) => `#${p.number} open: ${p.title}`),
+        ...merged
+          .slice(-3)
+          .map((p) =>
+            h("span", {}, itemRef(p.repository, p.number), ` merged ${p.merged_days_ago}d ago: ${p.title}`),
+          ),
+        ...open.slice(-2).map((p) => h("span", {}, itemRef(p.repository, p.number), ` open: ${p.title}`)),
       ]),
     ]);
   out.push([
     "Assigned",
     r.progress?.assignees.length
       ? lines(
-          r.progress.assignees.map(
-            (a) =>
-              `${a.login}${r.self_assigned.includes(a.login) ? "" : " (assigned by a triager, not pinged)"}: ${a.verdict === "active" ? "active" : a.verdict === "wait" ? "waiting on a check-in" : "quiet"}, ${
+          r.progress.assignees.map((a) =>
+            h(
+              "span",
+              {},
+              userRef(a.login),
+              `${r.self_assigned.includes(a.login) ? "" : " (assigned by a triager, not pinged)"}: ${a.verdict === "active" ? "active" : a.verdict === "wait" ? "waiting on a check-in" : "quiet"}, ${
                 a.last_activity_days_ago === null
                   ? "no activity"
                   : `last active ${a.last_activity_days_ago}d ago`
               }`,
+            ),
           ),
         )
-      : r.assignees.join(", ") || "nobody",
+      : r.assignees.length
+        ? logins(r.assignees)
+        : "nobody",
   ]);
   if (r.duplicate)
-    out.push(["Duplicate of", `#${r.duplicate.number} (${r.duplicate.status}): ${r.duplicate.title}`]);
+    out.push([
+      "Duplicate of",
+      h(
+        "span",
+        {},
+        itemRef(r.duplicate.repository, r.duplicate.number, undefined, r.duplicate.url),
+        ` (${r.duplicate.status}): ${r.duplicate.title}`,
+      ),
+    ]);
   const set = [
     r.labels.triage_accepted && "triage/accepted",
     r.labels.needs_information && "triage/needs-information",
@@ -104,7 +122,8 @@ export interface BacklogHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export function renderBacklogHoverCard(c: BacklogHoverContent): HTMLElement {

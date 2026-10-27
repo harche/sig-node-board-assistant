@@ -18,7 +18,7 @@ import type { ActionStep, BoardItem } from "../core/types";
 import type { SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
 import { actionBox, allReadings, describe, fact, readingsBlock, select } from "./hcparts";
-import { h } from "./ui";
+import { h, itemRef, logins } from "./ui";
 
 export interface DraOverrides {
   action?: string;
@@ -52,7 +52,7 @@ function heading(r: DraResult, action: DraAction, picked = false): HTMLElement {
   );
 }
 
-const lines = (xs: string[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
+const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
 
 function facts(r: DraResult): [string, Node | string][] {
   const out: [string, Node | string][] = [];
@@ -65,11 +65,18 @@ function facts(r: DraResult): [string, Node | string][] {
     "PRs",
     r.linked_prs.length
       ? lines(
-          r.linked_prs.map((p) => `#${p.number} ${p.state}, opened ${p.opened_days_ago}d ago: ${p.title}`),
+          r.linked_prs.map((p) =>
+            h(
+              "span",
+              {},
+              itemRef(p.repository, p.number),
+              ` ${p.state}, opened ${p.opened_days_ago}d ago: ${p.title}`,
+            ),
+          ),
         )
       : "none reference it",
   ]);
-  out.push(["Assigned", r.assignees.join(", ") || "nobody"]);
+  out.push(["Assigned", r.assignees.length ? logins(r.assignees) : "nobody"]);
   if (r.milestone || r.opted_in)
     out.push([
       "Release",
@@ -89,7 +96,8 @@ export interface DraHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export function renderDraHoverCard(c: DraHoverContent): HTMLElement {

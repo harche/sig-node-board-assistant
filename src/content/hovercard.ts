@@ -25,7 +25,8 @@ export interface HoverContent {
   /** Where GitHub's button classes are borrowed from (the column). */
   scope: ParentNode;
   apply(choice: "accept" | "reject"): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
   setPriority(p: string): void;
 }
 
@@ -116,24 +117,31 @@ function actions(c: HoverContent): HTMLElement {
     lines.append(h("li", {}, h("b", {}, name), h("span.snba-muted", {}, `: ${describe(shown)}`)));
   }
   // Skip, as in the CLI: no write. The verdict is dropped and the card goes back to its own Tackle.
-  const skip = nativeButton(c.scope, null, "Skip", "invisible").root;
-  skip.classList.add("snba-hc-btn");
-  skip.dataset.focusKey = "skip";
-  if (busy) skip.setAttribute("aria-disabled", "true");
-  skip.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (skip.getAttribute("aria-disabled") !== "true") c.skip();
-  });
-  row.append(skip);
-  lines.append(
-    h(
-      "li",
-      {},
-      h("b", {}, "Skip"),
-      h("span.snba-muted", {}, ": leave it in Triage untouched and drop the verdict; Accept passes over it"),
-    ),
-  );
+  const onSkip = c.skip;
+  if (onSkip) {
+    const skip = nativeButton(c.scope, null, "Skip", "invisible").root;
+    skip.classList.add("snba-hc-btn");
+    skip.dataset.focusKey = "skip";
+    if (busy) skip.setAttribute("aria-disabled", "true");
+    skip.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (skip.getAttribute("aria-disabled") !== "true") onSkip();
+    });
+    row.append(skip);
+    lines.append(
+      h(
+        "li",
+        {},
+        h("b", {}, "Skip"),
+        h(
+          "span.snba-muted",
+          {},
+          ": leave it in Triage untouched and drop the verdict; Accept passes over it",
+        ),
+      ),
+    );
+  }
   box.append(row, lines);
   if (c.applied?.state === "pending") box.append(h("p.snba-hc-status", {}, "Applying…"));
   else if (c.applied?.state === "error") box.append(h("p.snba-hc-status.snba-error", {}, c.applied.message));
@@ -259,9 +267,11 @@ export class HoverCard {
     return !this.el.hidden && this.restId === restId;
   }
 
-  /** Keyboard users reach the buttons: the card lives at the end of the page, so Tab would skip it. */
+  /** Keyboard users reach the buttons: the card lives at the end of the page, so Tab would skip it. Focus goes to
+   *  the first pick or action, past the links in the facts above them. */
   focusInto(): boolean {
-    const first = this.focusables()[0];
+    const all = this.focusables();
+    const first = all.find((x) => x.matches("select") || x.closest(".snba-hc-actions")) ?? all[0];
     first?.focus();
     return Boolean(first);
   }

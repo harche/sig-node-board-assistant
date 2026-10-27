@@ -3,7 +3,7 @@
  *  one action, the suggested one preselected unless it is the reviewer's call. */
 import type { Applied } from "../content/hovercard";
 import { actionBox, allReadings, fact, readingsBlock, select } from "../content/hcparts";
-import { h } from "../content/ui";
+import { h, jobLink, link, linkifyTree, testgridUrl } from "../content/ui";
 import {
   decideTg,
   mergeSteps,
@@ -104,20 +104,32 @@ export function describeTg(steps: TgStep[], testMode: boolean): string {
 }
 
 const lines = (xs: (Node | string)[]) => h("span.snba-lines", {}, ...xs.map((x) => h("span", {}, x)));
-const link = (href: string, text: string) => h("a", { href, target: "_blank", rel: "noopener" }, text);
 
 function facts(r: TgResult): [string, Node | string][] {
   const f = r.facts;
   const out: [string, Node | string][] = [
-    ["Job", `${f.job} (${f.status.toLowerCase()})`],
+    ["Job", h("span", {}, jobLink(f.job, { gcs: f.gcs }), ` (${f.status.toLowerCase()})`)],
     [
       "Runs",
-      `${f.failed_runs} of ${f.runs} failed, ${f.streak} in a row now; ${
-        f.last_pass_days_ago === null
-          ? "no pass in TestGrid's window"
-          : `last pass ${f.last_pass_days_ago}d ago`
-      }`,
+      h(
+        "span",
+        {},
+        link(testgridUrl(`${f.dashboard}#${f.tab}`), `${f.failed_runs} of ${f.runs} failed`),
+        `, ${f.streak} in a row now; ${
+          f.last_pass_days_ago === null
+            ? "no pass in TestGrid's window"
+            : `last pass ${f.last_pass_days_ago}d ago`
+        }`,
+      ),
     ],
+    ...(r.evidence.length
+      ? [
+          [
+            "Failed runs read",
+            h("span", {}, ...r.evidence.flatMap((e, i) => [i ? ", " : "", link(e.url, shortDay(e.started))])),
+          ] as [string, Node],
+        ]
+      : []),
     [
       "Failing",
       f.harness_only || !f.failing_tests.length
@@ -273,7 +285,13 @@ function decisionBlock(r: TgResult, o: TgPick): HTMLElement {
 
 const shortDay = (ms: number) => new Date(ms).toISOString().slice(5, 10);
 
+/** The card, with the URLs and `org/repo#N` in its text links. A bare `#N` is left as text: an infra cause's
+ *  issue can be test-infra's as well as kubernetes's. */
 export function renderTgHoverCard(c: TgHoverContent): HTMLElement {
+  return linkifyTree(tgCard(c));
+}
+
+function tgCard(c: TgHoverContent): HTMLElement {
   const r = c.result;
   const o = c.overrides;
   const locked = c.applied?.state === "pending" || c.applied?.state === "done" || !c.canApply;

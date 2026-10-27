@@ -38,6 +38,7 @@ import { chosenDra, chosenDraSteps, renderDraEvidence, renderDraHoverCard } from
 import { proposedActions } from "../core/triage";
 import type { ActionStep, BoardFields, BoardItem, BoardRef, TriageResult } from "../core/types";
 import { send } from "../shared/messages";
+import { h } from "./ui";
 import type { SidebarAdapter } from "./evidence";
 import { renderEvidence, SECTION_TITLE } from "./evidence";
 import { renderHoverCard, type Applied } from "./hovercard";
@@ -84,6 +85,18 @@ export function withFixes(
   return [{ kind: "comment", repo: item.repository, number: item.number, body: lines.join("\n") }, ...steps];
 }
 
+/** Says which Prow commands were ignored, and that Apply and Accept post the fix with the action: put above the
+ *  action buttons on the board's hover card and the item page's Apply. Null when there is nothing to fix. */
+export function prowFixesNote(result: unknown): HTMLElement | null {
+  const fixes = (result as { prow_fixes?: { who: string; wrote: string; fix: string }[] }).prow_fixes ?? [];
+  if (!fixes.length) return null;
+  return h(
+    "p.snba-hc-status.snba-muted",
+    {},
+    `Prow ignored ${fixes.map((f) => `"${f.wrote}" (${f.who})`).join(", ")}; Apply and Accept also post ${fixes.map((f) => `"${f.fix}"`).join(", ")}, unless the item is closed or archived.`,
+  );
+}
+
 export interface HoverCtx<R> {
   /** An action's steps with the Prow fixes added (withFixes). */
   fix(steps: ActionStep[]): ActionStep[];
@@ -97,7 +110,8 @@ export interface HoverCtx<R> {
   scope: ParentNode;
   /** Triage passes "accept" or "reject"; To do has one Apply for the chosen action. */
   apply(choice: string): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export type PaneState<R> =

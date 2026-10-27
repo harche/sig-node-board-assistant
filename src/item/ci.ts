@@ -1,8 +1,8 @@
 /** The PR page's "Failing CI" section: for each Prow job failing on the head commit, whether the PR broke it or it
  *  fails without the PR (a flake, the job's environment), the evidence, and the Prow command that reruns what is
  *  not the PR's. Read-only: the command is for the reader to post. On every pull request with a failed Prow job. */
-import { findSidebar, placeSection } from "../content/adapters";
-import { h } from "../content/ui";
+import { itemSidebar, placeSection, type Sidebar } from "../content/adapters";
+import { h, linkifyTree } from "../content/ui";
 import {
   CI_LABEL,
   CI_TINT,
@@ -97,10 +97,16 @@ export class PrCi {
     this.sync();
   }
 
-  /** Puts the section in the sidebar, or redraws it when anything changed (GitHub may also redraw the sidebar). */
-  sync(): void {
+  /** Whether there is a section to show: failed jobs to judge. */
+  hasContent(): boolean {
+    return Boolean(this.checks?.failed.length);
+  }
+
+  /** Puts the section in the sidebar, or redraws it when anything changed (GitHub may also redraw the sidebar).
+   *  `found` is the sidebar the page already looked up; without it, it is looked up only if there is a section. */
+  sync(found?: Sidebar | null): void {
     if (!this.live()) return;
-    const side = findSidebar(document);
+    const side = found !== undefined ? found : this.hasContent() ? itemSidebar(document) : null;
     const existing = document.querySelector<HTMLElement>(".snba-ci");
     const key = `${this.repo}#${this.number}:${this.version}`;
     if (existing && side?.el.contains(existing) && this.rendered === key) return;
@@ -111,6 +117,7 @@ export class PrCi {
     const { root, body } = side.adapter.section("Failing CI");
     root.classList.add("snba-ci");
     body.append(...this.content());
+    linkifyTree(root, this.repo);
     const evidence = side.el.querySelector(".snba-evidence");
     if (evidence) evidence.after(root);
     else placeSection(side.el, root);

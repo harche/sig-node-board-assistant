@@ -79,7 +79,8 @@ export interface BugHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 /** The facts that are not probabilities. */

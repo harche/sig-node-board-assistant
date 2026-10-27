@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { cardsIn, isOurs, itemLink, placeBadge } from "../src/content/dom";
+import { cardsIn, columnActions, isOurs, itemLink, placeBadge, placeRunButton } from "../src/content/dom";
 
 const BOARD = `
 <div data-board-column="Triage" id="c1">
+  <div class="Container__a"><div class="Heading__b"><div class="Box__c"><h2>Triage</h2><span>4</span></div></div>
+    <div class="ColumnActions__d"><button data-component="IconButton" id="menu">…</button><button data-component="IconButton">+</button></div></div>
   <div data-board-card-id="253226794" role="button">
-    <div class="card-internal-content-module__Header__fy"><div class="header-module__Box_2__x"><span>kubernetes #142303</span><span class="avatar">A</span></div></div>
-    <a href="https://github.com/kubernetes/kubernetes/pull/142303?x=1">title</a>
+    <div class="Box__v"><div class="Header__3M"><div class="Box_4__j"><div id="board-card-header-icon-253226794"></div><div id="board-card-header-title-253226794"><span>kubernetes #142303</span></div><div><button data-component="IconButton">…</button></div></div></div>
+    <a href="https://github.com/kubernetes/kubernetes/pull/142303?x=1">title</a></div>
   </div>
   <div data-board-card-id="nope"></div>
 </div>
@@ -23,8 +25,8 @@ describe("cardsIn", () => {
     const badge = document.createElement("button");
     badge.className = "snba-badge";
     placeBadge(cards[0]!.el, badge);
-    const row = cards[0]!.el.querySelector(".header-module__Box_2__x")!;
-    expect([...row.children].map((c) => c.className)).toEqual(["", "snba-badge", "avatar"]);
+    const cell = document.getElementById("board-card-header-title-253226794")!;
+    expect([...cell.children].map((c) => c.className)).toEqual(["", "snba-badge"]);
   });
   it("falls back to the repo #number text, then to the card", () => {
     document.body.innerHTML = `<div data-board-card-id="1"><div><span>kubernetes #5</span></div></div><div data-board-card-id="2"><p>x</p></div>`;
@@ -34,6 +36,21 @@ describe("cardsIn", () => {
     const b2 = document.createElement("i");
     placeBadge(document.querySelector('[data-board-card-id="2"]')!, b2);
     expect(b2.parentElement?.getAttribute("data-board-card-id")).toBe("2");
+  });
+  it("puts the run buttons before GitHub's column actions, found without class names", () => {
+    document.body.innerHTML = BOARD;
+    const col = document.getElementById("c1")!;
+    expect(columnActions(col)?.className).toBe("ColumnActions__d");
+    const run = document.createElement("button");
+    run.className = "snba-run";
+    expect(placeRunButton(col, run)).toBe(true);
+    expect(run.nextElementSibling?.id).toBe("menu");
+  });
+  it("falls back to the column title when there are no column actions", () => {
+    document.body.innerHTML = `<div data-board-column="X" id="x"><div><h2>X</h2></div></div>`;
+    const run = document.createElement("button");
+    expect(placeRunButton(document.getElementById("x")!, run)).toBe(true);
+    expect(run.previousElementSibling?.tagName).toBe("H2");
   });
   it("escapes column names with spaces and dashes", () => {
     document.body.innerHTML = BOARD;

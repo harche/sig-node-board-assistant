@@ -19,7 +19,7 @@ import type { ActionStep, BoardItem } from "../core/types";
 import { actionBox, allReadings, describe, readingsBlock, select } from "./hcparts";
 import type { EvidenceHandlers, SidebarAdapter } from "./evidence";
 import type { Applied } from "./hovercard";
-import { h } from "./ui";
+import { h, itemRef, link, logins, testgridUrl } from "./ui";
 
 /** Per-card choices the reviewer made in place of the suggested ones. */
 export interface TodoOverrides {
@@ -72,18 +72,27 @@ export function todoDecision(r: TodoResult, o: TodoOverrides = {}): HTMLElement 
   );
 }
 
-/** One line per CI job: the tracked tests (or the whole job when none were found) over TestGrid's window. */
-export function ciLines(ci: JobSignal[]): string[] {
+/** One line per CI job: the tracked tests (or the whole job when none were found) over TestGrid's window. The job
+ *  and its run counts open its TestGrid tab. */
+export function ciLines(ci: JobSignal[]): HTMLElement[] {
   return ci.map((j) => {
+    const tg = testgridUrl(j.testgrid);
     const rows = typeof j.tracked_tests === "string" ? null : j.tracked_tests;
     const r = rows?.[0] ?? j.whole_job;
-    if (!r) return `${j.job}: no runs`;
+    if (!r) return h("span", {}, link(tg, j.job), ": no runs");
     const what = rows ? (rows.length > 1 ? `${rows.length} tests` : "test") : "whole job (test not found)";
     const last =
       r.last_failure_days_ago === null
         ? "no failures"
         : `last failed ${r.last_failure_days_ago === 0 ? "today" : `${r.last_failure_days_ago}d ago`}, ${r.runs_since_last_failure} clean runs since`;
-    return `${j.job} ${what}: ${r.failures}/${r.runs} failed in ${r.window_days}d, ${last}`;
+    return h(
+      "span",
+      {},
+      link(tg, j.job),
+      ` ${what}: `,
+      link(tg, `${r.failures}/${r.runs} failed`),
+      ` in ${r.window_days}d, ${last}`,
+    );
   });
 }
 
@@ -103,24 +112,36 @@ function facts(r: TodoResult): [string, Node | string][] {
     out.push([
       "PRs",
       list([
-        ...merged.slice(-3).map((x) => `#${x.number} merged ${x.merged_days_ago}d ago: ${x.title}`),
-        ...open.slice(-2).map((x) => `#${x.number} open: ${x.title}`),
+        ...merged
+          .slice(-3)
+          .map((x) =>
+            h("span", {}, itemRef(x.repository, x.number), ` merged ${x.merged_days_ago}d ago: ${x.title}`),
+          ),
+        ...open.slice(-2).map((x) => h("span", {}, itemRef(x.repository, x.number), ` open: ${x.title}`)),
       ]),
     ]);
-  if (r.rules.assignees.length) out.push(["Assigned", r.rules.assignees.join(", ")]);
+  if (r.rules.assignees.length) out.push(["Assigned", logins(r.rules.assignees)]);
   const missing = [
     !r.rules.triage_accepted && "triage/accepted",
     !r.rules.priority_label && "priority",
   ].filter(Boolean);
   if (missing.length) out.push(["Labels", `missing ${missing.join(" and ")}`]);
   if (r.duplicate)
-    out.push(["Duplicate of", `#${r.duplicate.number} (${r.duplicate.status}): ${r.duplicate.title}`]);
+    out.push([
+      "Duplicate of",
+      h(
+        "span",
+        {},
+        itemRef(r.duplicate.repository, r.duplicate.number, undefined, r.duplicate.url),
+        ` (${r.duplicate.status}): ${r.duplicate.title}`,
+      ),
+    ]);
   // The guard only matters when Jev would close it.
   if (r.guard && p >= RESOLVED_AT) out.push(["Wait", r.guard]);
   return out;
 }
 
-function list(lines: string[]): HTMLElement {
+function list(lines: (Node | string)[]): HTMLElement {
   return h("span.snba-lines", {}, ...lines.map((l) => h("span", {}, l)));
 }
 
@@ -135,7 +156,8 @@ export interface TodoHoverContent {
   canApply: boolean;
   scope: ParentNode;
   apply(): void;
-  skip(): void;
+  /** No Skip button without it (the item page). */
+  skip?(): void;
 }
 
 export function renderTodoHoverCard(c: TodoHoverContent): HTMLElement {

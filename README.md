@@ -36,7 +36,8 @@ suggested action:
 - move the card to the column its state calls for.
 
 Hover a card for the evidence and Jev's answers. Change the action if you disagree, then **Apply** it, or **Accept**
-the whole column. Open an item and the same evidence is a section in GitHub's own sidebar.
+the whole column. Open an item and the same evidence is a section in GitHub's own sidebar: click **Judge** there,
+and an **Apply** section above it offers the same action, so an item can be triaged from its own page.
 
 Every active column of all three boards has a workflow. [docs/workflows.md](docs/workflows.md) lists what each one
 suggests and when.
@@ -145,8 +146,9 @@ The settings page needs two credentials:
 
 ## Safety
 
-- **Nothing is written until you click.** Apply writes one card's action, Accept writes the actions in one
-  column, and on an issue page **Comment** posts the duplicate comment around the matches you ticked. Each shows the
+- **Nothing is written until you click.** Apply writes one card's action, on the board or on the item's own page,
+  Accept writes the actions in one column, and on an issue page **Comment** posts the duplicate comment around the
+  matches you ticked. Each shows the
   exact comment and move first. The rest only read: the PR check and the issue check show their findings, and the PR
   one gives you a Prow command to post yourself. Feedback opens an issue on this extension's repo only when you click
   Submit.
